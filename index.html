@@ -140,16 +140,20 @@
                 try {
                     const modelName = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
                     
+                    // Map the precision string from the dropdown to a valid Transformers.js dtype
+                    let selectedDtype = 'q8'; // Default
+                    if (precision === 'fp16') selectedDtype = 'fp16';
+                    if (precision === 'q8-tiny') selectedDtype = 'q8';
+                    
                     try {
-                        // FIX WEBGPU: Forziamo fp32 per compatibilità Windows
+                        // Try WebGPU first with the CORRECT quantized dtype
                         transcriber = await pipeline('automatic-speech-recognition', modelName, { 
                             device: 'webgpu', 
-                            dtype: 'fp32', 
+                            dtype: selectedDtype, 
                             progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                         });
                     } catch (err) {
-                        // STAMPIAMO L'ERRORE PER DEBUGGING SU PC
-                        console.error("ERRORE WEBGPU CRITICO:", err);
+                        console.error("ERRORE WEBGPU:", err);
                         
                         // Fallback su CPU (WASM)
                         transcriber = await pipeline('automatic-speech-recognition', modelName, { 
