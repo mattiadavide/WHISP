@@ -107,7 +107,26 @@
         let vadModel = null, state = null, whisperPort = null;
         let audioBuf = [], preRoll = [], isSpeaking = false, silenceFrames = 0;
         
-        const PRE_ROLL_CAPACITY = 10, THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, SILENCE_LIMIT = 40;
+        const PRE_ROLL_CAPACITY = 10, THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, SILENCE_LIMIT = 10, MAX_FRAMES = 460, OVERLAP_FRAMES = 156;
+
+        function flushAudioToWhisper(isForced = false) {
+            if (audioBuf.length > 5) {
+                const flat = new Float32Array(audioBuf.length * 512);
+                for (let i = 0; i < audioBuf.length; i++) flat.set(audioBuf[i], i * 512);
+                
+                const bufferToTransfer = flat.buffer;
+                if (whisperPort) {
+                    whisperPort.postMessage({ type: 'transcribe', audioBuffer: bufferToTransfer }, [bufferToTransfer]);
+                }
+            }
+            
+            // Gestione intelligente dell'overlap se forzato, altrimenti resetta col preRoll
+            if (isForced) {
+                audioBuf = audioBuf.slice(-OVERLAP_FRAMES);
+            } else {
+                audioBuf = [...preRoll]; 
+            }
+        }
 
         self.onmessage = async (e) => {
             const { type, port } = e.data;
@@ -126,6 +145,11 @@
                         
                         if (isSpeaking) {
                             audioBuf.push(audioChunk);
+                            // 1. FORCED FLUSH quando il buffer supera i MAX_FRAMES
+                            if (audioBuf.length >= MAX_FRAMES) {
+                                flushAudioToWhisper(true);
+                                state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
+                            }
                         } else {
                             preRoll.push(audioChunk);
                             if (preRoll.length > PRE_ROLL_CAPACITY) preRoll.shift();
@@ -149,17 +173,10 @@
                                 silenceFrames++;
                                 if (silenceFrames > SILENCE_LIMIT) {
                                     isSpeaking = false;
-                                    if (audioBuf.length > 5) {
-                                        const flat = new Float32Array(audioBuf.length * 512);
-                                        for (let i = 0; i < audioBuf.length; i++) flat.set(audioBuf[i], i * 512);
-                                        
-                                        const bufferToTransfer = flat.buffer;
-                                        if (whisperPort) {
-                                            whisperPort.postMessage({ type: 'transcribe', audioBuffer: bufferToTransfer }, [bufferToTransfer]);
-                                        }
-                                    }
+                                    // Utilizzo la funzione d'appoggio anche per il naturale rilevamento del silenzio
+                                    flushAudioToWhisper();
                                     state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
-                                    audioBuf = []; preRoll = [];
+                                    preRoll = [];
                                 }
                             }
                             self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
@@ -173,14 +190,10 @@
         };
     `;
 
-    // --- 2. WORKER WHISPER (Queue Controller & Hardware-Aware Init) ---
+    // --- 2. WORKER WHISPER (Queue Controller) ---
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-
-        // Ottimizzazione WASM (Multi-threading)
-        env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
-
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian";
 
         async function processNext() {
@@ -188,7 +201,14 @@
             isBusy = true;
             const audioData = queue.shift();
             try {
-                const res = await transcriber(new Float32Array(audioData), { language: currentLanguage, task: 'transcribe', without_timestamps: true });
+                // 2. ABILITARE IL CHUNKING aggiungendo chunk_length_s e stride_length_s
+                const res = await transcriber(new Float32Array(audioData), { 
+                    language: currentLanguage, 
+                    task: 'transcribe', 
+                    without_timestamps: true,
+                    chunk_length_s: 30,
+                    stride_length_s: 5
+                });
                 self.postMessage({ type: 'final', text: res.text });
             } catch (err) {
                 console.error("WHISPER ERR:", err);
@@ -205,55 +225,13 @@
                 try {
                     const modelName = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
                     let webgpuDtype = precision === 'fp16' ? 'fp16' : 'q4f16';
-                    let useWebGPU = false;
-
-                    // Gatekeeper WebGPU & Limiti VRAM
-                    if (navigator.gpu) {
-                        try {
-                            const adapter = await navigator.gpu.requestAdapter();
-                            if (adapter) {
-                                useWebGPU = true;
-                                // Controllo maxStorageBufferBindingSize (VRAM Limit Check per fp16)
-                                if (webgpuDtype === 'fp16' && adapter.limits.maxStorageBufferBindingSize < 1288490188) {
-                                    console.warn("WHISP // VRAM limit troppo basso per fp16. Downgrade forzato a q4f16.");
-                                    webgpuDtype = 'q4f16';
-                                }
-                            }
-                        } catch (gpuErr) {
-                            console.warn("WHISP // Impossibile ottenere l'adapter WebGPU.", gpuErr);
-                        }
-                    }
-
-                    // Fallback a strati (Try/Catch nidificato)
                     try {
-                        if (useWebGPU) {
-                            try {
-                                transcriber = await pipeline('automatic-speech-recognition', modelName, { 
-                                    device: 'webgpu', 
-                                    dtype: webgpuDtype, 
-                                    progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
-                                });
-                            } catch (err) {
-                                console.warn("WHISP // Fallimento inizializzazione WebGPU. Esecuzione fallback su WASM...", err);
-                                throw err; // Lancia l'errore per farlo catturare dal catch esterno
-                            }
-                        } else {
-                            throw new Error("WHISP // WebGPU non disponibile.");
-                        }
-                    } catch (fallbackErr) {
-                        // Fallback estremo WASM con mappatura dtype corretta
-                        const wasmDtype = precision === 'q8-tiny' ? 'q8' : 'q4';
-                        transcriber = await pipeline('automatic-speech-recognition', modelName, { 
-                            device: 'wasm', 
-                            dtype: wasmDtype, 
-                            progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
-                        });
+                        transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'webgpu', dtype: webgpuDtype, progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
+                    } catch (err) {
+                        transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'wasm', dtype: 'q8', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
                     }
-
                     self.postMessage({ type: 'ready' });
-                } catch(err) { 
-                    self.postMessage({ type: 'error', message: err.message }); 
-                }
+                } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
             } else if (type === 'update_language') {
                 currentLanguage = language;
             } else if (type === 'init_vad_port') {
@@ -279,6 +257,9 @@
 
     let audioCtx, worklet, stream, isSessionActive = false;
     let vadReady = false, whisperReady = false;
+    
+    // Variabile per la formattazione intelligente del testo
+    let lastChar = ".";
 
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
     UI.output.appendChild(interimSpan);
@@ -297,8 +278,24 @@
         } else if (d.type === 'ready') {
             whisperReady = true; checkReady();
         } else if (d.type === 'final' && isSessionActive) {
-            if (d.text && d.text.trim().length > 1) {
-                UI.output.insertBefore(document.createTextNode(d.text.trim() + " "), interimSpan);
+            let newText = d.text ? d.text.trim() : "";
+            if (newText.length > 1) {
+                let prefix = " ";
+                
+                // Concatenazione intelligente
+                if (lastChar.match(/[.!?]/)) {
+                    // Dopo un punto, inizia con la maiuscola
+                    newText = newText.charAt(0).toUpperCase() + newText.slice(1);
+                } else if (newText.match(/^[.,!?]/)) {
+                    // Se il nuovo testo inizia con punteggiatura, rimuovi lo spazio prima
+                    prefix = "";
+                } else {
+                    // Altrimenti continua il discorso in minuscolo
+                    newText = newText.charAt(0).toLowerCase() + newText.slice(1);
+                }
+
+                UI.output.insertBefore(document.createTextNode(prefix + newText), interimSpan);
+                lastChar = newText.slice(-1); // Salva l'ultimo carattere per il prossimo giro
                 UI.output.scrollTop = UI.output.scrollHeight;
             }
             if (!UI.vadLed.classList.contains('active')) UI.status.innerText = "LISTENING";
@@ -423,7 +420,11 @@
     }
 
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
-    UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
+    UI.clearBtn.onclick = () => { 
+        UI.output.innerHTML = ""; 
+        UI.output.appendChild(interimSpan); 
+        lastChar = "."; // Reset della variabile per ricominciare con la lettera maiuscola
+    };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
     UI.exportBtn.onclick = () => { 
         const blob = new Blob([UI.output.innerText], { type: 'text/plain' });
