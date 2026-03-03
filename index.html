@@ -37,7 +37,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_3.0_STABLE
+    > MODULE_BOOT: WHISP_CORE_1.0
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -100,105 +100,146 @@
     }
     UI.languageSelect.value = "italian";
 
-    // --- 1. WORKER VAD ---
+    // --- 1. WORKER VAD (State Machine & Zero-Copy Router) ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-        let vadModel = null, state = null;
+        let vadModel = null, state = null, whisperPort = null;
+        let audioBuf = [], preRoll = [], isSpeaking = false, silenceFrames = 0;
+        
+        const PRE_ROLL_CAPACITY = 10, THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, SILENCE_LIMIT = 40;
 
         self.onmessage = async (e) => {
-            const { type, data } = e.data;
+            const { type, port } = e.data;
             if (type === 'load') {
                 try {
                     vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
                     state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
                     self.postMessage({ type: 'ready' });
                 } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
-            } else if (type === 'vad' && vadModel) {
-                try {
-                    const input = new Tensor('float32', data, [1, 512]);
-                    const sr = new Tensor('int64', BigInt64Array.from([16000n]), [1]);
-                    const out = await vadModel({ input, sr, state });
-                    state = out.stateN || out.staten || state;
-                    self.postMessage({ type: 'vad_res', prob: out.output.data[0] });
-                } catch (err) { state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]); }
+            } else if (type === 'init_whisper_port') {
+                whisperPort = port;
+            } else if (type === 'init_worklet_port') {
+                port.onmessage = async (workletEvent) => {
+                    if (workletEvent.data.type === 'vad' && vadModel) {
+                        const audioChunk = new Float32Array(workletEvent.data.data);
+                        
+                        if (isSpeaking) {
+                            audioBuf.push(audioChunk);
+                        } else {
+                            preRoll.push(audioChunk);
+                            if (preRoll.length > PRE_ROLL_CAPACITY) preRoll.shift();
+                        }
+
+                        try {
+                            const input = new Tensor('float32', audioChunk, [1, 512]);
+                            const sr = new Tensor('int64', BigInt64Array.from([16000n]), [1]);
+                            const out = await vadModel({ input, sr, state });
+                            state = out.stateN || out.staten || state;
+                            const prob = out.output.data[0];
+
+                            if (prob > (isSpeaking ? THRESHOLD_HOLD : THRESHOLD_START)) {
+                                if (!isSpeaking) { 
+                                    isSpeaking = true; 
+                                    audioBuf = [...preRoll]; 
+                                    preRoll = []; 
+                                }
+                                silenceFrames = 0;
+                            } else if (isSpeaking) {
+                                silenceFrames++;
+                                if (silenceFrames > SILENCE_LIMIT) {
+                                    isSpeaking = false;
+                                    if (audioBuf.length > 5) {
+                                        const flat = new Float32Array(audioBuf.length * 512);
+                                        for (let i = 0; i < audioBuf.length; i++) flat.set(audioBuf[i], i * 512);
+                                        
+                                        const bufferToTransfer = flat.buffer;
+                                        if (whisperPort) {
+                                            whisperPort.postMessage({ type: 'transcribe', audioBuffer: bufferToTransfer }, [bufferToTransfer]);
+                                        }
+                                    }
+                                    state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
+                                    audioBuf = []; preRoll = [];
+                                }
+                            }
+                            self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
+                        } catch (err) { state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]); }
+                    }
+                };
             } else if (type === 'reset_state') {
                 state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
+                audioBuf = []; preRoll = []; isSpeaking = false; silenceFrames = 0;
             }
         };
     `;
 
-    // --- 2. WORKER WHISPER ---
+    // --- 2. WORKER WHISPER (Queue Controller) ---
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-        let transcriber = null;
+        let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian";
+
+        async function processNext() {
+            if (isBusy || queue.length === 0 || !transcriber) return;
+            isBusy = true;
+            const audioData = queue.shift();
+            try {
+                const res = await transcriber(new Float32Array(audioData), { language: currentLanguage, task: 'transcribe', without_timestamps: true });
+                self.postMessage({ type: 'final', text: res.text });
+            } catch (err) {
+                console.error("WHISPER ERR:", err);
+                self.postMessage({ type: 'final', text: "[ERRORE_AUDIO]" });
+            } finally {
+                isBusy = false;
+                processNext();
+            }
+        }
 
         self.onmessage = async (e) => {
-            const { type, data, language, precision } = e.data;
+            const { type, port, language, precision } = e.data;
             if (type === 'load') {
                 try {
                     const modelName = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
-                    
-                    // OTTIMIZZAZIONE: WebGPU lavora molto meglio con q4f16 rispetto a q8.
                     let webgpuDtype = precision === 'fp16' ? 'fp16' : 'q4f16';
-                    
                     try {
-                        transcriber = await pipeline('automatic-speech-recognition', modelName, { 
-                            device: 'webgpu', 
-                            dtype: webgpuDtype, 
-                            progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
-                        });
+                        transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'webgpu', dtype: webgpuDtype, progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
                     } catch (err) {
-                        console.warn("WEBGPU FALLITO, FALLBACK SU WASM:", err);
-                        transcriber = await pipeline('automatic-speech-recognition', modelName, { 
-                            device: 'wasm', 
-                            dtype: 'q8', 
-                            progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
-                        });
+                        transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'wasm', dtype: 'q8', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
                     }
                     self.postMessage({ type: 'ready' });
                 } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
-            } else if (type === 'transcribe') {
-                try {
-                    const res = await transcriber(data, { language, task: 'transcribe', without_timestamps: true });
-                    self.postMessage({ type: 'final', text: res.text });
-                } catch (err) { 
-                    console.error("ERRORE DURANTE LA TRASCRIZIONE:", err);
-                    // FONDAMENTALE: Manda comunque un segnale alla UI per non bloccare la coda
-                    self.postMessage({ type: 'final', text: "[ERRORE_AUDIO]" }); 
-                }
+            } else if (type === 'update_language') {
+                currentLanguage = language;
+            } else if (type === 'init_vad_port') {
+                currentLanguage = language;
+                port.onmessage = (vadEvent) => {
+                    if (vadEvent.data.type === 'transcribe') {
+                        queue.push(vadEvent.data.audioBuffer);
+                        processNext();
+                    }
+                };
             }
         };
     `;
 
+    // Bootstrap Workers
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
 
-    let audioCtx, worklet, stream, audioBuf = [], isSpeaking = false, silenceFrames = 0, isSessionActive = false;
-    let preRoll = []; 
-    const PRE_ROLL_CAPACITY = 10; 
+    // Establish direct VAD <-> Whisper channel
+    const workerChannel = new MessageChannel();
+    vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
+    whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2, language: UI.languageSelect.value }, [workerChannel.port2]);
 
-    let transcriptionQueue = [];
-    let isTranscribing = false;
+    let audioCtx, worklet, stream, isSessionActive = false;
     let vadReady = false, whisperReady = false;
 
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
     UI.output.appendChild(interimSpan);
 
-    function processQueue() {
-        if (isTranscribing || transcriptionQueue.length === 0) return;
-        
-        isTranscribing = true;
-        UI.status.innerText = `ANALYZING... (${transcriptionQueue.length} IN QUEUE)`;
-        
-        const nextSegment = transcriptionQueue.shift();
-        whisperWorker.postMessage({ 
-            type: 'transcribe', 
-            data: nextSegment, 
-            language: UI.languageSelect.value 
-        });
-    }
+    UI.languageSelect.onchange = (e) => {
+        whisperWorker.postMessage({ type: 'update_language', language: e.target.value });
+    };
 
     whisperWorker.onmessage = (e) => {
         const d = e.data;
@@ -214,13 +255,7 @@
                 UI.output.insertBefore(document.createTextNode(d.text.trim() + " "), interimSpan);
                 UI.output.scrollTop = UI.output.scrollHeight;
             }
-            isTranscribing = false;
-            
-            if (transcriptionQueue.length > 0) {
-                processQueue();
-            } else if (!isSpeaking) {
-                UI.status.innerText = "LISTENING";
-            }
+            if (!UI.vadLed.classList.contains('active')) UI.status.innerText = "LISTENING";
         }
     };
 
@@ -228,44 +263,17 @@
         const d = e.data;
         if (d.type === 'ready') {
             vadReady = true; 
-            // FIX IOS: Caricamento sequenziale. Avviamo Whisper SOLO dopo che VAD è pronto.
             UI.status.innerText = "INITIALIZING WHISPER...";
             whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
-        } else if (d.type === 'vad_res') {
+        } else if (d.type === 'vad_ui_update') {
             UI.probVal.innerText = "VAD: " + d.prob.toFixed(2);
             UI.vadFill.style.width = (d.prob * 100) + "%";
-
-            const THRESHOLD_START = 0.55; 
-            const THRESHOLD_HOLD  = 0.35; 
-            const SILENCE_LIMIT   = 25; 
-
-            if (d.prob > (isSpeaking ? THRESHOLD_HOLD : THRESHOLD_START)) {
-                if (!isSpeaking) { 
-                    isSpeaking = true; 
-                    UI.vadLed.classList.add('active'); 
-                    audioBuf = [...preRoll];
-                    preRoll = [];
-                }
-                silenceFrames = 0; 
-                if (!isTranscribing) UI.status.innerText = "RECORDING";
-            } else if (isSpeaking) {
-                silenceFrames++;
-                if (silenceFrames > SILENCE_LIMIT) {
-                    isSpeaking = false; 
-                    UI.vadLed.classList.remove('active');
-                    
-                    if (audioBuf.length > 5) {
-                        const flat = new Float32Array(audioBuf.length * 512);
-                        for (let i = 0; i < audioBuf.length; i++) flat.set(audioBuf[i], i * 512);
-                        transcriptionQueue.push(flat);
-                        processQueue();
-                    }
-                    vadWorker.postMessage({ type: 'reset_state' });
-                    audioBuf = [];
-                    preRoll = []; 
-                    
-                    if (!isTranscribing) UI.status.innerText = "LISTENING";
-                }
+            if (d.isSpeaking && !UI.vadLed.classList.contains('active')) {
+                UI.vadLed.classList.add('active'); 
+                UI.status.innerText = "RECORDING";
+            } else if (!d.isSpeaking && UI.vadLed.classList.contains('active')) {
+                UI.vadLed.classList.remove('active');
+                UI.status.innerText = "LISTENING";
             }
         }
     };
@@ -282,15 +290,13 @@
     UI.loadBtn.onclick = () => {
         UI.loadBtn.disabled = true; 
         UI.status.innerText = "INITIALIZING VAD...";
-        // Iniziamo solo col VAD per non sovraccaricare la RAM
         vadWorker.postMessage({ type: 'load' });
     };
 
     async function start() {
         try {
-            isSessionActive = true; audioBuf = []; preRoll = []; transcriptionQueue = []; isTranscribing = false;
+            isSessionActive = true;
             
-            // FIX IOS: Creiamo il contesto audio IMMEDIATAMENTE al click
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
             audioCtx = new AudioContextClass({ sampleRate: 16000 });
             await audioCtx.resume();
@@ -303,38 +309,51 @@
                 ? await navigator.mediaDevices.getDisplayMedia(constraints) 
                 : await navigator.mediaDevices.getUserMedia(constraints);
 
+            // AudioWorklet string with ZCR and MessagePort direct routing
             const workletStr = `
                 class P extends AudioWorkletProcessor {
-                    constructor() { super(); this.buf = new Float32Array(512); this.ptr = 0; }
+                    constructor() { 
+                        super(); this.buf = new Float32Array(512); this.ptr = 0; this.vadPort = null;
+                        this.port.onmessage = (e) => { if (e.data.type === 'init_port') this.vadPort = e.data.port; };
+                    }
                     process(inputs) {
                         const input = inputs[0][0]; if (!input) return true;
-                        let s = 0;
+                        let s = 0, zcr = 0, lastSign = 0;
                         for (let i=0; i<input.length; i++) {
                             const sample = input[i];
                             s += sample * sample;
+                            const sign = Math.sign(sample);
+                            if (sign !== 0 && sign !== lastSign) { zcr++; lastSign = sign; }
                             this.buf[this.ptr++] = sample;
+                            
                             if (this.ptr >= 512) {
-                                this.port.postMessage({a: this.buf, rms: Math.sqrt(s/512)});
-                                this.buf = new Float32Array(512); this.ptr = 0; s = 0;
+                                const rms = Math.sqrt(s/512);
+                                const bufferToTransfer = this.buf.buffer;
+                                
+                                this.port.postMessage({ rms, zcr }); // To UI
+                                if (this.vadPort) {
+                                    this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
+                                }
+                                this.buf = new Float32Array(512); this.ptr = 0; s = 0; zcr = 0; lastSign = 0;
                             }
                         }
                         return true;
                     }
                 } registerProcessor('p', P);`;
 
-            await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletStr], { type: 'application/javascript' })));
+            const workletBlobUrl = URL.createObjectURL(new Blob([workletStr], { type: 'application/javascript' }));
+            await audioCtx.audioWorklet.addModule(workletBlobUrl);
+            URL.revokeObjectURL(workletBlobUrl); // Memory Leak Prevented
+            
             worklet = new AudioWorkletNode(audioCtx, 'p');
+
+            // Establish direct Worklet <-> VAD channel
+            const audioChannel = new MessageChannel();
+            vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
+            worklet.port.postMessage({ type: 'init_port', port: audioChannel.port2 }, [audioChannel.port2]);
             
             worklet.port.onmessage = (e) => {
-                UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%";
-                
-                if (isSpeaking) {
-                    audioBuf.push(new Float32Array(e.data.a));
-                } else {
-                    preRoll.push(new Float32Array(e.data.a));
-                    if (preRoll.length > PRE_ROLL_CAPACITY) preRoll.shift();
-                }
-                vadWorker.postMessage({ type: 'vad', data: e.data.a });
+                if(e.data.rms !== undefined) UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%";
             };
 
             const source = audioCtx.createMediaStreamSource(stream);
@@ -347,9 +366,11 @@
 
     async function stop() {
         isSessionActive = false; 
+        vadWorker.postMessage({ type: 'reset_state' }); // Clears internal worker buffers
         if (worklet) worklet.disconnect();
-        if (audioCtx) await audioCtx.close();
+        if (audioCtx && audioCtx.state !== 'closed') await audioCtx.close();
         if (stream) stream.getTracks().forEach(t => t.stop());
+        
         UI.status.innerText = "IDLE"; UI.vadLed.classList.remove('active');
         UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block';
         UI.volFill.style.width = "0%"; UI.vadFill.style.width = "0%";
@@ -359,8 +380,7 @@
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
     UI.exportBtn.onclick = () => { 
-        const text = UI.output.innerText;
-        const blob = new Blob([text], { type: 'text/plain' });
+        const blob = new Blob([UI.output.innerText], { type: 'text/plain' });
         const a = document.createElement('a'); 
         a.href = URL.createObjectURL(blob); 
         a.download = `whisp_session_${new Date().getTime()}.txt`; 
