@@ -173,10 +173,14 @@
         };
     `;
 
-    // --- 2. WORKER WHISPER (Queue Controller) ---
+    // --- 2. WORKER WHISPER (Queue Controller & Hardware-Aware Init) ---
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
+
+        // Ottimizzazione WASM (Multi-threading)
+        env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
+
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian";
 
         async function processNext() {
@@ -201,13 +205,55 @@
                 try {
                     const modelName = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
                     let webgpuDtype = precision === 'fp16' ? 'fp16' : 'q4f16';
-                    try {
-                        transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'webgpu', dtype: webgpuDtype, progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
-                    } catch (err) {
-                        transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'wasm', dtype: 'q8', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
+                    let useWebGPU = false;
+
+                    // Gatekeeper WebGPU & Limiti VRAM
+                    if (navigator.gpu) {
+                        try {
+                            const adapter = await navigator.gpu.requestAdapter();
+                            if (adapter) {
+                                useWebGPU = true;
+                                // Controllo maxStorageBufferBindingSize (VRAM Limit Check per fp16)
+                                if (webgpuDtype === 'fp16' && adapter.limits.maxStorageBufferBindingSize < 1288490188) {
+                                    console.warn("WHISP // VRAM limit troppo basso per fp16. Downgrade forzato a q4f16.");
+                                    webgpuDtype = 'q4f16';
+                                }
+                            }
+                        } catch (gpuErr) {
+                            console.warn("WHISP // Impossibile ottenere l'adapter WebGPU.", gpuErr);
+                        }
                     }
+
+                    // Fallback a strati (Try/Catch nidificato)
+                    try {
+                        if (useWebGPU) {
+                            try {
+                                transcriber = await pipeline('automatic-speech-recognition', modelName, { 
+                                    device: 'webgpu', 
+                                    dtype: webgpuDtype, 
+                                    progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
+                                });
+                            } catch (err) {
+                                console.warn("WHISP // Fallimento inizializzazione WebGPU. Esecuzione fallback su WASM...", err);
+                                throw err; // Lancia l'errore per farlo catturare dal catch esterno
+                            }
+                        } else {
+                            throw new Error("WHISP // WebGPU non disponibile.");
+                        }
+                    } catch (fallbackErr) {
+                        // Fallback estremo WASM con mappatura dtype corretta
+                        const wasmDtype = precision === 'q8-tiny' ? 'q8' : 'q4';
+                        transcriber = await pipeline('automatic-speech-recognition', modelName, { 
+                            device: 'wasm', 
+                            dtype: wasmDtype, 
+                            progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
+                        });
+                    }
+
                     self.postMessage({ type: 'ready' });
-                } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
+                } catch(err) { 
+                    self.postMessage({ type: 'error', message: err.message }); 
+                }
             } else if (type === 'update_language') {
                 currentLanguage = language;
             } else if (type === 'init_vad_port') {
