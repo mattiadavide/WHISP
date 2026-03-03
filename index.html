@@ -107,14 +107,14 @@
         let vadModel = null, state = null, whisperPort = null;
         let audioBuf = [], preRoll = [], isSpeaking = false, silenceFrames = 0;
         
-        // Costanti fisse. MAX_FRAMES portato a 900 (circa 28.8 secondi)
-        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
+        // Costanti fisse
+        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 460, OVERLAP_FRAMES = 156;
         
         // Variabili calcolate dinamicamente al load
         let SILENCE_LIMIT = 13;
         let PRE_ROLL_CAPACITY = 6;
 
-        function flushAudioToWhisper() {
+        function flushAudioToWhisper(isForced = false) {
             if (audioBuf.length > 5) {
                 const flat = new Float32Array(audioBuf.length * 512);
                 for (let i = 0; i < audioBuf.length; i++) flat.set(audioBuf[i], i * 512);
@@ -125,8 +125,11 @@
                 }
             }
             
-            // Ritorniamo alla gestione pulita col solo pre-roll per l'attacco
-            audioBuf = [...preRoll]; 
+            if (isForced) {
+                audioBuf = audioBuf.slice(-OVERLAP_FRAMES);
+            } else {
+                audioBuf = [...preRoll]; 
+            }
         }
 
         self.onmessage = async (e) => {
@@ -161,7 +164,7 @@
                         if (isSpeaking) {
                             audioBuf.push(audioChunk);
                             if (audioBuf.length >= MAX_FRAMES) {
-                                flushAudioToWhisper();
+                                flushAudioToWhisper(true);
                                 state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
                             }
                         } else {
@@ -218,6 +221,7 @@
             isBusy = true;
             const audioData = queue.shift();
             try {
+                // Configurazione chunking e overlap nativa di Whisper
                 const res = await transcriber(new Float32Array(audioData), { 
                     language: currentLanguage, 
                     task: 'transcribe', 
