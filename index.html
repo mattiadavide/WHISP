@@ -140,22 +140,17 @@
                 try {
                     const modelName = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
                     
-                    // Map the precision string from the dropdown to a valid Transformers.js dtype
-                    let selectedDtype = 'q8'; // Default
-                    if (precision === 'fp16') selectedDtype = 'fp16';
-                    if (precision === 'q8-tiny') selectedDtype = 'q8';
+                    // OTTIMIZZAZIONE: WebGPU lavora molto meglio con q4f16 rispetto a q8.
+                    let webgpuDtype = precision === 'fp16' ? 'fp16' : 'q4f16';
                     
                     try {
-                        // Try WebGPU first with the CORRECT quantized dtype
                         transcriber = await pipeline('automatic-speech-recognition', modelName, { 
                             device: 'webgpu', 
-                            dtype: selectedDtype, 
+                            dtype: webgpuDtype, 
                             progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                         });
                     } catch (err) {
-                        console.error("ERRORE WEBGPU:", err);
-                        
-                        // Fallback su CPU (WASM)
+                        console.warn("WEBGPU FALLITO, FALLBACK SU WASM:", err);
                         transcriber = await pipeline('automatic-speech-recognition', modelName, { 
                             device: 'wasm', 
                             dtype: 'q8', 
@@ -168,7 +163,11 @@
                 try {
                     const res = await transcriber(data, { language, task: 'transcribe', without_timestamps: true });
                     self.postMessage({ type: 'final', text: res.text });
-                } catch (err) { self.postMessage({ type: 'final', text: "" }); }
+                } catch (err) { 
+                    console.error("ERRORE DURANTE LA TRASCRIZIONE:", err);
+                    // FONDAMENTALE: Manda comunque un segnale alla UI per non bloccare la coda
+                    self.postMessage({ type: 'final', text: "[ERRORE_AUDIO]" }); 
+                }
             }
         };
     `;
