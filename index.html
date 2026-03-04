@@ -82,6 +82,13 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
+    (async function initPersistentStorage() {
+        if (navigator.storage && navigator.storage.persist) {
+            const isPersisted = await navigator.storage.persist();
+            console.log(`> SYS_STORAGE_PERSISTENCE: ${isPersisted ? 'GRANTED' : 'DENIED'}`);
+        }
+    })();
+
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
@@ -100,16 +107,19 @@
     }
     UI.languageSelect.value = "italian";
 
-    // --- 1. WORKER VAD (State Machine & Zero-Copy Router) ---
+    // --- 1. WORKER VAD (State Machine & Clustering Dinamico) ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null;
         let audioBuf = [], preRoll = [], isSpeaking = false, silenceFrames = 0;
         
-        // MAX_FRAMES alto (900 = ~28s) per evitare tagli innaturali. Tolto OVERLAP forzato.
-        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
+        /// ADDED: Variabili per Clustering Spettrale Dinamico
+        let currentCentroid = 0, sumCentroid = 0, framesCount = 0;
+        let speakerProfiles = [];
+        const CENTROID_TOLERANCE = 12.5; // Tuning: tolleranza distanza centroide spettrale
         
+        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
         let SILENCE_LIMIT = 13;
         let PRE_ROLL_CAPACITY = 6;
 
@@ -119,25 +129,53 @@
                 for (let i = 0; i < audioBuf.length; i++) flat.set(audioBuf[i], i * 512);
                 
                 const bufferToTransfer = flat.buffer;
+                
+                /// ADDED: Logica K-Means Dinamica 1D (Centroide Spettrale)
+                let avgCentroid = framesCount > 0 ? (sumCentroid / framesCount) : 0;
+                let speakerTag = "SPEAKER_UNKNOWN";
+                
+                if (avgCentroid > 0) {
+                    let closestDist = Infinity;
+                    let closestIndex = -1;
+
+                    for (let i = 0; i < speakerProfiles.length; i++) {
+                        let dist = Math.abs(speakerProfiles[i].centroid - avgCentroid);
+                        if (dist < closestDist) {
+                            closestDist = dist;
+                            closestIndex = i;
+                        }
+                    }
+
+                    if (closestIndex !== -1 && closestDist < CENTROID_TOLERANCE) {
+                        speakerTag = "SPEAKER_" + String.fromCharCode(65 + closestIndex);
+                        speakerProfiles[closestIndex].centroid = (speakerProfiles[closestIndex].centroid * 0.8) + (avgCentroid * 0.2);
+                    } else {
+                        speakerProfiles.push({ centroid: avgCentroid });
+                        speakerTag = "SPEAKER_" + String.fromCharCode(65 + speakerProfiles.length - 1);
+                    }
+                }
+                
                 if (whisperPort) {
-                    whisperPort.postMessage({ type: 'transcribe', audioBuffer: bufferToTransfer }, [bufferToTransfer]);
+                    whisperPort.postMessage({ type: 'transcribe', audioBuffer: bufferToTransfer, speaker: speakerTag }, [bufferToTransfer]);
                 }
             }
-            // Si azzera in modo pulito mantenendo solo l'attacco
             audioBuf = [...preRoll]; 
+            sumCentroid = 0; framesCount = 0;
         }
 
         self.onmessage = async (e) => {
             const { type, port, precision } = e.data;
+            
+            /// ADDED: Ricezione del parametro spettrale in tempo reale dal Main Thread
+            if (type === 'audio_features') {
+                currentCentroid = e.data.centroid;
+                return;
+            }
+
             if (type === 'load') {
-                
-                if (precision === 'q8-tiny') {
-                    SILENCE_LIMIT = 45; // ~1440ms
-                } else if (precision === 'q8') {
-                    SILENCE_LIMIT = 19; // ~608ms
-                } else {
-                    SILENCE_LIMIT = 13; // ~416ms
-                }
+                if (precision === 'q8-tiny') SILENCE_LIMIT = 45; 
+                else if (precision === 'q8') SILENCE_LIMIT = 19; 
+                else SILENCE_LIMIT = 13; 
                 
                 PRE_ROLL_CAPACITY = Math.floor(SILENCE_LIMIT * 0.5);
                 
@@ -155,6 +193,10 @@
                         
                         if (isSpeaking) {
                             audioBuf.push(audioChunk);
+                            /// ADDED: Accumulo centroide solo durante il parlato attivo
+                            sumCentroid += currentCentroid;
+                            framesCount++;
+                            
                             if (audioBuf.length >= MAX_FRAMES) {
                                 flushAudioToWhisper();
                                 state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
@@ -194,43 +236,41 @@
             } else if (type === 'reset_state') {
                 state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
                 audioBuf = []; preRoll = []; isSpeaking = false; silenceFrames = 0;
+                sumCentroid = 0; framesCount = 0; speakerProfiles = [];
             }
         };
     `;
 
-    // --- 2. WORKER WHISPER (Queue Controller) ---
+    // --- 2. WORKER WHISPER ---
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
-        
         env.allowLocalModels = false;
         env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
-        
+        env.useBrowserCache = true;
+        env.cacheDir = 'whisp_models_cache';
+
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian";
 
-        async function processNext() {
+        function processNext() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true;
-            const audioData = queue.shift();
-            try {
-                const res = await transcriber(new Float32Array(audioData), { 
-                    language: currentLanguage, 
-                    task: 'transcribe', 
-                    without_timestamps: true,
-                    chunk_length_s: 30,
-                    stride_length_s: 5,
-                    // BLOCCO ALLUCINAZIONI ATTIVO
-                    repetition_penalty: 1.2,
-                    no_repeat_ngram_size: 3,
-                    condition_on_previous_text: false
-                });
-                self.postMessage({ type: 'final', text: res.text });
-            } catch (err) {
-                console.error("WHISPER ERR:", err);
-                self.postMessage({ type: 'final', text: "[ERRORE_AUDIO]" });
-            } finally {
-                isBusy = false;
-                processNext();
-            }
+            const item = queue.shift(); 
+            transcriber(new Float32Array(item.audioBuffer), { 
+                language: currentLanguage, 
+                task: 'transcribe', 
+                without_timestamps: true,
+                chunk_length_s: 30,
+                stride_length_s: 5,
+                repetition_penalty: 1.2,
+                no_repeat_ngram_size: 3,
+                condition_on_previous_text: false
+            }).then(res => {
+                self.postMessage({ type: 'final', text: res.text, speaker: item.speaker });
+                isBusy = false; processNext(); 
+            }).catch(err => {
+                self.postMessage({ type: 'final', text: "[ERRORE_AUDIO]", speaker: item.speaker });
+                isBusy = false; processNext();
+            });
         }
 
         self.onmessage = async (e) => {
@@ -252,7 +292,7 @@
                 currentLanguage = language;
                 port.onmessage = (vadEvent) => {
                     if (vadEvent.data.type === 'transcribe') {
-                        queue.push(vadEvent.data.audioBuffer);
+                        queue.push({ audioBuffer: vadEvent.data.audioBuffer, speaker: vadEvent.data.speaker });
                         processNext();
                     }
                 };
@@ -260,25 +300,21 @@
         };
     `;
 
-    // Bootstrap Workers
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
 
-    // Establish direct VAD <-> Whisper channel
     const workerChannel = new MessageChannel();
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
     whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2, language: UI.languageSelect.value }, [workerChannel.port2]);
 
     let audioCtx, worklet, stream, isSessionActive = false;
     let vadReady = false, whisperReady = false;
-    let lastChar = ".";
+    let animationFrameId;
 
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
     UI.output.appendChild(interimSpan);
 
-    UI.languageSelect.onchange = (e) => {
-        whisperWorker.postMessage({ type: 'update_language', language: e.target.value });
-    };
+    UI.languageSelect.onchange = (e) => whisperWorker.postMessage({ type: 'update_language', language: e.target.value });
 
     whisperWorker.onmessage = (e) => {
         const d = e.data;
@@ -292,18 +328,9 @@
         } else if (d.type === 'final' && isSessionActive) {
             let newText = d.text ? d.text.trim() : "";
             if (newText.length > 1) {
-                let prefix = " ";
-                
-                if (lastChar.match(/[.!?]/)) {
-                    newText = newText.charAt(0).toUpperCase() + newText.slice(1);
-                } else if (newText.match(/^[.,!?]/)) {
-                    prefix = "";
-                } else {
-                    newText = newText.charAt(0).toLowerCase() + newText.slice(1);
-                }
-
-                UI.output.insertBefore(document.createTextNode(prefix + newText), interimSpan);
-                lastChar = newText.slice(-1); 
+                newText = newText.charAt(0).toUpperCase() + newText.slice(1);
+                let textToAppend = `\n[${d.speaker}] >> ${newText} `;
+                UI.output.insertBefore(document.createTextNode(textToAppend), interimSpan);
                 UI.output.scrollTop = UI.output.scrollHeight;
             }
             if (!UI.vadLed.classList.contains('active')) UI.status.innerText = "LISTENING";
@@ -347,7 +374,6 @@
     async function start() {
         try {
             isSessionActive = true;
-            
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
             audioCtx = new AudioContextClass({ sampleRate: 16000 });
             await audioCtx.resume();
@@ -360,6 +386,12 @@
                 ? await navigator.mediaDevices.getDisplayMedia(constraints) 
                 : await navigator.mediaDevices.getUserMedia(constraints);
 
+            /// ADDED: AnalyserNode per estrarre il Centroide Spettrale in hardware
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 512; 
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
             const workletStr = `
                 class P extends AudioWorkletProcessor {
                     constructor() { 
@@ -368,23 +400,19 @@
                     }
                     process(inputs) {
                         const input = inputs[0][0]; if (!input) return true;
-                        let s = 0, zcr = 0, lastSign = 0;
+                        let s = 0;
                         for (let i=0; i<input.length; i++) {
                             const sample = input[i];
                             s += sample * sample;
-                            const sign = Math.sign(sample);
-                            if (sign !== 0 && sign !== lastSign) { zcr++; lastSign = sign; }
                             this.buf[this.ptr++] = sample;
-                            
                             if (this.ptr >= 512) {
                                 const rms = Math.sqrt(s/512);
                                 const bufferToTransfer = this.buf.buffer;
-                                
-                                this.port.postMessage({ rms, zcr }); 
+                                this.port.postMessage({ rms }); 
                                 if (this.vadPort) {
                                     this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
                                 }
-                                this.buf = new Float32Array(512); this.ptr = 0; s = 0; zcr = 0; lastSign = 0;
+                                this.buf = new Float32Array(512); this.ptr = 0; s = 0;
                             }
                         }
                         return true;
@@ -406,7 +434,23 @@
             };
 
             const source = audioCtx.createMediaStreamSource(stream);
-            source.connect(worklet);
+            source.connect(analyser); // Connesso prima dell'Analyser
+            analyser.connect(worklet);
+
+            /// ADDED: Loop a 60fps per calcolare il Centroide Spettrale e inviarlo al VAD
+            function extractFeatures() {
+                if (!isSessionActive) return;
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0, weight = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    sum += i * dataArray[i];
+                    weight += dataArray[i];
+                }
+                const centroid = weight === 0 ? 0 : sum / weight;
+                vadWorker.postMessage({ type: 'audio_features', centroid: centroid });
+                animationFrameId = requestAnimationFrame(extractFeatures);
+            }
+            extractFeatures();
 
             UI.status.innerText = "LISTENING";
             UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
@@ -415,6 +459,7 @@
 
     async function stop() {
         isSessionActive = false; 
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
         vadWorker.postMessage({ type: 'reset_state' });
         if (worklet) worklet.disconnect();
         if (audioCtx && audioCtx.state !== 'closed') await audioCtx.close();
@@ -426,11 +471,7 @@
     }
 
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
-    UI.clearBtn.onclick = () => { 
-        UI.output.innerHTML = ""; 
-        UI.output.appendChild(interimSpan); 
-        lastChar = ".";
-    };
+    UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
     UI.exportBtn.onclick = () => { 
         const blob = new Blob([UI.output.innerText], { type: 'text/plain' });
