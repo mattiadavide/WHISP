@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 2.0</title>
+    <title>WHISP // TERMINAL</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -55,7 +55,13 @@
 </div>
 
 <div class="status-bar">
-    <div>STATUS: <span id="status" class="blink">IDLE</span></div>
+    <div>
+        STATUS: <span id="status" class="blink">IDLE</span>
+        <div id="progress-container" style="display:none; margin-top:10px;">
+            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING: 0%</div>
+            <div id="ascii-bar">[--------------------]</div>
+        </div>
+    </div>
     <div class="stats-panel" style="display: flex; flex-direction: column; gap: 6px;">
         <div class="stat-row"><span>INPUT_RMS</span><div class="bar-bg"><div id="volFill" class="bar-fill" style="background: #444;"></div></div></div>
         <div class="stat-row"><span>NEURAL_VAD</span><div class="bar-bg"><div id="vadFill" class="bar-fill" style="background: var(--term-main);"></div></div></div>
@@ -77,63 +83,74 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
+    // --- DIZIONARIO E UTILS ---
     const PHONETIC_DICT = { "l'automatica": "Lottomatica", "Radio Corpo": "Radiocor", "Zing": "Sync" };
-
     function applyPhoneticCorrections(text) {
         if (!text) return text;
         let processedText = text;
         for (const [wrong, right] of Object.entries(PHONETIC_DICT)) {
-            const regex = new RegExp(`\\b${wrong.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'gi');
+            const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
             processedText = processedText.replace(regex, right);
         }
         return processedText;
     }
 
     const UI = {
-        status: document.getElementById('status'), precisionSelect: document.getElementById('precisionSelect'),
-        languageSelect: document.getElementById('languageSelect'), audioSource: document.getElementById('audioSource'),
-        loadBtn: document.getElementById('loadBtn'), startBtn: document.getElementById('startBtn'),
-        stopBtn: document.getElementById('stopBtn'), output: document.getElementById('output'),
-        vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'),
-        volFill: document.getElementById('volFill'), probVal: document.getElementById('probVal'),
-        clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
-        exportBtn: document.getElementById('exportBtn')
+        status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
+        progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
+        precisionSelect: document.getElementById('precisionSelect'), languageSelect: document.getElementById('languageSelect'),
+        audioSource: document.getElementById('audioSource'), loadBtn: document.getElementById('loadBtn'),
+        startBtn: document.getElementById('startBtn'), stopBtn: document.getElementById('stopBtn'),
+        output: document.getElementById('output'), vadLed: document.getElementById('vadLed'),
+        vadFill: document.getElementById('vadFill'), volFill: document.getElementById('volFill'),
+        probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'),
+        copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn')
     };
 
-    const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER" };
+    const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA" };
     for (const [c, n] of Object.entries(LANGUAGES)) {
         const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o);
     }
+    UI.languageSelect.value = "italian";
 
-    // --- WORKER VAD (CORE LOGIC) ---
+    // --- WORKER VAD (Logica PULL + Resampling Matematico) ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-
-        let vadModel = null, state = null, whisperPort = null;
-        let isSpeaking = false, silenceFrames = 0, isWhisperReady = false;
-        let pendingChunks = [], audioArr = null, ptrArr = null, nativeRate = 16000, readPtr = 0;
         
-        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
-        let SILENCE_LIMIT = 25, PRE_ROLL_CAPACITY = 10;
-        const audioBuf = new Float32Array(MAX_FRAMES * 512);
-        const preRoll = new Float32Array(24 * 512);
-        let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
+        let vadModel, state, whisperPort, isSpeaking = false, silenceFrames = 0;
+        let isWhisperReady = false, pendingChunks = [];
+        let audioArr, ptrArr, nativeRate = 16000, readPtr = 0;
         let internalBuffer = new Float32Array(512), internalPtr = 0;
 
-        // FIX 3: Resampling Matematico (No DOM API)
+        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
+        let SILENCE_LIMIT = 25, PRE_ROLL_CAPACITY = 10;
+        const audioBuf = new Float32Array(MAX_FRAMES * 512), preRoll = new Float32Array(24 * 512);
+        let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
+
+        // FIX 3: Resampler Matematico Anti-Aliasing (No DOM API)
         function resample(chunk, inRate, outRate) {
             if (inRate === outRate) return chunk;
             const ratio = inRate / outRate;
-            const outLength = Math.floor(chunk.length / ratio);
-            const resampled = new Float32Array(outLength);
-            for (let i = 0; i < outLength; i++) {
-                let sum = 0, count = 0, inIdx = i * ratio;
-                const start = Math.max(0, Math.floor(inIdx) - 1), end = Math.min(chunk.length, Math.ceil(inIdx) + 1);
-                for (let j = start; j < end; j++) { sum += chunk[j]; count++; }
-                resampled[i] = sum / count;
+            const outLen = Math.floor(chunk.length / ratio);
+            const res = new Float32Array(outLen);
+            const filterSize = Math.max(1, Math.ceil(ratio));
+            for (let i = 0; i < outLen; i++) {
+                let sum = 0, count = 0, start = Math.floor(i * ratio);
+                for (let j = 0; j < filterSize && (start + j) < chunk.length; j++) {
+                    sum += chunk[start + j]; count++;
+                }
+                res[i] = sum / count;
             }
-            return resampled;
+            return res;
+        }
+
+        function trySend() {
+            if (isWhisperReady && pendingChunks.length > 0) {
+                isWhisperReady = false;
+                const c = pendingChunks.shift();
+                whisperPort.postMessage({ type: 'transcribe', audioBuffer: c.buffer }, [c.buffer]);
+            }
         }
 
         async function runVAD(audioChunk) {
@@ -143,121 +160,116 @@
                 if (audioBufPtr >= MAX_FRAMES) flush();
             } else {
                 preRoll.set(audioChunk, preRollPtr * 512);
-                preRollPtr = (preRollPtr + 1) % PRE_ROLL_CAPACITY;
-                if (preRollCount < PRE_ROLL_CAPACITY) preRollCount++;
+                preRollPtr = (preRollPtr + 1) % 24;
+                if (preRollCount < 24) preRollCount++;
             }
-            try {
-                const out = await vadModel({ input: new Tensor('float32', audioChunk, [1, 512]), sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
-                state = out.stateN || out.staten || state;
-                const prob = out.output.data[0];
-                if (prob > (isSpeaking ? THRESHOLD_HOLD : THRESHOLD_START)) {
-                    if (!isSpeaking) {
-                        isSpeaking = true; audioBufPtr = 0;
-                        for (let i = 0; i < preRollCount; i++) {
-                            let idx = (preRollPtr - preRollCount + i + PRE_ROLL_CAPACITY) % PRE_ROLL_CAPACITY;
-                            audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
-                        }
+            const out = await vadModel({ input: new Tensor('float32', audioChunk, [1, 512]), sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
+            state = out.stateN || out.staten || state;
+            const prob = out.output.data[0];
+            if (prob > (isSpeaking ? THRESHOLD_HOLD : THRESHOLD_START)) {
+                if (!isSpeaking) {
+                    isSpeaking = true; audioBufPtr = 0;
+                    for (let i = 0; i < preRollCount; i++) {
+                        let idx = (preRollPtr - preRollCount + i + 24) % 24;
+                        audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
                     }
-                    silenceFrames = 0;
-                } else if (isSpeaking) {
-                    silenceFrames++;
-                    if (silenceFrames > SILENCE_LIMIT) { isSpeaking = false; flush(); }
                 }
-                self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
-            } catch (e) {}
+                silenceFrames = 0;
+            } else if (isSpeaking) {
+                if (++silenceFrames > SILENCE_LIMIT) { isSpeaking = false; flush(); }
+            }
+            self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
         }
 
         function flush() {
             if (audioBufPtr > 5) {
-                const data = new Float32Array(audioBuf.subarray(0, audioBufPtr * 512));
-                pendingChunks.push(data); sendToWhisper();
+                const flat = new Float32Array(audioBuf.subarray(0, audioBufPtr * 512));
+                pendingChunks.push(flat); trySend();
             }
-            audioBufPtr = 0; preRollCount = 0; silenceFrames = 0;
-            state = new Tensor('float32', new Float32Array(2*1*128).fill(0), [2, 1, 128]);
+            audioBufPtr = 0; preRollCount = 0; preRollPtr = 0;
+            state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
         }
 
-        function sendToWhisper() {
-            if (isWhisperReady && pendingChunks.length > 0) {
-                isWhisperReady = false;
-                const chunk = pendingChunks.shift();
-                whisperPort.postMessage({ type: 'transcribe', audioBuffer: chunk.buffer }, [chunk.buffer]);
-            }
-        }
-
-        async function poll() {
+        function poll() {
             if (!audioArr) return;
             let w = Atomics.load(ptrArr, 0);
             if (w === readPtr) return;
-            let len = audioArr.length, chunk;
-            if (w > readPtr) { chunk = audioArr.slice(readPtr, w); } 
-            else { chunk = new Float32Array(len - readPtr + w); chunk.set(audioArr.subarray(readPtr, len)); chunk.set(audioArr.subarray(0, w), len - readPtr); }
+            let avail = w > readPtr ? w - readPtr : (audioArr.length - readPtr + w);
+            let chunk = new Float32Array(avail);
+            if (w > readPtr) chunk.set(audioArr.subarray(readPtr, w));
+            else { chunk.set(audioArr.subarray(readPtr)); chunk.set(audioArr.subarray(0, w), audioArr.length - readPtr); }
             readPtr = w;
-            
             let resampled = resample(chunk, nativeRate, 16000);
-            for (let i = 0; i < resampled.length; i++) {
-                internalBuffer[internalPtr++] = resampled[i];
-                if (internalPtr === 512) { await runVAD(new Float32Array(internalBuffer)); internalPtr = 0; }
+            for (let s of resampled) {
+                internalBuffer[internalPtr++] = s;
+                if (internalPtr === 512) { runVAD(new Float32Array(internalBuffer)); internalPtr = 0; }
             }
         }
 
         self.onmessage = async (e) => {
             if (e.data.type === 'init_sab') {
                 audioArr = new Float32Array(e.data.audioSAB); ptrArr = new Int32Array(e.data.pointerSAB);
-                nativeRate = e.data.rate; setInterval(poll, 40);
+                nativeRate = e.data.rate; setInterval(poll, 20);
             } else if (e.data.type === 'load') {
                 vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
-                state = new Tensor('float32', new Float32Array(2*1*128).fill(0), [2, 1, 128]);
+                state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
                 self.postMessage({ type: 'ready' });
             } else if (e.data.type === 'init_whisper_port') {
                 whisperPort = e.data.port;
-                whisperPort.onmessage = (ev) => { if (ev.data.type === 'READY_FOR_NEXT') { isWhisperReady = true; sendToWhisper(); }};
+                whisperPort.onmessage = (ev) => { if (ev.data.type === 'READY_FOR_NEXT') { isWhisperReady = true; trySend(); } };
             }
         };
     `;
 
-    // --- WORKER WHISPER ---
+    // --- WORKER WHISPER (Architettura PULL) ---
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
-        env.allowLocalModels = false;
-        let transcriber = null, currentLang = "italian", vadPort = null;
-
+        let transcriber, currentLang = "italian", vadPort;
         self.onmessage = async (e) => {
             if (e.data.type === 'load') {
                 const model = e.data.precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
                 transcriber = await pipeline('automatic-speech-recognition', model, { 
-                    device: 'webgpu', dtype: 'q4f16', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
+                    device: 'webgpu', dtype: e.data.precision === 'fp16' ? 'fp16' : 'q4f16',
+                    progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress })
                 }).catch(() => pipeline('automatic-speech-recognition', model, { device: 'wasm', dtype: 'q8' }));
                 self.postMessage({ type: 'READY_TO_PROCESS' });
                 if (vadPort) vadPort.postMessage({ type: 'READY_FOR_NEXT' });
             } else if (e.data.type === 'init_vad_port') {
                 vadPort = e.data.port;
-                vadPort.onmessage = async (v) => {
-                    const res = await transcriber(new Float32Array(v.data.audioBuffer), { language: currentLang, task: 'transcribe' });
-                    self.postMessage({ type: 'final', text: res.text });
-                    vadPort.postMessage({ type: 'READY_FOR_NEXT' });
+                vadPort.onmessage = async (ev) => {
+                    if (ev.data.type === 'transcribe') {
+                        const res = await transcriber(new Float32Array(ev.data.audioBuffer), { language: currentLang, task: 'transcribe' });
+                        self.postMessage({ type: 'final', text: res.text });
+                        vadPort.postMessage({ type: 'READY_FOR_NEXT' });
+                    }
                 };
-            } else if (e.data.type === 'update_language') { currentLang = e.data.language; }
+            }
         };
     `;
 
-    const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
-    const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
+    // --- MAIN ENGINE ---
+    const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'text/javascript' })), { type: 'module' });
+    const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'text/javascript' })), { type: 'module' });
     const channel = new MessageChannel();
     vadWorker.postMessage({ type: 'init_whisper_port', port: channel.port1 }, [channel.port1]);
     whisperWorker.postMessage({ type: 'init_vad_port', port: channel.port2 }, [channel.port2]);
 
-    let audioCtx, worklet, stream, lastChar = ".";
+    let audioCtx, worklet, stream, isSessionActive = false, lastChar = ".";
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
     UI.output.appendChild(interimSpan);
 
     whisperWorker.onmessage = (e) => {
-        if (e.data.type === 'READY_TO_PROCESS') {
-            UI.status.innerText = "ONLINE"; UI.startBtn.disabled = false; UI.loadBtn.style.display = 'none';
-        } else if (e.data.type === 'final') {
+        if (e.data.type === 'progress') {
+            UI.progressContainer.style.display = 'block';
+            UI.progressText.innerText = 'FETCHING_CORE: ' + Math.round(e.data.p) + '%';
+        } else if (e.data.type === 'READY_TO_PROCESS') {
+            UI.status.innerText = "ONLINE"; UI.startBtn.disabled = false; UI.progressContainer.style.display = 'none';
+        } else if (e.data.type === 'final' && isSessionActive) {
+            // FIX 4: Aggiornamento O(1) con delta update
             let txt = applyPhoneticCorrections(e.data.text.trim());
             if (txt.length > 1) {
-                let pfx = lastChar.match(/[.!?]/) ? " " : " ";
-                const node = document.createTextNode(pfx + txt);
+                let prefix = lastChar.match(/[.!?]/) ? " " : " ";
+                const node = document.createTextNode(prefix + txt);
                 UI.output.insertBefore(node, interimSpan);
                 lastChar = txt.slice(-1); UI.output.scrollTop = UI.output.scrollHeight;
             }
@@ -269,44 +281,47 @@
         else if (e.data.type === 'vad_ui_update') {
             UI.vadFill.style.width = (e.data.prob * 100) + "%";
             UI.vadLed.classList.toggle('active', e.data.isSpeaking);
-            UI.status.innerText = e.data.isSpeaking ? "RECORDING" : "LISTENING";
         }
     };
 
-    UI.loadBtn.onclick = () => vadWorker.postMessage({ type: 'load' });
+    UI.loadBtn.onclick = () => { UI.status.innerText = "LOADING..."; vadWorker.postMessage({ type: 'load' }); };
 
-    UI.startBtn.onclick = async () => {
+    async function start() {
+        isSessionActive = true;
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
         
-        // FIX 2: SharedArrayBuffer Setup
-        const audioSAB = new SharedArrayBuffer(audioCtx.sampleRate * 2 * 4);
-        const pointerSAB = new SharedArrayBuffer(4);
-        vadWorker.postMessage({ type: 'init_sab', audioSAB, pointerSAB, rate: audioCtx.sampleRate });
-
-        const workletCode = `
+        // FIX 2: Zero-Allocation AudioWorklet con SAB
+        const workletStr = `
             class P extends AudioWorkletProcessor {
-                constructor() { super(); this.port.onmessage = (e) => { this.sab = new Float32Array(e.data.audioSAB); this.ptr = new Int32Array(e.data.pointerSAB); }; }
+                constructor() { super(); this.port.onmessage = (e) => { this.sab = e.data.sab; this.ptr = e.data.ptr; }; }
                 process(inputs) {
                     if (!this.sab) return true;
                     const input = inputs[0][0]; if (!input) return true;
                     let w = Atomics.load(this.ptr, 0);
-                    for (let i = 0; i < input.length; i++) { this.sab[w] = input[i]; w = (w + 1) % this.sab.length; }
+                    for (let i = 0; i < input.length; i++) {
+                        this.sab[w] = input[i]; w = (w + 1) % this.sab.length;
+                    }
                     Atomics.store(this.ptr, 0, w);
                     return true;
                 }
             }
             registerProcessor('p', P);
         `;
-        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' })));
+        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletStr], { type: 'text/javascript' })));
+        
+        const audioSAB = new SharedArrayBuffer(audioCtx.sampleRate * 2 * 4);
+        const pointerSAB = new SharedArrayBuffer(4);
         worklet = new AudioWorkletNode(audioCtx, 'p');
-        worklet.port.postMessage({ audioSAB, pointerSAB });
+        worklet.port.postMessage({ sab: new Float32Array(audioSAB), ptr: new Int32Array(pointerSAB) });
+        
+        vadWorker.postMessage({ type: 'init_sab', audioSAB, pointerSAB, rate: audioCtx.sampleRate });
         audioCtx.createMediaStreamSource(stream).connect(worklet);
-        UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
-    };
+        UI.status.innerText = "LISTENING"; UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
+    }
 
-    UI.stopBtn.onclick = () => location.reload();
-    UI.clearBtn.onclick = () => { UI.output.innerText = ""; UI.output.appendChild(interimSpan); };
+    UI.startBtn.onclick = start;
+    UI.stopBtn.onclick = () => location.reload(); // Hard reset per stabilità assoluta
 </script>
 </body>
 </html>
