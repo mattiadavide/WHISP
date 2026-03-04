@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="coi-serviceworker.js"></script>
     <title>WHISP // TERMINAL</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
@@ -402,18 +403,17 @@
                                     this.rmsCounter = 0;
                                 }
 
-                                // FIX: Allocation Safe Strategy
-                                if (this.vadPort) {
-                                    if (this.bufPool.length > 0) {
-                                        const bufferToTransfer = this.buf.buffer;
-                                        // O(1) Transferable Objects
-                                        this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
-                                        this.buf = this.bufPool.pop();
-                                    } else {
-                                        // ZERO-ALLOCATION POLICY: Pool vuoto. Scartiamo il frame per prevenire GC stall.
-                                        // this.buf non è stato trasferito, rimane intatto per la sovrascrittura.
-                                    }
-                                }
+                                // FIX: Allocation Safe Strategy (Semplificata)
+                                if (this.vadPort && this.bufPool.length > 0) {
+                                    const bufferToTransfer = this.buf.buffer;
+                                    // O(1) Transferable Objects
+                                    this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
+                                    // Peschiamo un nuovo buffer pulito dal pool
+                                    this.buf = this.bufPool.pop();
+                                } 
+                                // Se this.vadPort è nullo o il pool è vuoto, this.buf non viene trasferito.
+                                // Resettando this.ptr = 0, il prossimo ciclo sovrascriverà i dati (Zero-Allocation Drop Frame).
+                                
                                 this.ptr = 0; this.s = 0;
                             }
                         }
