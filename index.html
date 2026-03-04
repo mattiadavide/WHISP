@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL (REAL-TIME PREVIEW)</title>
+    <title>WHISP // TERMINAL_EVO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -16,7 +16,7 @@
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr 240px; gap: 20px; align-items: center; }
         #output { border: none; background: transparent; padding: 10px 0; min-height: 300px; max-height: calc(100vh - 460px); overflow-y: auto; line-height: 1.7; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; }
-        .interim-text { color: var(--term-dim); font-style: italic; opacity: 0.8; }
+        .interim-text { color: var(--term-dim); font-style: italic; }
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.75em; }
         .bar-bg { flex-grow: 1; height: 6px; background: #1a1a1a; border: 1px solid var(--term-dim); }
         .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s; }
@@ -38,7 +38,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_1.2_PREVIEW_ENABLED
+    > MODULE_BOOT: WHISP_CORE_2.0_SANIFIED
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -83,26 +83,8 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    (async function initPersistentStorage() {
-        if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
-    })();
-
-    const PHONETIC_DICT = {
-        "l'automatica": "Lottomatica", "Radio Corpo": "Radiocor",
-        "Zing": "Sync", "Vargrup": "Var Group", "K-Energy": "KEY Energy"
-    };
-
-    function applyPhoneticCorrections(text) {
-        if (!text) return text;
-        let processedText = text;
-        for (const [wrong, right] of Object.entries(PHONETIC_DICT)) {
-            const escapedWrong = wrong.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
-            const regex = new RegExp(`\\b${escapedWrong}\\b`, 'gi');
-            processedText = processedText.replace(regex, right);
-        }
-        return processedText;
-    }
-
+    const PHONETIC_DICT = { "l'automatica": "Lottomatica", "Radio Corpo": "Radiocor", "Zing": "Sync", "Vargrup": "Var Group", "K-Energy": "KEY Energy" };
+    const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER", "russian": "RUS" };
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
@@ -115,69 +97,63 @@
         copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn')
     };
 
-    const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER", "russian": "RUS" };
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    let audioCtx, worklet, stream, isSessionActive = false, whisperReadyToProcess = false, lastChar = ".";
+    const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
+    UI.output.appendChild(interimSpan);
+
     for (const [c, n] of Object.entries(LANGUAGES)) {
         const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o);
     }
     UI.languageSelect.value = "italian";
 
-    // --- WORKER VAD (UPDATED FOR PARTIALS) ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-        let vadModel = null, state = null, whisperPort = null;
-        let isSpeaking = false, silenceFrames = 0;
-        let whisperQueueSize = 0, isWhisperOnline = false;
-        
-        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 1200;
+        let vadModel, state, whisperPort, isSpeaking = false, silenceFrames = 0, whisperQueueSize = 0, isWhisperOnline = false;
+        let whisperBufferPool = [];
+        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
         let SILENCE_LIMIT = 25, PRE_ROLL_CAPACITY = 10;
-        const PARTIAL_THRESHOLD = 35; // Flush anteprima ogni ~1.1 secondi
-
-        const MAX_PRE_ROLL = 24; 
         const audioBuf = new Float32Array(MAX_FRAMES * 512);
-        const preRoll = new Float32Array(MAX_PRE_ROLL * 512);
-        const ZERO_STATE = new Float32Array(2 * 1 * 128);
+        const preRoll = new Float32Array(24 * 512);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
-        
-        let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0, lastPartialFlush = 0;
+        let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
 
-        function flushAudioToWhisper(isFinal = true) {
-            if (!isWhisperOnline) return;
-            if (isFinal && whisperQueueSize > 5) { audioBufPtr = 0; return; }
-            if (!isFinal && (whisperQueueSize > 0 || audioBufPtr < 10)) return;
-
-            if (audioBufPtr > 5) {
-                const requiredLength = audioBufPtr * 512;
-                const flat = new Float32Array(audioBuf.subarray(0, requiredLength));
-                const bufferToTransfer = flat.buffer;
-
-                if (whisperPort) {
-                    whisperPort.postMessage({ 
-                        type: isFinal ? 'transcribe' : 'transcribe_partial', 
-                        audioBuffer: bufferToTransfer 
-                    }, [bufferToTransfer]);
-                }
+        function flushAudioToWhisper() {
+            if (!isWhisperOnline || audioBufPtr <= 5) return;
+            if (whisperQueueSize > 4) {
+                audioBufPtr = 0; preRollCount = 0; preRollPtr = 0;
+                return;
             }
-            if (isFinal) {
-                audioBufPtr = 0; preRollCount = 0; preRollPtr = 0; lastPartialFlush = 0;
+            const requiredLength = audioBufPtr * 512;
+            let bufferToTransfer;
+            const pooledIdx = whisperBufferPool.findIndex(b => b.byteLength >= requiredLength * 4);
+            if (pooledIdx !== -1) {
+                bufferToTransfer = whisperBufferPool.splice(pooledIdx, 1)[0];
+                new Float32Array(bufferToTransfer, 0, requiredLength).set(audioBuf.subarray(0, requiredLength));
+            } else {
+                bufferToTransfer = new Float32Array(audioBuf.subarray(0, requiredLength)).buffer;
             }
+            if (whisperPort) whisperPort.postMessage({ type: 'transcribe', audioBuffer: bufferToTransfer }, [bufferToTransfer]);
+            audioBufPtr = 0; preRollCount = 0; preRollPtr = 0;
         }
 
         self.onmessage = async (e) => {
             const { type, port, precision } = e.data;
             if (type === 'load') {
-                SILENCE_LIMIT = precision === 'q8-tiny' ? 60 : 30;
+                SILENCE_LIMIT = precision === 'q8-tiny' ? 60 : precision === 'q8' ? 30 : 25;
                 PRE_ROLL_CAPACITY = Math.floor(SILENCE_LIMIT * 0.4);
                 try {
                     vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
-                    state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
+                    state = new Tensor('float32', new Float32Array(2 * 1 * 128).fill(0), [2, 1, 128]);
                     self.postMessage({ type: 'ready' });
                 } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
             } else if (type === 'init_whisper_port') {
                 whisperPort = port;
-                whisperPort.onmessage = (ev) => { 
+                whisperPort.onmessage = (ev) => {
                     if (ev.data.type === 'queue_update') whisperQueueSize = ev.data.size;
                     else if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true;
+                    else if (ev.data.type === 'recycle_buffer') whisperBufferPool.push(ev.data.buffer);
                 };
             } else if (type === 'init_worklet_port') {
                 port.onmessage = async (workletEvent) => {
@@ -185,32 +161,18 @@
                         const audioChunk = new Float32Array(workletEvent.data.data);
                         if (isSpeaking) {
                             audioBuf.set(audioChunk, audioBufPtr * 512);
-                            audioBufPtr++;
-                            
-                            // Logica Anteprima: Se parliamo da un po', manda chunk parziale
-                            if (audioBufPtr - lastPartialFlush > PARTIAL_THRESHOLD) {
-                                flushAudioToWhisper(false);
-                                lastPartialFlush = audioBufPtr;
-                            }
-
-                            if (audioBufPtr >= MAX_FRAMES) {
-                                flushAudioToWhisper(true);
-                                state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
-                            }
+                            if (++audioBufPtr >= MAX_FRAMES) { flushAudioToWhisper(); state = new Tensor('float32', new Float32Array(2 * 1 * 128).fill(0), [2, 1, 128]); }
                         } else {
                             preRoll.set(audioChunk, preRollPtr * 512);
                             preRollPtr = (preRollPtr + 1) % PRE_ROLL_CAPACITY;
                             if (preRollCount < PRE_ROLL_CAPACITY) preRollCount++;
                         }
-
-                        const input = new Tensor('float32', audioChunk, [1, 512]);
-                        const out = await vadModel({ input, sr: SR_TENSOR, state });
+                        const out = await vadModel({ input: new Tensor('float32', audioChunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-
                         if (prob > (isSpeaking ? THRESHOLD_HOLD : THRESHOLD_START)) {
                             if (!isSpeaking) {
-                                isSpeaking = true; audioBufPtr = 0; lastPartialFlush = 0;
+                                isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
                                     let idx = (preRollPtr - preRollCount + i + PRE_ROLL_CAPACITY) % PRE_ROLL_CAPACITY;
                                     audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512);
@@ -218,167 +180,157 @@
                                 }
                             }
                             silenceFrames = 0;
-                        } else if (isSpeaking) {
-                            silenceFrames++;
-                            if (silenceFrames > SILENCE_LIMIT) {
-                                isSpeaking = false; flushAudioToWhisper(true);
-                                state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
-                            }
+                        } else if (isSpeaking && ++silenceFrames > SILENCE_LIMIT) {
+                            isSpeaking = false; flushAudioToWhisper();
+                            state = new Tensor('float32', new Float32Array(2 * 1 * 128).fill(0), [2, 1, 128]);
                         }
                         self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
                         port.postMessage({ type: 'return_buf', data: audioChunk.buffer }, [audioChunk.buffer]);
                     }
                 };
             } else if (type === 'reset_state') {
-                audioBufPtr = 0; isSpeaking = false; silenceFrames = 0;
+                state = new Tensor('float32', new Float32Array(2 * 1 * 128).fill(0), [2, 1, 128]);
+                audioBufPtr = 0; preRollPtr = 0; preRollCount = 0; isSpeaking = false; silenceFrames = 0;
             }
         };
     `;
 
-    // --- WORKER WHISPER (UPDATED FOR INTERIM) ---
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
-        let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
+        let transcriber, queue = [], isBusy = false, currentLanguage = "italian", vadPort;
 
         function processNext() {
             if (vadPort) vadPort.postMessage({ type: 'queue_update', size: queue.length });
             if (isBusy || queue.length === 0 || !transcriber) return;
-            
+            if (queue.length > 3) {
+                const dropped = queue.shift();
+                if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: dropped }, [dropped]);
+                return processNext();
+            }
             isBusy = true;
-            const item = queue.shift();
-            
-            transcriber(new Float32Array(item.buffer), { 
-                language: currentLanguage, task: 'transcribe', without_timestamps: true
-            }).then(res => {
-                self.postMessage({ type: item.isFinal ? 'final' : 'partial', text: res.text });
-                isBusy = false; processNext(); 
-            }).catch(err => {
-                isBusy = false; processNext();
-            });
+            const buf = queue.shift();
+            transcriber(new Float32Array(buf), { language: currentLanguage, task: 'transcribe', without_timestamps: true, chunk_length_s: 30, stride_length_s: 5 })
+                .then(res => {
+                    self.postMessage({ type: 'final', text: res.text });
+                    if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: buf }, [buf]);
+                    isBusy = false; processNext();
+                }).catch(() => {
+                    if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: buf }, [buf]);
+                    isBusy = false; processNext();
+                });
         }
 
         self.onmessage = async (e) => {
-            const { type, port, language, precision, audioBuffer } = e.data;
+            const { type, port, language, precision } = e.data;
             if (type === 'load') {
                 try {
-                    const modelName = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
+                    const model = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
                     const dtype = precision === 'fp16' ? 'fp16' : 'q4f16';
                     try {
-                        transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'webgpu', dtype, progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
-                    } catch (err) {
-                        transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'wasm', dtype: 'q8', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
+                        transcriber = await pipeline('automatic-speech-recognition', model, { device: 'webgpu', dtype, progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
+                    } catch {
+                        transcriber = await pipeline('automatic-speech-recognition', model, { device: 'wasm', dtype: 'q8', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
                     }
                     self.postMessage({ type: 'READY_TO_PROCESS' });
                     if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
                 } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
-            } else if (type === 'update_language') {
-                currentLanguage = language;
-            } else if (type === 'init_vad_port') {
+            } else if (type === 'update_language') { currentLanguage = language; }
+            else if (type === 'init_vad_port') {
                 vadPort = port;
-                vadPort.onmessage = (v) => {
-                    if (v.data.type === 'transcribe') {
-                        queue.push({ buffer: v.data.audioBuffer, isFinal: true });
-                        processNext();
-                    } else if (v.data.type === 'transcribe_partial') {
-                        if (!isBusy && queue.length === 0) {
-                            queue.push({ buffer: v.data.audioBuffer, isFinal: false });
-                            processNext();
-                        }
-                    }
-                };
+                vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push(ev.data.audioBuffer); processNext(); } };
             }
         };
     `;
 
-    // --- MAIN SCRIPT LOGIC ---
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const workerChannel = new MessageChannel();
-    
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
-    whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2 }, [workerChannel.port2]);
-
-    let audioCtx, worklet, stream, isSessionActive = false;
-    let whisperReadyToProcess = false, lastChar = "."; 
-
-    // Span per l'anteprima (testo che cambia)
-    const interimSpan = document.createElement('span'); 
-    interimSpan.className = 'interim-text';
-    UI.output.appendChild(interimSpan);
+    whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2, language: UI.languageSelect.value }, [workerChannel.port2]);
 
     whisperWorker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'progress') {
             UI.progressContainer.style.display = 'block';
             const p = Math.round(d.p || 0);
-            UI.progressText.innerText = 'FETCHING_CORE: ' + p + '%';
+            UI.progressText.innerText = 'CORE_LOAD: ' + p + '%';
             const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
         } else if (d.type === 'READY_TO_PROCESS') {
-            whisperReadyToProcess = true;
-            UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none';
-            UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
-        } else if (d.type === 'partial' && isSessionActive) {
-            // AGGIORNA ANTEPRIMA
-            let pText = d.text ? d.text.trim() : "";
-            if (pText.length > 0) {
-                interimSpan.innerText = " " + applyPhoneticCorrections(pText) + "...";
-                UI.output.scrollTop = UI.output.scrollHeight;
-            }
+            whisperReadyToProcess = true; UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none'; UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
         } else if (d.type === 'final' && isSessionActive) {
-            // CONSOLIDA TESTO
-            interimSpan.innerText = ""; // Pulisci anteprima
-            let newText = d.text ? d.text.trim() : "";
-            newText = applyPhoneticCorrections(newText);
-            
-            if (newText.length > 1) {
-                let prefix = " ";
-                if (lastChar.match(/[.!?]/)) newText = newText.charAt(0).toUpperCase() + newText.slice(1);
-                else if (newText.match(/^[.,!?]/)) prefix = "";
-                else newText = newText.charAt(0).toLowerCase() + newText.slice(1);
-                
-                UI.output.insertBefore(document.createTextNode(prefix + newText), interimSpan);
-                lastChar = newText.slice(-1); 
-                UI.output.scrollTop = UI.output.scrollHeight;
+            let t = d.text ? d.text.trim() : "";
+            for (const [w, r] of Object.entries(PHONETIC_DICT)) t = t.replace(new RegExp(`\\b${w.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}\\b`, 'gi'), r);
+            if (t.length > 1) {
+                let p = " ";
+                if (lastChar.match(/[.!?]/)) t = t.charAt(0).toUpperCase() + t.slice(1);
+                else if (t.match(/^[.,!?]/)) p = ""; else t = t.charAt(0).toLowerCase() + t.slice(1);
+                UI.output.insertBefore(document.createTextNode(p + t), interimSpan);
+                lastChar = t.slice(-1); UI.output.scrollTop = UI.output.scrollHeight;
             }
         }
     };
 
     vadWorker.onmessage = (e) => {
         const d = e.data;
-        if (d.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
+        if (d.type === 'ready') { UI.status.innerText = "INIT_WHISPER..."; whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value }); }
         else if (d.type === 'vad_ui_update') {
-            UI.probVal.innerText = "VAD: " + d.prob.toFixed(2);
-            UI.vadFill.style.width = (d.prob * 100) + "%";
-            if (d.isSpeaking) { UI.vadLed.classList.add('active'); UI.status.innerText = "RECORDING"; }
-            else { UI.vadLed.classList.remove('active'); UI.status.innerText = "LISTENING"; }
+            UI.probVal.innerText = "VAD: " + d.prob.toFixed(2); UI.vadFill.style.width = (d.prob * 100) + "%";
+            if (d.isSpeaking && !UI.vadLed.classList.contains('active')) { UI.vadLed.classList.add('active'); UI.status.innerText = "RECORDING"; }
+            else if (!d.isSpeaking && UI.vadLed.classList.contains('active')) { UI.vadLed.classList.remove('active'); UI.status.innerText = "LISTENING"; }
         }
-    };
-
-    UI.loadBtn.onclick = () => {
-        UI.loadBtn.disabled = true; UI.status.innerText = "INITIALIZING...";
-        vadWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
     };
 
     async function start() {
         try {
+            if (!whisperReadyToProcess) return;
             isSessionActive = true;
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            const AC = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AC(isSafari ? {} : { sampleRate: 16000 });
+            audioCtx.onstatechange = () => { if (audioCtx.state === 'suspended' && isSessionActive) audioCtx.resume(); };
             await audioCtx.resume();
-            stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true } });
-
+            stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true }) : await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+            
             const workletStr = `
                 class P extends AudioWorkletProcessor {
-                    constructor() { super(); this.buf = new Float32Array(512); this.ptr = 0; this.vadPort = null; }
+                    constructor(o) {
+                        super(); this.pool = []; for(let i=0; i<15; i++) this.pool.push(new Float32Array(512));
+                        this.buf = this.pool.pop(); this.ptr = 0; this.s = 0; this.rms = 0; this.vPort = null; this.ready = false;
+                        this.inRate = o.processorOptions.sampleRate || 16000; this.ratio = 16000 / this.inRate; this.phase = 0; this.last = 0;
+                        this.port.onmessage = (e) => {
+                            if (e.data.type === 'READY') this.ready = true;
+                            else if (e.data.type === 'init') {
+                                this.vPort = e.data.port;
+                                this.vPort.onmessage = (m) => { if (m.data.type === 'return_buf') this.pool.push(new Float32Array(m.data.data)); };
+                                this.port.postMessage({ type: 'ok' });
+                            }
+                        };
+                    }
+                    push(s) {
+                        this.s += s * s; this.buf[this.ptr++] = s;
+                        if (this.ptr >= 512) {
+                            if (++this.rms >= 4) { this.port.postMessage({ rms: Math.sqrt(this.s / 512) }); this.rms = 0; }
+                            if (this.vPort) {
+                                const b = this.buf.buffer; this.vPort.postMessage({ type: 'vad', data: b }, [b]);
+                                this.buf = this.pool.length ? this.pool.pop() : new Float32Array(512);
+                            }
+                            this.ptr = 0; this.s = 0;
+                        }
+                    }
                     process(inputs) {
-                        const input = inputs[0][0]; if (!input || !this.vadPort) return true;
-                        for (let i = 0; i < input.length; i++) {
-                            this.buf[this.ptr++] = input[i];
-                            if (this.ptr >= 512) {
-                                const b = this.buf.buffer.slice(0);
-                                this.vadPort.postMessage({ type: 'vad', data: b }, [b]);
-                                this.ptr = 0;
+                        if (!this.ready || !inputs[0][0]) return true;
+                        const inArr = inputs[0][0];
+                        for (let i = 0; i < inArr.length; i++) {
+                            const s = inArr[i];
+                            if (this.inRate === 16000) this.push(s);
+                            else {
+                                this.phase += this.ratio;
+                                while (this.phase >= 1) {
+                                    this.phase -= 1;
+                                    this.push(this.last + (s - this.last) * (1 - this.phase));
+                                }
+                                this.last = s;
                             }
                         }
                         return true;
@@ -386,29 +338,34 @@
                 }
                 registerProcessor('p', P);
             `;
-
-            const workletBlob = URL.createObjectURL(new Blob([workletStr], { type: 'application/javascript' }));
-            await audioCtx.audioWorklet.addModule(workletBlob);
-            worklet = new AudioWorkletNode(audioCtx, 'p');
+            await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletStr], { type: 'application/javascript' })));
+            worklet = new AudioWorkletNode(audioCtx, 'p', { processorOptions: { sampleRate: audioCtx.sampleRate } });
             const audioChannel = new MessageChannel();
+            const mapP = new Promise(r => worklet.port.onmessage = (e) => { if (e.data.type === 'ok') r(); else if (e.data.rms !== undefined) UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%"; });
             vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
-            worklet.port.postMessage({ type: 'init_port', port: audioChannel.port2 }, [audioChannel.port2]);
-
+            worklet.port.postMessage({ type: 'init', port: audioChannel.port2 }, [audioChannel.port2]);
+            await mapP;
+            worklet.port.postMessage({ type: 'READY' });
             audioCtx.createMediaStreamSource(stream).connect(worklet);
-            UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
-        } catch (e) { console.error(e); }
+            UI.status.innerText = "LISTENING"; UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
+        } catch (e) { UI.status.innerText = "ERROR"; }
     }
 
     async function stop() {
-        isSessionActive = false;
+        isSessionActive = false; vadWorker.postMessage({ type: 'reset_state' });
+        if (worklet) worklet.disconnect();
         if (audioCtx) await audioCtx.close();
         if (stream) stream.getTracks().forEach(t => t.stop());
-        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block';
-        interimSpan.innerText = "";
+        UI.status.innerText = "IDLE"; UI.vadLed.classList.remove('active'); UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block';
+        UI.volFill.style.width = "0%"; UI.vadFill.style.width = "0%";
     }
 
+    UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "INIT_VAD..."; vadWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value }); };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; };
+    UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
+    UI.exportBtn.onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([UI.output.innerText], { type: 'text/plain' })); a.download = `whisp_${Date.now()}.txt`; a.click(); };
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && isSessionActive && audioCtx) audioCtx.resume(); });
 </script>
 </body>
 </html>
