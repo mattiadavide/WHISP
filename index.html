@@ -86,7 +86,6 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
-    // --- PIPELINE DI POST-PROCESSING FONETICO ---
     const PHONETIC_DICT = {
         "l'automatica": "Lottomatica",
         "Radio Corpo": "Radiocor",
@@ -99,15 +98,12 @@
         if (!text) return text;
         let processedText = text;
         for (const [wrong, right] of Object.entries(PHONETIC_DICT)) {
-            // Sfugge i caratteri speciali per evitare errori nella Regex
             const escapedWrong = wrong.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
-            // Regex ignorando il case (/i), globale (/g), rispettando i word boundaries (\b)
             const regex = new RegExp(`\\b${escapedWrong}\\b`, 'gi');
             processedText = processedText.replace(regex, right);
         }
         return processedText;
     }
-    // --------------------------------------------
 
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
@@ -131,19 +127,31 @@
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null;
-        let audioBuf = [], preRoll = [], isSpeaking = false, silenceFrames = 0;
+        let isSpeaking = false, silenceFrames = 0;
         
         const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
         let SILENCE_LIMIT = 25, PRE_ROLL_CAPACITY = 10;
 
+        // --- ALLOCAZIONE STATICA E GLOBALE (ZERO-ALLOCATION POLICY) ---
+        const MAX_PRE_ROLL = 24; // 60 * 0.4 (Massima capacità teorica)
+        const audioBuf = new Float32Array(MAX_FRAMES * 512);
+        const preRoll = new Float32Array(MAX_PRE_ROLL * 512);
+        const ZERO_STATE = new Float32Array(2 * 1 * 128);
+        const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
+        
+        let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
+
         function flushAudioToWhisper() {
-            if (audioBuf.length > 5) {
-                const flat = new Float32Array(audioBuf.length * 512);
-                for (let i = 0; i < audioBuf.length; i++) flat.set(audioBuf[i], i * 512);
+            if (audioBufPtr > 5) {
+                // Whisper Worker necessita del Transferable, quindi l'unico punto in cui allochiamo è l'invio finale
+                const flat = new Float32Array(audioBufPtr * 512);
+                flat.set(audioBuf.subarray(0, audioBufPtr * 512));
                 const bufferToTransfer = flat.buffer;
                 if (whisperPort) whisperPort.postMessage({ type: 'transcribe', audioBuffer: bufferToTransfer }, [bufferToTransfer]);
             }
-            audioBuf = [...preRoll]; 
+            audioBufPtr = 0;
+            preRollCount = 0;
+            preRollPtr = 0;
         }
 
         self.onmessage = async (e) => {
@@ -157,7 +165,8 @@
                 
                 try {
                     vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
-                    state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
+                    ZERO_STATE.fill(0);
+                    state = new Tensor('float32', ZERO_STATE, [2, 1, 128]);
                     self.postMessage({ type: 'ready' });
                 } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
             } else if (type === 'init_whisper_port') {
@@ -166,43 +175,67 @@
                 port.onmessage = async (workletEvent) => {
                     if (workletEvent.data.type === 'vad' && vadModel) {
                         const audioChunk = new Float32Array(workletEvent.data.data);
+                        
+                        // Scrittura nei buffer pre-allocati tramite puntatori
                         if (isSpeaking) {
-                            audioBuf.push(audioChunk);
-                            if (audioBuf.length >= MAX_FRAMES) {
+                            audioBuf.set(audioChunk, audioBufPtr * 512);
+                            audioBufPtr++;
+                            if (audioBufPtr >= MAX_FRAMES) {
                                 flushAudioToWhisper();
-                                state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
+                                ZERO_STATE.fill(0);
+                                state = new Tensor('float32', ZERO_STATE, [2, 1, 128]);
                             }
                         } else {
-                            preRoll.push(audioChunk);
-                            if (preRoll.length > PRE_ROLL_CAPACITY) preRoll.shift();
+                            // Ring Buffer Logico per il pre-roll
+                            preRoll.set(audioChunk, preRollPtr * 512);
+                            preRollPtr = (preRollPtr + 1) % PRE_ROLL_CAPACITY;
+                            if (preRollCount < PRE_ROLL_CAPACITY) preRollCount++;
                         }
 
                         try {
                             const input = new Tensor('float32', audioChunk, [1, 512]);
-                            const sr = new Tensor('int64', BigInt64Array.from([16000n]), [1]);
-                            const out = await vadModel({ input, sr, state });
+                            const out = await vadModel({ input, sr: SR_TENSOR, state });
                             state = out.stateN || out.staten || state;
                             const prob = out.output.data[0];
 
                             if (prob > (isSpeaking ? THRESHOLD_HOLD : THRESHOLD_START)) {
-                                if (!isSpeaking) { isSpeaking = true; audioBuf = [...preRoll]; preRoll = []; }
+                                if (!isSpeaking) { 
+                                    isSpeaking = true; 
+                                    audioBufPtr = 0;
+                                    // Srotola il pre-roll cronologicamente in audioBuf
+                                    for (let i = 0; i < preRollCount; i++) {
+                                        let idx = (preRollPtr - preRollCount + i + PRE_ROLL_CAPACITY) % PRE_ROLL_CAPACITY;
+                                        audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512);
+                                        audioBufPtr++;
+                                    }
+                                    preRollCount = 0;
+                                    preRollPtr = 0;
+                                }
                                 silenceFrames = 0;
                             } else if (isSpeaking) {
                                 silenceFrames++;
                                 if (silenceFrames > SILENCE_LIMIT) {
                                     isSpeaking = false;
                                     flushAudioToWhisper();
-                                    state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
-                                    preRoll = [];
+                                    ZERO_STATE.fill(0);
+                                    state = new Tensor('float32', ZERO_STATE, [2, 1, 128]);
                                 }
                             }
                             self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
-                        } catch (err) { state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]); }
+                        } catch (err) {
+                            ZERO_STATE.fill(0);
+                            state = new Tensor('float32', ZERO_STATE, [2, 1, 128]);
+                        }
+
+                        // RIMANDA IL BUFFER AL POOL DEL WORKLET
+                        port.postMessage({ type: 'return_buf', data: audioChunk.buffer }, [audioChunk.buffer]);
                     }
                 };
             } else if (type === 'reset_state') {
-                state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
-                audioBuf = []; preRoll = []; isSpeaking = false; silenceFrames = 0;
+                ZERO_STATE.fill(0);
+                state = new Tensor('float32', ZERO_STATE, [2, 1, 128]);
+                audioBufPtr = 0; preRollPtr = 0; preRollCount = 0;
+                isSpeaking = false; silenceFrames = 0;
             }
         };
     `;
@@ -296,9 +329,7 @@
         } else if (d.type === 'final' && isSessionActive) {
             let newText = d.text ? d.text.trim() : "";
             
-            // --- ESECUZIONE DELLA PIPELINE FONETICA ---
             newText = applyPhoneticCorrections(newText);
-            // ------------------------------------------
 
             if (newText.length > 1) {
                 let prefix = " ";
@@ -366,27 +397,60 @@
             const workletStr = `
                 class P extends AudioWorkletProcessor {
                     constructor() { 
-                        super(); this.buf = new Float32Array(512); this.ptr = 0; this.vadPort = null;
-                        this.port.onmessage = (e) => { if (e.data.type === 'init_port') this.vadPort = e.data.port; };
+                        super(); 
+                        // Buffer Pool per garantire la zero-allocation durante i cicli di IPC Transferable
+                        this.bufPool = [];
+                        for(let i = 0; i < 15; i++) this.bufPool.push(new Float32Array(512));
+                        this.buf = this.bufPool.pop();
+                        
+                        this.ptr = 0; 
+                        this.s = 0; 
+                        this.rmsCounter = 0;
+                        this.vadPort = null;
+                        
+                        this.port.onmessage = (e) => { 
+                            if (e.data.type === 'init_port') {
+                                this.vadPort = e.data.port; 
+                                this.vadPort.onmessage = (msg) => {
+                                    // Ricicla il buffer restituito dal VAD Worker
+                                    if (msg.data.type === 'return_buf') {
+                                        this.bufPool.push(new Float32Array(msg.data.data));
+                                    }
+                                };
+                            }
+                        };
                     }
                     process(inputs) {
                         const input = inputs[0][0]; if (!input) return true;
-                        let s = 0;
-                        for (let i=0; i<input.length; i++) {
+                        
+                        for (let i = 0; i < input.length; i++) {
                             const sample = input[i];
-                            s += sample * sample;
+                            this.s += sample * sample; // Nota: spostato in 'this.s' per accumulare correttamente sui 512 frame
                             this.buf[this.ptr++] = sample;
+                            
                             if (this.ptr >= 512) {
-                                const rms = Math.sqrt(s/512);
+                                this.rmsCounter++;
+                                if (this.rmsCounter >= 4) { // Throttle: invio UI ogni ~128ms
+                                    this.port.postMessage({ rms: Math.sqrt(this.s / 512) }); 
+                                    this.rmsCounter = 0;
+                                }
+
                                 const bufferToTransfer = this.buf.buffer;
-                                this.port.postMessage({ rms }); 
-                                if (this.vadPort) this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
-                                this.buf = new Float32Array(512); this.ptr = 0; s = 0;
+                                if (this.vadPort) {
+                                    this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
+                                }
+                                
+                                // Preleva dal pool invece di allocare. Fallback super sicuro se i Worker laggano.
+                                this.buf = this.bufPool.length > 0 ? this.bufPool.pop() : new Float32Array(512);
+                                this.ptr = 0; 
+                                this.s = 0;
                             }
                         }
                         return true;
                     }
-                } registerProcessor('p', P);`;
+                } 
+                registerProcessor('p', P);
+            `;
 
             const workletBlobUrl = URL.createObjectURL(new Blob([workletStr], { type: 'application/javascript' }));
             await audioCtx.audioWorklet.addModule(workletBlobUrl);
