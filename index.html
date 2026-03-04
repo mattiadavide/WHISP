@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' blob: https://cdn.jsdelivr.net; connect-src 'self' blob: https://huggingface.co https://cdn.jsdelivr.net; worker-src 'self' blob: https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval' blob: https://cdn.jsdelivr.net; connect-src 'self' blob: https://huggingface.co https://*.huggingface.co https://cdn.jsdelivr.net https://raw.githubusercontent.com; worker-src 'self' blob: https://cdn.jsdelivr.net; img-src 'self' data: blob: https://raw.githubusercontent.com; style-src 'self' 'unsafe-inline';">
+    
     <link rel="manifest" href="manifest.json">
-    <script src="coi-serviceworker.js"></script>
     <title>WHISP // TERMINAL</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
@@ -28,7 +28,6 @@
     </style>
 </head>
 <body>
-
 <div class="ascii-art">
  ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
  ██║    ██║██║  ██║██║██╔════╝██╔══██╗
@@ -37,7 +36,6 @@
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
 </div>
-
 <div class="header">
     > MODULE_BOOT: WHISP_CORE_1.5_SECURE
     <div class="settings-panel">
@@ -54,7 +52,6 @@
         <button id="loadBtn">LOAD_VAULT()</button>
     </div>
 </div>
-
 <div class="status-bar">
     <div>
         STATUS: <span id="status" class="blink">OFFLINE_IDLE</span>
@@ -72,7 +69,6 @@
         </div>
     </div>
 </div>
-
 <div style="margin-bottom: 10px; display: flex; gap: 10px;">
     <button id="startBtn" disabled>EXEC_START()</button>
     <button id="stopBtn" style="display:none; color: var(--term-err); border-color: var(--term-err);">TERMINATE()</button>
@@ -80,9 +76,7 @@
     <button id="copyBtn">COPY</button>
     <button id="clearBtn">FLUSH</button>
 </div>
-
 <div id="output" contenteditable="true" spellcheck="false"></div>
-
 <script src="app.js" type="module"></script>
 </body>
 </html>
