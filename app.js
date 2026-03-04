@@ -10,18 +10,18 @@ const UI = {
     copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn')
 };
 
-// --- CONTROLLO INTEGRITÀ SISTEMA ---
-async function checkSystemRequirements() {
-    const report = {
+// --- CONTROLLO REQUISITI E ISOLAMENTO ---
+async function checkSystem() {
+    console.table({
         secureContext: window.isSecureContext,
         crossOriginIsolated: window.crossOriginIsolated,
-        serviceWorker: 'serviceWorker' in navigator,
         webGPU: !!navigator.gpu
-    };
-    console.table(report);
-    if (!report.crossOriginIsolated) {
-        UI.status.innerText = "SYS_WARN: COOP/COEP_MISSING";
-        UI.status.style.color = "var(--term-warn)";
+    });
+
+    if (window.isSecureContext && !window.crossOriginIsolated) {
+        UI.status.innerText = "ACTIVATING_ISOLATION...";
+        // Il Service Worker ha bisogno di un ricaricamento per applicare COOP/COEP
+        setTimeout(() => location.reload(), 1000);
     }
 }
 
@@ -31,37 +31,16 @@ for (const [c, n] of Object.entries(LANGUAGES)) {
 }
 UI.languageSelect.value = "italian";
 
-// Registrazione Service Worker Unificato (Privacy + Isolamento)
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js', { scope: './' }).then(reg => {
-        if (!window.crossOriginIsolated) {
-            console.log("Attivazione isolamento... Ricaricamento.");
-            location.reload();
-        }
-    }).catch(console.error);
-}
-
-async function ensureModelIsVaulted(precision) {
-    UI.status.innerText = "CHECKING_VAULT...";
-    const modelName = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
-    const cache = await caches.open('transformers-cache');
-    const modelFiles = [
-        `https://huggingface.co/${modelName}/resolve/main/config.json`,
-        `https://huggingface.co/${modelName}/resolve/main/tokenizer.json`
-    ];
-    let allInVault = true;
-    for (const url of modelFiles) {
-        const response = await cache.match(url);
-        if (!response) allInVault = false;
-    }
-    return allInVault;
+    navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(console.error);
 }
 
 const vadWorkerCode = `
     import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
     
-    // FORZA CONFIGURAZIONE REMOTA PER GITHUB PAGES
+    // CONFIGURAZIONE ASSOLUTA PER GITHUB PAGES
     env.allowLocalModels = false;
+    env.localModelPath = location.origin + location.pathname.replace(/[^/]*$/, '') + 'models/';
     env.remoteHost = 'https://huggingface.co/';
     env.remotePathTemplate = '{model}/resolve/{revision}/';
 
@@ -115,8 +94,8 @@ const vadWorkerCode = `
 const whisperWorkerCode = `
     import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
     
-    // FORZA CONFIGURAZIONE REMOTA PER GITHUB PAGES
     env.allowLocalModels = false;
+    env.localModelPath = location.origin + location.pathname.replace(/[^/]*$/, '') + 'models/';
     env.remoteHost = 'https://huggingface.co/';
     env.remotePathTemplate = '{model}/resolve/{revision}/';
 
@@ -132,7 +111,7 @@ const whisperWorkerCode = `
                     dtype: precision === 'fp16' ? 'fp16' : 'q8',
                     progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                 });
-                env.allowRemoteModels = false; // PRIVACY LOCK
+                env.allowRemoteModels = false; 
                 self.postMessage({ type: 'READY_TO_PROCESS' });
             } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
         } else if (type === 'init_vad_port') {
@@ -153,8 +132,6 @@ const channel = new MessageChannel();
 vadWorker.postMessage({ type: 'init_whisper_port', port: channel.port1 }, [channel.port1]);
 whisperWorker.postMessage({ type: 'init_vad_port', port: channel.port2 }, [channel.port2]);
 
-let audioCtx, stream;
-
 whisperWorker.onmessage = (e) => {
     if (e.data.type === 'progress') {
         UI.progressContainer.style.display = 'block';
@@ -167,9 +144,6 @@ whisperWorker.onmessage = (e) => {
     } else if (e.data.type === 'final') {
         UI.output.appendChild(document.createTextNode(" " + e.data.text.trim()));
         UI.output.scrollTop = UI.output.scrollHeight;
-    } else if (e.data.type === 'error') {
-        UI.status.innerText = "ERR: " + e.data.message;
-        UI.status.style.color = "var(--term-err)";
     }
 };
 
@@ -178,20 +152,15 @@ vadWorker.onmessage = (e) => {
     if (e.data.type === 'vad_ui_update') {
         UI.vadFill.style.width = (e.data.prob * 100) + "%";
         UI.vadLed.classList.toggle('active', e.data.isSpeaking);
-        UI.probVal.innerText = "VAD: " + e.data.prob.toFixed(2);
         UI.status.innerText = e.data.isSpeaking ? "RECORDING" : "LISTENING";
     }
 };
 
-UI.loadBtn.onclick = async () => {
-    UI.loadBtn.disabled = true;
-    await ensureModelIsVaulted(UI.precisionSelect.value);
-    vadWorker.postMessage({ type: 'load' });
-};
+UI.loadBtn.onclick = () => vadWorker.postMessage({ type: 'load' });
 
 UI.startBtn.onclick = async () => {
-    audioCtx = new AudioContext({ sampleRate: 16000 });
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const audioCtx = new AudioContext({ sampleRate: 16000 });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const blob = URL.createObjectURL(new Blob([`
         class P extends AudioWorkletProcessor {
             constructor() { super(); this.port.onmessage = (e) => this.vPort = e.data.port; }
@@ -215,13 +184,4 @@ UI.startBtn.onclick = async () => {
     UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
 };
 
-UI.stopBtn.onclick = () => {
-    if (audioCtx) audioCtx.close();
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    UI.status.innerText = "ONLINE"; UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block';
-};
-
-UI.clearBtn.onclick = () => UI.output.innerHTML = "";
-UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
-
-checkSystemRequirements();
+checkSystem();
