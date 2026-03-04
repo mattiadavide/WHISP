@@ -14,23 +14,14 @@ const UI = {
 async function checkSystemRequirements() {
     const report = {
         secureContext: window.isSecureContext,
-        crossOriginIsolated: window.crossOriginIsolated, // Verificato da coi-serviceworker.js
+        crossOriginIsolated: window.crossOriginIsolated,
         serviceWorker: 'serviceWorker' in navigator,
         webGPU: !!navigator.gpu
     };
-
     console.table(report);
-
     if (!report.crossOriginIsolated) {
         UI.status.innerText = "SYS_WARN: COOP/COEP_MISSING";
         UI.status.style.color = "var(--term-warn)";
-        console.warn("Isolamento cross-origin mancante. SharedArrayBuffer e performance WebAssembly saranno limitati.");
-    }
-
-    if (!report.secureContext) {
-        UI.status.innerText = "SYS_FAIL: NON_SECURE_CONTEXT";
-        UI.status.style.color = "var(--term-err)";
-        UI.loadBtn.disabled = true;
     }
 }
 
@@ -40,11 +31,14 @@ for (const [c, n] of Object.entries(LANGUAGES)) {
 }
 UI.languageSelect.value = "italian";
 
-// Registrazione Service Worker con scope relativo per GitHub Pages
+// Registrazione Service Worker Unificato (Privacy + Isolamento)
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js', { scope: './' })
-        .then(reg => console.log('SW_READY', reg.scope))
-        .catch(err => console.error('SW_FAIL', err));
+    navigator.serviceWorker.register('./sw.js', { scope: './' }).then(reg => {
+        if (!window.crossOriginIsolated) {
+            console.log("Attivazione isolamento... Ricaricamento.");
+            location.reload();
+        }
+    }).catch(console.error);
 }
 
 async function ensureModelIsVaulted(precision) {
@@ -66,7 +60,7 @@ async function ensureModelIsVaulted(precision) {
 const vadWorkerCode = `
     import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
     
-    // FORZA CONFIGURAZIONE REMOTA PER GITHUB PAGES (Risolve TypeError URL)
+    // FORZA CONFIGURAZIONE REMOTA PER GITHUB PAGES
     env.allowLocalModels = false;
     env.remoteHost = 'https://huggingface.co/';
     env.remotePathTemplate = '{model}/resolve/{revision}/';
@@ -121,7 +115,7 @@ const vadWorkerCode = `
 const whisperWorkerCode = `
     import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
     
-    // FORZA CONFIGURAZIONE REMOTA PER GITHUB PAGES (Evita errori di path locali)
+    // FORZA CONFIGURAZIONE REMOTA PER GITHUB PAGES
     env.allowLocalModels = false;
     env.remoteHost = 'https://huggingface.co/';
     env.remotePathTemplate = '{model}/resolve/{revision}/';
@@ -138,9 +132,7 @@ const whisperWorkerCode = `
                     dtype: precision === 'fp16' ? 'fp16' : 'q8',
                     progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                 });
-                
-                // PRIVACY LOCK: Impedisce future connessioni esterne
-                env.allowRemoteModels = false; 
+                env.allowRemoteModels = false; // PRIVACY LOCK
                 self.postMessage({ type: 'READY_TO_PROCESS' });
             } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
         } else if (type === 'init_vad_port') {
@@ -173,11 +165,10 @@ whisperWorker.onmessage = (e) => {
         UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none';
         UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
     } else if (e.data.type === 'final') {
-        const textNode = document.createTextNode(" " + e.data.text.trim());
-        UI.output.appendChild(textNode);
+        UI.output.appendChild(document.createTextNode(" " + e.data.text.trim()));
         UI.output.scrollTop = UI.output.scrollHeight;
     } else if (e.data.type === 'error') {
-        UI.status.innerText = "LOAD_FAIL: " + e.data.message;
+        UI.status.innerText = "ERR: " + e.data.message;
         UI.status.style.color = "var(--term-err)";
     }
 };
@@ -194,62 +185,43 @@ vadWorker.onmessage = (e) => {
 
 UI.loadBtn.onclick = async () => {
     UI.loadBtn.disabled = true;
-    UI.status.style.color = "";
-    const vaulted = await ensureModelIsVaulted(UI.precisionSelect.value);
-    if (!vaulted) UI.status.innerText = "SYNCING_FROM_VAULT...";
+    await ensureModelIsVaulted(UI.precisionSelect.value);
     vadWorker.postMessage({ type: 'load' });
 };
 
 UI.startBtn.onclick = async () => {
-    try {
-        audioCtx = new AudioContext({ sampleRate: 16000 });
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
-        const blob = URL.createObjectURL(new Blob([`
-            class P extends AudioWorkletProcessor {
-                constructor() { 
-                    super(); 
-                    this.vPort = null;
-                    this.port.onmessage = (e) => { if(e.data.port) this.vPort = e.data.port; }; 
+    audioCtx = new AudioContext({ sampleRate: 16000 });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const blob = URL.createObjectURL(new Blob([`
+        class P extends AudioWorkletProcessor {
+            constructor() { super(); this.port.onmessage = (e) => this.vPort = e.data.port; }
+            process(inputs) {
+                const input = inputs[0][0];
+                if (input && this.vPort) {
+                    const b = new Float32Array(input).buffer;
+                    this.vPort.postMessage({type:'vad', data:b}, [b]);
                 }
-                process(inputs) {
-                    const input = inputs[0][0];
-                    if (input && this.vPort) {
-                        const b = new Float32Array(input).buffer;
-                        this.vPort.postMessage({type:'vad', data:b}, [b]);
-                    }
-                    return true;
-                }
+                return true;
             }
-            registerProcessor('p', P);
-        `], { type: 'application/javascript' }));
-
-        await audioCtx.audioWorklet.addModule(blob);
-        const node = new AudioWorkletNode(audioCtx, 'p');
-        const ch = new MessageChannel();
-        
-        vadWorker.postMessage({ type: 'init_worklet_port', port: ch.port1 }, [ch.port1]);
-        node.port.postMessage({ port: ch.port2 }, [ch.port2]);
-        
-        audioCtx.createMediaStreamSource(stream).connect(node);
-        UI.startBtn.style.display = 'none'; 
-        UI.stopBtn.style.display = 'inline-block';
-    } catch (err) {
-        UI.status.innerText = "MIC_ERROR";
-        UI.status.style.color = "var(--term-err)";
-    }
+        }
+        registerProcessor('p', P);
+    `], { type: 'application/javascript' }));
+    await audioCtx.audioWorklet.addModule(blob);
+    const node = new AudioWorkletNode(audioCtx, 'p');
+    const ch = new MessageChannel();
+    vadWorker.postMessage({ type: 'init_worklet_port', port: ch.port1 }, [ch.port1]);
+    node.port.postMessage({ port: ch.port2 }, [ch.port2]);
+    audioCtx.createMediaStreamSource(stream).connect(node);
+    UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
 };
 
 UI.stopBtn.onclick = () => {
     if (audioCtx) audioCtx.close();
     if (stream) stream.getTracks().forEach(t => t.stop());
-    UI.status.innerText = "ONLINE"; 
-    UI.stopBtn.style.display = 'none'; 
-    UI.startBtn.style.display = 'inline-block';
+    UI.status.innerText = "ONLINE"; UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block';
 };
 
 UI.clearBtn.onclick = () => UI.output.innerHTML = "";
 UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
 
-// Esegui il check iniziale
 checkSystemRequirements();
