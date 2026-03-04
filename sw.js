@@ -1,8 +1,7 @@
 const ALLOWED_DOMAINS = [
     'huggingface.co',
     'cdn-lfs.huggingface.co',
-    'cdn.jsdelivr.net',
-    'raw.githubusercontent.com'
+    'cdn.jsdelivr.net'
 ];
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -22,8 +21,8 @@ self.addEventListener('fetch', (event) => {
         fetch(event.request).then(response => {
             if (response.status === 0) return response;
             
-            // Iniezione header per isolamento (COOP/COEP) e CORP
             const newHeaders = new Headers(response.headers);
+            // Iniezione header per SharedArrayBuffer e superamento blocchi CORP
             newHeaders.set("Cross-Origin-Embedder-Policy", "require-corp");
             newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
             newHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
