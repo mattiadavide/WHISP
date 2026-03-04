@@ -10,15 +10,38 @@ const UI = {
     copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn')
 };
 
+// --- CONTROLLO INTEGRITÀ SISTEMA ---
+async function checkSystemRequirements() {
+    const report = {
+        secureContext: window.isSecureContext,
+        crossOriginIsolated: window.crossOriginIsolated,
+        serviceWorker: 'serviceWorker' in navigator,
+        webGPU: !!navigator.gpu
+    };
+
+    console.table(report);
+
+    if (!report.crossOriginIsolated) {
+        UI.status.innerText = "SYS_WARN: COOP/COEP_MISSING";
+        UI.status.style.color = "var(--term-warn)";
+    }
+
+    if (!report.secureContext) {
+        UI.status.innerText = "SYS_FAIL: NON_SECURE_CONTEXT";
+        UI.status.style.color = "var(--term-err)";
+        UI.loadBtn.disabled = true;
+    }
+}
+
 const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER", "russian": "RUS" };
 for (const [c, n] of Object.entries(LANGUAGES)) {
     const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o);
 }
 UI.languageSelect.value = "italian";
 
-// Registrazione Service Worker per PWA e Privacy Firewall
+// Registrazione Service Worker con scope corretto per GitHub Pages
 if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(console.error);
+    navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(console.error);
 }
 
 async function ensureModelIsVaulted(precision) {
@@ -42,7 +65,7 @@ const vadWorkerCode = `
     env.allowLocalModels = true;
     env.allowRemoteModels = true; 
     let vadModel = null, state = null, whisperPort = null, isWhisperOnline = false;
-    let isSpeaking = false, silenceFrames = 0, whisperQueueSize = 0; 
+    let isSpeaking = false, silenceFrames = 0; 
     const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
     const audioBuf = new Float32Array(900 * 512);
     let audioBufPtr = 0;
@@ -100,7 +123,7 @@ const whisperWorkerCode = `
                 device: precision === 'fp16' ? 'webgpu' : 'wasm', dtype: precision === 'fp16' ? 'fp16' : 'q8',
                 progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
             });
-            env.allowRemoteModels = false; // PRIVACY LOCK
+            env.allowRemoteModels = false; // BLOCCO PRIVACY ATTIVATO
             self.postMessage({ type: 'READY_TO_PROCESS' });
         } else if (type === 'init_vad_port') {
             port.onmessage = async (v) => {
@@ -133,6 +156,7 @@ whisperWorker.onmessage = (e) => {
         UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
     } else if (e.data.type === 'final') {
         UI.output.appendChild(document.createTextNode(" " + e.data.text.trim()));
+        UI.output.scrollTop = UI.output.scrollHeight;
     }
 };
 
@@ -184,3 +208,4 @@ UI.stopBtn.onclick = () => {
 };
 
 UI.clearBtn.onclick = () => UI.output.innerHTML = "";
+checkSystemRequirements();
