@@ -10,7 +10,9 @@ const UI = {
     copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn')
 };
 
-// --- CONTROLLO REQUISITI E ISOLAMENTO ---
+// --- CONFIGURAZIONE PER GITHUB PAGES ---
+const BASE_URL = location.origin + location.pathname.replace(/[^/]*$/, '');
+
 async function checkSystem() {
     console.table({
         secureContext: window.isSecureContext,
@@ -20,7 +22,7 @@ async function checkSystem() {
 
     if (window.isSecureContext && !window.crossOriginIsolated) {
         UI.status.innerText = "ACTIVATING_ISOLATION...";
-        // Il Service Worker ha bisogno di un ricaricamento per applicare COOP/COEP
+        // Necessario per attivare COOP/COEP tramite Service Worker
         setTimeout(() => location.reload(), 1000);
     }
 }
@@ -38,9 +40,9 @@ if ('serviceWorker' in navigator) {
 const vadWorkerCode = `
     import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
     
-    // CONFIGURAZIONE ASSOLUTA PER GITHUB PAGES
+    // CONFIGURAZIONE ASSOLUTA OBBLIGATORIA PER BLOB WORKER
     env.allowLocalModels = false;
-    env.localModelPath = location.origin + location.pathname.replace(/[^/]*$/, '') + 'models/';
+    env.localModelPath = '${BASE_URL}models/';
     env.remoteHost = 'https://huggingface.co/';
     env.remotePathTemplate = '{model}/resolve/{revision}/';
 
@@ -95,7 +97,7 @@ const whisperWorkerCode = `
     import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
     
     env.allowLocalModels = false;
-    env.localModelPath = location.origin + location.pathname.replace(/[^/]*$/, '') + 'models/';
+    env.localModelPath = '${BASE_URL}models/';
     env.remoteHost = 'https://huggingface.co/';
     env.remotePathTemplate = '{model}/resolve/{revision}/';
 
