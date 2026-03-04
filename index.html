@@ -22,7 +22,7 @@
         .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s; }
         .vad-indicator { width: 12px; height: 12px; border: 1px solid var(--term-dim); }
         .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 10px var(--term-ok); border-color: var(--term-ok); }
-        #engine-badge { font-size: 0.7em; padding: 2px 5px; border: 1px solid var(--term-main); margin-left: 10px; vertical-align: middle; }
+        #engine-badge { font-size: 0.7em; padding: 2px 6px; border: 1px solid var(--term-main); margin-left: 10px; color: var(--term-warn); }
         .blink { animation: blinker 1.5s linear infinite; }
         @keyframes blinker { 50% { opacity: 0.3; } }
     </style>
@@ -84,16 +84,14 @@
 <div id="output" contenteditable="true" spellcheck="false"><span class="interim-text" id="interim"></span></div>
 
 <script type="module">
-    // --- 1. CONFIGURAZIONE SHARED MEMORY (ZERO-LATENCY IPC) ---
+    // --- 1. CONFIGURAZIONE SHARED MEMORY ---
     const SAB_SIZE = 1024 * 128; 
     let sab, indexArray, dataArray;
     
     if (typeof SharedArrayBuffer !== 'undefined') {
         sab = new SharedArrayBuffer(8 + SAB_SIZE * 4); 
-        indexArray = new Int32Array(sab, 0, 2); 
+        indexArray = new Int32Array(sab, 0, 2); // [0]: WriteIndex, [1]: ReadIndex
         dataArray = new Float32Array(sab, 8);
-    } else {
-        alert("CRITICAL ERROR: SharedArrayBuffer non disponibile. Verifica gli header COOP/COEP o usa HTTPS.");
     }
 
     const UI = {
@@ -114,44 +112,69 @@
     }
     UI.languageSelect.value = "italian";
 
-    // --- 2. WORKER CODES (VAD & WHISPER) ---
+    // --- 2. WORKER VAD (SAB LOOP & SPECULATIVE FLUSH) ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.useBrowserCache = true;
         
         let vadModel, state, whisperPort, sab, indexArray, dataArray;
-        let isSpeaking = false, silenceFrames = 0, lastFlush = 0;
+        let isSpeaking = false, silenceFrames = 0, lastSpeculativeFlush = 0;
         let audioBuf = new Float32Array(16000 * 30); 
         let audioBufPtr = 0;
+
+        const FRAME_SIZE = 512;
+        const SPECULATIVE_MS = 5000;
 
         async function processLoop() {
             while (true) {
                 if (!indexArray) { await new Promise(r => setTimeout(r, 100)); continue; }
-                let w = Atomics.load(indexArray, 0), r = Atomics.load(indexArray, 1);
-                if (w === r) { Atomics.wait(indexArray, 0, w, 50); continue; }
+                
+                let w = Atomics.load(indexArray, 0);
+                let r = Atomics.load(indexArray, 1);
+                
+                if (w === r) {
+                    Atomics.wait(indexArray, 0, w, 50);
+                    continue;
+                }
 
-                while (r !== w && (w - r + dataArray.length) % dataArray.length >= 512) {
-                    const chunk = new Float32Array(512);
-                    for(let i=0; i<512; i++) { chunk[i] = dataArray[r]; r = (r + 1) % dataArray.length; }
-                    Atomics.store(indexArray, 1, r);
-                    
-                    const input = new Tensor('float32', chunk, [1, 512]);
-                    const out = await vadModel({ input, sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
-                    state = out.stateN || out.staten || state;
-                    const prob = out.output.data[0];
-
-                    if (prob > (isSpeaking ? 0.30 : 0.55)) {
-                        if (!isSpeaking) { isSpeaking = true; lastFlush = Date.now(); }
-                        audioBuf.set(chunk, audioBufPtr); audioBufPtr += 512;
-                        silenceFrames = 0;
-                        if (Date.now() - lastFlush > 5000) { flush(true); lastFlush = Date.now(); }
-                    } else if (isSpeaking) {
-                        silenceFrames++;
-                        if (silenceFrames > 25) { isSpeaking = false; flush(false); audioBufPtr = 0; }
+                while (r !== w && (w - r + dataArray.length) % dataArray.length >= FRAME_SIZE) {
+                    const chunk = new Float32Array(FRAME_SIZE);
+                    for(let i=0; i<FRAME_SIZE; i++) {
+                        chunk[i] = dataArray[r];
+                        r = (r + 1) % dataArray.length;
                     }
-                    self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
+                    Atomics.store(indexArray, 1, r);
+                    await runVAD(chunk);
                 }
             }
+        }
+
+        async function runVAD(chunk) {
+            if (!vadModel) return;
+            const input = new Tensor('float32', chunk, [1, 512]);
+            const out = await vadModel({ input, sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
+            state = out.stateN || out.staten || state;
+            const prob = out.output.data[0];
+
+            if (prob > (isSpeaking ? 0.35 : 0.55)) {
+                if (!isSpeaking) { isSpeaking = true; lastSpeculativeFlush = Date.now(); }
+                audioBuf.set(chunk, audioBufPtr);
+                audioBufPtr += FRAME_SIZE;
+                silenceFrames = 0;
+
+                // OTTIMIZZAZIONE: Trascrizione speculativa ogni 5s
+                if (Date.now() - lastSpeculativeFlush > SPECULATIVE_MS) {
+                    flush(true);
+                    lastSpeculativeFlush = Date.now();
+                }
+            } else if (isSpeaking) {
+                silenceFrames++;
+                if (silenceFrames > 30) {
+                    isSpeaking = false; flush(false); audioBufPtr = 0;
+                    state = new Tensor('float32', new Float32Array(2 * 1 * 64).fill(0), [2, 1, 64]);
+                }
+            }
+            self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
         }
 
         function flush(isPartial) {
@@ -162,16 +185,23 @@
 
         self.onmessage = async (e) => {
             if (e.data.type === 'load') {
-                vadModel = await AutoModel.from_pretrained('Xenova/silero-vad-v5', { config: { model_type: 'custom' } });
-                state = new Tensor('float32', new Float32Array(2*1*64).fill(0), [2,1,64]);
-                self.postMessage({ type: 'ready' });
-                processLoop();
+                try {
+                    vadModel = await AutoModel.from_pretrained('Xenova/silero-vad-v5', { config: { model_type: 'custom' } });
+                    state = new Tensor('float32', new Float32Array(2 * 1 * 64).fill(0), [2, 1, 64]);
+                    self.postMessage({ type: 'ready' });
+                    processLoop();
+                } catch (err) { self.postMessage({ type: 'error', message: err.message }); }
             } else if (e.data.type === 'init_sab') {
-                sab = e.data.sab; indexArray = new Int32Array(sab, 0, 2); dataArray = new Float32Array(sab, 8);
-            } else if (e.data.type === 'init_whisper_port') { whisperPort = e.data.port; }
+                sab = e.data.sab;
+                indexArray = new Int32Array(sab, 0, 2);
+                dataArray = new Float32Array(sab, 8);
+            } else if (e.data.type === 'init_whisper_port') {
+                whisperPort = e.data.port;
+            }
         };
     `;
 
+    // --- 3. WORKER WHISPER (TUNING & ENGINE DETECTION) ---
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         let transcriber, lastTokens = null, currentLanguage = "italian";
@@ -193,15 +223,19 @@
                     });
                 }
                 self.postMessage({ type: 'READY_TO_PROCESS', engine });
-            } else if (type === 'transcribe') {
-                const result = await transcriber(audio, { language: currentLanguage, prompt_ids: lastTokens, chunk_length_s: 30 });
+            } else if (type === 'transcribe' && transcriber) {
+                // OTTIMIZZAZIONE: Context Awareness tramite prompt_ids
+                const result = await transcriber(audio, { 
+                    language: currentLanguage, 
+                    prompt_ids: lastTokens, 
+                    chunk_length_s: 30 
+                });
                 if (!isPartial) lastTokens = result.tokens?.slice(-64);
                 self.postMessage({ type: isPartial ? 'partial' : 'final', text: result.text });
             } else if (type === 'update_language') { currentLanguage = language; }
         };
     `;
 
-    // --- 3. INIZIALIZZAZIONE WORKERS ---
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const channel = new MessageChannel();
@@ -216,7 +250,9 @@
             const p = Math.round(d.p || 0); UI.progressText.innerText = 'SYNC_CACHE: ' + p + '%';
             const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
         } else if (d.type === 'READY_TO_PROCESS') {
-            UI.status.innerText = "ONLINE"; UI.engineBadge.innerText = d.engine;
+            UI.status.innerText = "ONLINE"; 
+            UI.engineBadge.innerText = d.engine;
+            UI.engineBadge.style.color = d.engine === "WEBGPU" ? "var(--term-ok)" : "var(--term-warn)";
             UI.progressContainer.style.display = 'none'; UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
         } else if (d.type === 'partial') {
             UI.interim.innerText = " " + d.text.toLowerCase() + "...";
@@ -224,8 +260,8 @@
             UI.interim.innerText = "";
             const txt = d.text.trim();
             if (txt.length > 0) {
-                const span = document.createElement('span'); span.innerText = " " + txt;
-                UI.output.insertBefore(span, UI.interim);
+                const node = document.createTextNode(" " + txt);
+                UI.output.insertBefore(node, UI.interim);
                 UI.output.scrollTop = UI.output.scrollHeight;
             }
         }
@@ -240,23 +276,36 @@
         }
     };
 
-    UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; vadWorker.postMessage({ type: 'load' }); };
+    UI.loadBtn.onclick = () => {
+        if (!sab) { alert("ERRORE: SharedArrayBuffer non attivo. Verifica coi-serviceworker.js"); return; }
+        UI.loadBtn.disabled = true; vadWorker.postMessage({ type: 'load' });
+    };
 
     async function start() {
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
         const workletCode = `
             class P extends AudioWorkletProcessor {
-                constructor(opt) { super(); this.sab = opt.processorOptions.sab; this.idx = new Int32Array(this.sab, 0, 2); this.data = new Float32Array(this.sab, 8); this.s = 0; this.c = 0; }
+                constructor(opt) { 
+                    super(); 
+                    this.sab = opt.processorOptions.sab; 
+                    this.idx = new Int32Array(this.sab, 0, 2); 
+                    this.data = new Float32Array(this.sab, 8); 
+                    this.s = 0; this.c = 0; 
+                }
                 process(ins) {
                     const input = ins[0][0]; if (!input) return true;
                     let w = Atomics.load(this.idx, 0), r = Atomics.load(this.idx, 1);
                     for (let i = 0; i < input.length; i++) {
                         this.s += input[i]*input[i]; this.c++;
                         this.data[w] = input[i]; w = (w + 1) % this.data.length;
-                        if (w === r) break;
+                        if (w === r) break; // Buffer pieno
                     }
-                    Atomics.store(this.idx, 0, w); Atomics.notify(this.idx, 0);
-                    if(this.c >= 2048) { this.port.postMessage({rms: Math.sqrt(this.s/this.c)}); this.s=0; this.c=0; }
+                    Atomics.store(this.idx, 0, w); 
+                    Atomics.notify(this.idx, 0); // Sveglia il VAD worker
+                    if(this.c >= 2048) { 
+                        this.port.postMessage({rms: Math.sqrt(this.s/this.c)}); 
+                        this.s=0; this.c=0; 
+                    }
                     return true;
                 }
             }
@@ -277,6 +326,11 @@
     UI.stopBtn.onclick = () => location.reload();
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(UI.interim); };
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
+    UI.exportBtn.onclick = () => {
+        const b = new Blob([UI.output.innerText], { type: 'text/plain' });
+        const a = document.createElement('a'); a.href = URL.createObjectURL(b);
+        a.download = `whisp_${Date.now()}.txt`; a.click();
+    };
 </script>
 </body>
 </html>
