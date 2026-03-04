@@ -86,6 +86,29 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
+    // --- PIPELINE DI POST-PROCESSING FONETICO ---
+    const PHONETIC_DICT = {
+        "l'automatica": "Lottomatica",
+        "Radio Corpo": "Radiocor",
+        "Zing": "Sync",
+        "Vargrup": "Var Group",
+        "K-Energy": "KEY Energy"
+    };
+
+    function applyPhoneticCorrections(text) {
+        if (!text) return text;
+        let processedText = text;
+        for (const [wrong, right] of Object.entries(PHONETIC_DICT)) {
+            // Sfugge i caratteri speciali per evitare errori nella Regex
+            const escapedWrong = wrong.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+            // Regex ignorando il case (/i), globale (/g), rispettando i word boundaries (\b)
+            const regex = new RegExp(`\\b${escapedWrong}\\b`, 'gi');
+            processedText = processedText.replace(regex, right);
+        }
+        return processedText;
+    }
+    // --------------------------------------------
+
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
@@ -272,6 +295,11 @@
             whisperReady = true; checkReady();
         } else if (d.type === 'final' && isSessionActive) {
             let newText = d.text ? d.text.trim() : "";
+            
+            // --- ESECUZIONE DELLA PIPELINE FONETICA ---
+            newText = applyPhoneticCorrections(newText);
+            // ------------------------------------------
+
             if (newText.length > 1) {
                 let prefix = " ";
                 if (lastChar.match(/[.!?]/)) newText = newText.charAt(0).toUpperCase() + newText.slice(1);
