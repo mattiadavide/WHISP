@@ -76,7 +76,8 @@
     <button id="stopBtn" style="display:none; color: var(--term-err); border-color: var(--term-err);">TERMINATE()</button>
     <button id="exportBtn" style="margin-left: auto;">EXPORT</button>
     <button id="copyBtn">COPY</button>
-    <button id="clearBtn">FLUSH</button>
+    <button id="clearBtn">FLUSH_TXT</button>
+    <button id="resetVoicesBtn" style="color: #fa0; border-color: #fa0;">RESET_VOICES</button>
 </div>
 
 <div id="output" contenteditable="true" spellcheck="false"></div>
@@ -98,7 +99,8 @@
         output: document.getElementById('output'), vadLed: document.getElementById('vadLed'),
         vadFill: document.getElementById('vadFill'), volFill: document.getElementById('volFill'),
         probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'),
-        copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn')
+        copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn'),
+        resetVoicesBtn: document.getElementById('resetVoicesBtn')
     };
 
     const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER", "russian": "RUS" };
@@ -114,10 +116,9 @@
         let vadModel = null, state = null, whisperPort = null;
         let audioBuf = [], preRoll = [], isSpeaking = false, silenceFrames = 0;
         
-        /// ADDED: Variabili per Clustering Spettrale Dinamico
         let currentCentroid = 0, sumCentroid = 0, framesCount = 0;
         let speakerProfiles = [];
-        const CENTROID_TOLERANCE = 12.5; // Tuning: tolleranza distanza centroide spettrale
+        const CENTROID_TOLERANCE = 12.5; 
         
         const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
         let SILENCE_LIMIT = 13;
@@ -130,7 +131,6 @@
                 
                 const bufferToTransfer = flat.buffer;
                 
-                /// ADDED: Logica K-Means Dinamica 1D (Centroide Spettrale)
                 let avgCentroid = framesCount > 0 ? (sumCentroid / framesCount) : 0;
                 let speakerTag = "SPEAKER_UNKNOWN";
                 
@@ -166,9 +166,14 @@
         self.onmessage = async (e) => {
             const { type, port, precision } = e.data;
             
-            /// ADDED: Ricezione del parametro spettrale in tempo reale dal Main Thread
             if (type === 'audio_features') {
                 currentCentroid = e.data.centroid;
+                return;
+            }
+            
+            /// ADDED: Caricamento profili da localStorage al Worker
+            if (type === 'load_profiles') {
+                speakerProfiles = e.data.profiles || [];
                 return;
             }
 
@@ -193,7 +198,6 @@
                         
                         if (isSpeaking) {
                             audioBuf.push(audioChunk);
-                            /// ADDED: Accumulo centroide solo durante il parlato attivo
                             sumCentroid += currentCentroid;
                             framesCount++;
                             
@@ -234,9 +238,12 @@
                     }
                 };
             } else if (type === 'reset_state') {
+                /// ADDED: Invio profili aggiornati al Main Thread per il salvataggio PRIMA del reset
+                self.postMessage({ type: 'save_profiles', profiles: speakerProfiles });
                 state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
                 audioBuf = []; preRoll = []; isSpeaking = false; silenceFrames = 0;
-                sumCentroid = 0; framesCount = 0; speakerProfiles = [];
+                sumCentroid = 0; framesCount = 0;
+                // NOTA: NON resetti speakerProfiles qui, così persistono durante la sessione!
             }
         };
     `;
@@ -303,6 +310,13 @@
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
 
+    /// ADDED: Caricamento iniziale dal LocalStorage
+    const storedProfiles = JSON.parse(localStorage.getItem('whisp_speaker_profiles') || '[]');
+    if (storedProfiles.length > 0) {
+        vadWorker.postMessage({ type: 'load_profiles', profiles: storedProfiles });
+        console.log("> LOADED_PROFILES:", storedProfiles.length);
+    }
+
     const workerChannel = new MessageChannel();
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
     whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2, language: UI.languageSelect.value }, [workerChannel.port2]);
@@ -353,6 +367,11 @@
                 UI.vadLed.classList.remove('active');
                 UI.status.innerText = "LISTENING";
             }
+        } 
+        /// ADDED: Ricezione e scrittura profili nel LocalStorage alla chiusura sessione
+        else if (d.type === 'save_profiles') {
+            localStorage.setItem('whisp_speaker_profiles', JSON.stringify(d.profiles));
+            console.log("> PROFILES_SAVED_TO_STORAGE", d.profiles);
         }
     };
 
@@ -386,7 +405,6 @@
                 ? await navigator.mediaDevices.getDisplayMedia(constraints) 
                 : await navigator.mediaDevices.getUserMedia(constraints);
 
-            /// ADDED: AnalyserNode per estrarre il Centroide Spettrale in hardware
             const analyser = audioCtx.createAnalyser();
             analyser.fftSize = 512; 
             const bufferLength = analyser.frequencyBinCount;
@@ -434,10 +452,9 @@
             };
 
             const source = audioCtx.createMediaStreamSource(stream);
-            source.connect(analyser); // Connesso prima dell'Analyser
+            source.connect(analyser); 
             analyser.connect(worklet);
 
-            /// ADDED: Loop a 60fps per calcolare il Centroide Spettrale e inviarlo al VAD
             function extractFeatures() {
                 if (!isSessionActive) return;
                 analyser.getByteFrequencyData(dataArray);
@@ -460,7 +477,10 @@
     async function stop() {
         isSessionActive = false; 
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        
+        /// Questo invierà anche il comando di salvataggio al Main Thread
         vadWorker.postMessage({ type: 'reset_state' });
+        
         if (worklet) worklet.disconnect();
         if (audioCtx && audioCtx.state !== 'closed') await audioCtx.close();
         if (stream) stream.getTracks().forEach(t => t.stop());
@@ -479,6 +499,15 @@
         a.href = URL.createObjectURL(blob); 
         a.download = `whisp_session_${new Date().getTime()}.txt`; 
         a.click(); 
+    };
+    
+    /// ADDED: Logica del tasto RESET_VOICES
+    UI.resetVoicesBtn.onclick = () => {
+        localStorage.removeItem('whisp_speaker_profiles');
+        vadWorker.postMessage({ type: 'load_profiles', profiles: [] });
+        const oldStatus = UI.status.innerText;
+        UI.status.innerText = "VOICES_FLUSHED";
+        setTimeout(() => { UI.status.innerText = isSessionActive ? oldStatus : "IDLE"; }, 1500);
     };
 </script>
 </body>
