@@ -1,8 +1,8 @@
 const ALLOWED_DOMAINS = [
-    location.origin,
-    'https://cdn.jsdelivr.net',
-    'https://huggingface.co',
-    'https://raw.githubusercontent.com'
+    'huggingface.co',
+    'cdn-lfs.huggingface.co',
+    'cdn.jsdelivr.net',
+    'raw.githubusercontent.com'
 ];
 
 self.addEventListener('install', () => self.skipWaiting());
@@ -10,31 +10,32 @@ self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim(
 
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
-    const isAllowed = ALLOWED_DOMAINS.some(domain => url.href.startsWith(domain));
+    const isLocal = url.origin === location.origin;
+    const isAllowed = ALLOWED_DOMAINS.some(d => url.hostname.endsWith(d));
     
-    // Privacy Lock: Blocca richieste non autorizzate
-    if (!isAllowed) {
-        event.respondWith(new Response('Accesso Negato per Privacy', { status: 403 }));
+    if (!isLocal && !isAllowed) {
+        event.respondWith(new Response('Privacy Block: Domain not allowed', { status: 403 }));
         return;
     }
 
-    // Proxy con Header di Isolamento (COOP/COEP) per abilitare SharedArrayBuffer
     event.respondWith(
-        fetch(event.request)
-            .then((response) => {
-                if (response.status === 0) return response;
+        fetch(event.request).then(response => {
+            if (response.status === 0) return response;
+            
+            // Iniezione header per isolamento (COOP/COEP) e CORP
+            const newHeaders = new Headers(response.headers);
+            newHeaders.set("Cross-Origin-Embedder-Policy", "require-corp");
+            newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
+            newHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
 
-                const newHeaders = new Headers(response.headers);
-                newHeaders.set("Cross-Origin-Embedder-Policy", "require-corp");
-                newHeaders.set("Cross-Origin-Opener-Policy", "same-origin");
-                newHeaders.set("Cross-Origin-Resource-Policy", "cross-origin");
-
-                return new Response(response.body, {
-                    status: response.status,
-                    statusText: response.statusText,
-                    headers: newHeaders,
-                });
-            })
-            .catch((e) => console.error(e))
+            return new Response(response.body, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: newHeaders
+            });
+        }).catch(e => {
+            console.error("[SW_FETCH_ERR]", e);
+            return new Response("Network Error", { status: 408 });
+        })
     );
 });
