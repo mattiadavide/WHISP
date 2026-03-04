@@ -115,6 +115,15 @@
         copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn')
     };
 
+    // OTTIMIZZAZIONE 3: Controllo fallback cross-platform per getDisplayMedia (System Audio)
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        const sysOpt = UI.audioSource.querySelector('option[value="system"]');
+        if (sysOpt) {
+            sysOpt.disabled = true;
+            sysOpt.innerText += " [UNSUPPORTED]";
+        }
+    }
+
     const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER", "russian": "RUS" };
     for (const [c, n] of Object.entries(LANGUAGES)) {
         const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o);
@@ -129,6 +138,12 @@
         let isSpeaking = false, silenceFrames = 0;
         let whisperQueueSize = 0; 
         
+        // OTTIMIZZAZIONE 1: Variabile di stato per Handshake Completo
+        let isWhisperOnline = false;
+        
+        // OTTIMIZZAZIONE 2: Pool di buffer riciclati per chiusura Memory Leak
+        let whisperBufferPool = [];
+        
         const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
         let SILENCE_LIMIT = 25, PRE_ROLL_CAPACITY = 10;
 
@@ -141,7 +156,10 @@
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
 
         function flushAudioToWhisper() {
-            // FIX: Backpressure protection mechanism
+            // OTTIMIZZAZIONE 1: Blocca l'invio e trattiene i buffer se Whisper non ha completato l'handshake
+            if (!isWhisperOnline) return;
+
+            // Backpressure protection mechanism
             if (whisperQueueSize > 5) {
                 console.warn("[SYS_OVERLOAD] Whisper Worker queue full (" + whisperQueueSize + "). Dropping chunk to protect RAM.");
                 audioBufPtr = 0; preRollCount = 0; preRollPtr = 0;
@@ -149,9 +167,23 @@
             }
 
             if (audioBufPtr > 5) {
-                const flat = new Float32Array(audioBufPtr * 512);
-                flat.set(audioBuf.subarray(0, audioBufPtr * 512));
-                const bufferToTransfer = flat.buffer;
+                const requiredLength = audioBufPtr * 512;
+                let bufferToTransfer;
+                
+                // OTTIMIZZAZIONE 2: Ricerca e riutilizzo ArrayBuffer dal Memory Pool
+                const pooledIdx = whisperBufferPool.findIndex(b => b.byteLength >= requiredLength * 4);
+                
+                if (pooledIdx !== -1) {
+                    const recycled = whisperBufferPool.splice(pooledIdx, 1)[0];
+                    const flat = new Float32Array(recycled, 0, requiredLength);
+                    flat.set(audioBuf.subarray(0, requiredLength));
+                    bufferToTransfer = recycled;
+                } else {
+                    const flat = new Float32Array(requiredLength);
+                    flat.set(audioBuf.subarray(0, requiredLength));
+                    bufferToTransfer = flat.buffer;
+                }
+
                 if (whisperPort) whisperPort.postMessage({ type: 'transcribe', audioBuffer: bufferToTransfer }, [bufferToTransfer]);
             }
             audioBufPtr = 0; preRollCount = 0; preRollPtr = 0;
@@ -174,7 +206,13 @@
                 whisperQueueSize = size;
             } else if (type === 'init_whisper_port') {
                 whisperPort = port;
-                whisperPort.onmessage = (ev) => { if(ev.data.type === 'queue_update') whisperQueueSize = ev.data.size; };
+                whisperPort.onmessage = (ev) => { 
+                    if (ev.data.type === 'queue_update') whisperQueueSize = ev.data.size;
+                    // OTTIMIZZAZIONE 1: Ascolto segnale esplicito WHISPER_ONLINE
+                    else if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true;
+                    // OTTIMIZZAZIONE 2: Re-integrazione nel pool locale dei buffer processati da Whisper
+                    else if (ev.data.type === 'recycle_buffer') whisperBufferPool.push(ev.data.buffer);
+                };
             } else if (type === 'init_worklet_port') {
                 port.onmessage = async (workletEvent) => {
                     if (workletEvent.data.type === 'vad' && vadModel) {
@@ -240,13 +278,22 @@
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true;
             const audioBuffer = queue.shift();
+            
             transcriber(new Float32Array(audioBuffer), { 
                 language: currentLanguage, task: 'transcribe', without_timestamps: true, chunk_length_s: 30, stride_length_s: 5
             }).then(res => {
                 self.postMessage({ type: 'final', text: res.text });
+                
+                // OTTIMIZZAZIONE 2: Reinvia il buffer svuotato al VAD Worker tramite porta
+                if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: audioBuffer }, [audioBuffer]);
+                
                 isBusy = false; processNext(); 
             }).catch(err => {
                 self.postMessage({ type: 'final', text: "[ERRORE_AUDIO]" });
+                
+                // OTTIMIZZAZIONE 2: Garantisci il riciclo anche in caso di errore della pipeline
+                if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: audioBuffer }, [audioBuffer]);
+                
                 isBusy = false; processNext();
             });
         }
@@ -262,8 +309,12 @@
                     } catch (err) {
                         transcriber = await pipeline('automatic-speech-recognition', modelName, { device: 'wasm', dtype: 'q8', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) });
                     }
-                    // FIX: Handshake dispatch
+                    
                     self.postMessage({ type: 'READY_TO_PROCESS' });
+                    
+                    // OTTIMIZZAZIONE 1: Handshake esplicito per sbloccare la cache VAD
+                    if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
+                    
                 } catch(err) { self.postMessage({ type: 'error', message: err.message }); }
             } else if (type === 'update_language') {
                 currentLanguage = language;
@@ -348,7 +399,7 @@
 
     async function start() {
         try {
-            // FIX: Blocco se l'handshake non è completato
+            // Blocco se l'handshake non è completato
             if (!whisperReadyToProcess) {
                 console.warn("[SYS] Handshake incomplete. System not ready.");
                 return;
@@ -356,7 +407,15 @@
 
             isSessionActive = true;
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            audioCtx = new AudioContextClass({ sampleRate: 16000 });
+            
+            // OTTIMIZZAZIONE 3: try/catch sull'inizializzazione dell'AudioContext
+            try {
+                audioCtx = new AudioContextClass({ sampleRate: 16000 });
+            } catch (err) {
+                console.warn("[SYS] 16000Hz initialization failed. Falling back to native default sampleRate.", err);
+                audioCtx = new AudioContextClass(); // Fallback garantito
+            }
+            
             await audioCtx.resume();
 
             const constraints = UI.audioSource.value === 'system' 
@@ -366,6 +425,16 @@
             stream = UI.audioSource.value === 'system' 
                 ? await navigator.mediaDevices.getDisplayMedia(constraints) 
                 : await navigator.mediaDevices.getUserMedia(constraints);
+
+            // OTTIMIZZAZIONE 4: Graceful Teardown per evento hardware
+            stream.getTracks().forEach(track => {
+                track.onended = () => {
+                    console.warn("[HW_DISCONNECT] Microphone or permissions revoked.");
+                    stop();
+                    UI.status.innerText = "MIC_DISCONNECTED";
+                    UI.status.style.color = "var(--term-err)";
+                };
+            });
 
             const workletStr = `
                 class P extends AudioWorkletProcessor {
@@ -403,16 +472,12 @@
                                     this.rmsCounter = 0;
                                 }
 
-                                // FIX: Allocation Safe Strategy (Semplificata)
+                                // Allocation Safe Strategy
                                 if (this.vadPort && this.bufPool.length > 0) {
                                     const bufferToTransfer = this.buf.buffer;
-                                    // O(1) Transferable Objects
                                     this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
-                                    // Peschiamo un nuovo buffer pulito dal pool
                                     this.buf = this.bufPool.pop();
                                 } 
-                                // Se this.vadPort è nullo o il pool è vuoto, this.buf non viene trasferito.
-                                // Resettando this.ptr = 0, il prossimo ciclo sovrascriverà i dati (Zero-Allocation Drop Frame).
                                 
                                 this.ptr = 0; this.s = 0;
                             }
@@ -430,7 +495,7 @@
             worklet = new AudioWorkletNode(audioCtx, 'p');
             const audioChannel = new MessageChannel();
             
-            // FIX: Handshake Asincrono
+            // Handshake Asincrono per AudioWorklet
             const portMappingPromise = new Promise(resolve => {
                 worklet.port.onmessage = (e) => {
                     if (e.data.type === 'port_mapped') {
@@ -461,6 +526,7 @@
         if (audioCtx && audioCtx.state !== 'closed') await audioCtx.close();
         if (stream) stream.getTracks().forEach(t => t.stop());
         UI.status.innerText = "IDLE"; UI.vadLed.classList.remove('active');
+        UI.status.style.color = ""; // Ripristina il colore in caso fosse rosso
         UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block';
         UI.volFill.style.width = "0%"; UI.vadFill.style.width = "0%";
     }
