@@ -15,7 +15,7 @@
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr 240px; gap: 20px; align-items: center; }
-        #output { border: none; background: transparent; padding: 10px 0; min-height: 300px; max-height: calc(100vh - 460px); overflow-y: auto; line-height: 1.7; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; }
+        #output { border: none; background: transparent; padding: 10px 0; min-height: 300px; max-height: calc(100vh - 460px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; }
         .interim-text { color: var(--term-dim); font-style: italic; }
         .low-conf { color: var(--term-err); text-decoration: underline dotted; }
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.75em; }
@@ -88,6 +88,7 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
+    // --- LOGICA FORMATTAZIONE E HEAL ---
     function levenshtein(a, b) {
         const m = [];
         for (let i = 0; i <= b.length; i++) m[i] = [i];
@@ -101,12 +102,13 @@
         return m[b.length][a.length];
     }
 
-    function globalHeal() {
+    function globalHealAndFormat() {
         let text = UI.output.innerText;
         let words = text.match(/[a-zA-ZÀ-ÿ]+/g) || [];
         let freq = {};
         words.forEach(w => { let l = w.toLowerCase(); if(l.length > 4) freq[l] = (freq[l] || 0) + 1; });
-        let strong = Object.keys(freq).filter(w => freq[w] >= 2);
+        let strong = Object.keys(freq).filter(w => freq[freq] >= 2);
+        
         const lowConfSpans = UI.output.querySelectorAll('.low-conf');
         let correctionsCount = 0;
 
@@ -125,9 +127,10 @@
                 correctionsCount++;
             }
         });
-        UI.status.innerText = correctionsCount > 0 ? `HEALING: ${correctionsCount} FIXED` : "TEXT_STABLE";
-        UI.status.style.color = correctionsCount > 0 ? "var(--term-warn)" : "var(--term-ok)";
-        setTimeout(() => { if(isSessionActive) { UI.status.innerText = "RECORDING"; UI.status.style.color = "var(--term-ok)"; } else { UI.status.innerText="ONLINE"; } }, 3000);
+
+        UI.status.innerText = correctionsCount > 0 ? `FORMATTED: ${correctionsCount} FIXED` : "FORMAT_CLEAN";
+        UI.status.style.color = "var(--term-ok)";
+        setTimeout(() => { if(!isSessionActive) UI.status.innerText = "ONLINE"; }, 3000);
     }
 
     const UI = {
@@ -148,6 +151,7 @@
     }
     UI.languageSelect.value = "italian";
 
+    // --- WORKER SETUP ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -161,7 +165,7 @@
         function flush(isPartial = false) {
             if (!isWhisperOnline || audioBufPtr <= 5) return;
             const flat = new Float32Array(audioBufPtr * 512); flat.set(audioBuf.subarray(0, audioBufPtr * 512));
-            whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial }, [flat.buffer]);
+            whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial, silenceDuration: silenceFrames }, [flat.buffer]);
             if(!isPartial) { audioBufPtr = 0; preRollCount = 0; }
         }
 
@@ -179,7 +183,7 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 40 === 0) flush(true); // TRIGGER PARTIALS
+                            if (audioBufPtr % 40 === 0) flush(true); 
                             if (audioBufPtr >= 1500) flush(false);
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
@@ -216,19 +220,23 @@
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
-            // SKIP OLD PARTIALS
             if (item.isPartial && queue.some(q => q.isPartial)) { isBusy = false; process(); return; }
             try {
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
-                    num_beams: item.isPartial ? 1 : 5, // GREEDY PER ANTEPRIMA, BEAM PER FINALE
+                    num_beams: item.isPartial ? 1 : 5,
                     repetition_penalty: 1.5,
                     no_speech_threshold: 0.6,
                     condition_on_previous_text: false
                 });
                 if (res.text && res.text.trim().length > 0) {
                     const isLowConf = res.text.trim().length < 10;
-                    self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf });
+                    self.postMessage({ 
+                        type: item.isPartial ? 'partial' : 'final', 
+                        text: res.text, 
+                        isLowConf, 
+                        isNewParagraph: item.silenceDuration > 50 
+                    });
                 }
             } catch (e) { self.postMessage({ type: 'final', text: "[ERROR]" }); }
             isBusy = false; process();
@@ -245,7 +253,7 @@
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
             } else if (type === 'update_language') { currentLanguage = language; }
             else if (type === 'init_vad_port') {
-                vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); } };
+                vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial, silenceDuration: ev.data.silenceDuration}); process(); } };
             }
         };
     `;
@@ -269,13 +277,6 @@
         } else if (d.type === 'READY_TO_PROCESS') {
             UI.status.innerText = "ONLINE"; UI.status.style.color = "var(--term-ok)";
             UI.progressContainer.style.display = 'none'; UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
-        } else if (d.type === 'partial' && isSessionActive) {
-            let pText = d.text ? d.text.trim() : "";
-            if (pText) {
-                if (lastChar.match(/[.!?]/)) pText = pText.charAt(0).toUpperCase() + pText.slice(1);
-                interimSpan.innerText = pText + "...";
-                UI.output.scrollTop = UI.output.scrollHeight;
-            }
         } else if (d.type === 'final' && isSessionActive) {
             interimSpan.innerText = "";
             let newText = d.text ? d.text.trim() : "";
@@ -283,11 +284,25 @@
                 let prefix = " ";
                 if (lastChar.match(/[.!?]/)) newText = newText.charAt(0).toUpperCase() + newText.slice(1);
                 else newText = newText.charAt(0).toLowerCase() + newText.slice(1);
+                
+                // --- LOGICA PARAGRAFO ---
+                if (d.isNewParagraph && UI.output.innerText.length > 0) {
+                    prefix = "\n\n";
+                    newText = newText.charAt(0).toUpperCase() + newText.slice(1);
+                }
+
                 const span = document.createElement('span');
                 if (d.isLowConf) span.className = 'low-conf';
                 span.innerText = prefix + newText;
                 UI.output.insertBefore(span, interimSpan);
                 lastChar = newText.slice(-1); UI.output.scrollTop = UI.output.scrollHeight;
+            }
+        } else if (d.type === 'partial' && isSessionActive) {
+            let pText = d.text ? d.text.trim() : "";
+            if (pText) {
+                if (lastChar.match(/[.!?]/)) pText = pText.charAt(0).toUpperCase() + pText.slice(1);
+                interimSpan.innerText = pText + "...";
+                UI.output.scrollTop = UI.output.scrollHeight;
             }
         }
     };
@@ -305,7 +320,7 @@
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "INITIALIZING VAD..."; vadWorker.postMessage({ type: 'load' }); };
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
-    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_final_${Date.now()}.txt`; a.click(); };
+    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_v23_${Date.now()}.txt`; a.click(); };
 
     async function start() {
         isSessionActive = true;
@@ -345,10 +360,9 @@
         isSessionActive = false; if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close();
         UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; 
         UI.status.innerText = "OPTIMIZING..."; UI.status.style.color = "var(--term-warn)";
-        setTimeout(globalHeal, 800);
+        setTimeout(globalHealAndFormat, 800);
     }
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
-    UI.languageSelect.onchange = (e) => whisperWorker.postMessage({ type: 'update_language', language: e.target.value });
 </script>
 </body>
 </html>
