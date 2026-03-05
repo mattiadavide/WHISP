@@ -87,22 +87,6 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
-    const PHONETIC_DICT = {
-        "l'automatica": "Lottomatica", "Radio Corpo": "Radiocor",
-        "Zing": "Sync", "Vargrup": "Var Group", "K-Energy": "KEY Energy"
-    };
-
-    function applyPhoneticCorrections(text) {
-        if (!text) return text;
-        let processedText = text;
-        for (const [wrong, right] of Object.entries(PHONETIC_DICT)) {
-            const escapedWrong = wrong.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
-            const regex = new RegExp(`\\b${escapedWrong}\\b`, 'gi');
-            processedText = processedText.replace(regex, right);
-        }
-        return processedText;
-    }
-
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
@@ -139,7 +123,7 @@
         let isWhisperOnline = false;
         let whisperBufferPool = [];
         
-        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
+        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 1500;
         let SILENCE_LIMIT = 25, PRE_ROLL_CAPACITY = 10;
 
         const MAX_PRE_ROLL = 24; 
@@ -279,11 +263,10 @@
             if (vadPort) vadPort.postMessage({ type: 'queue_update', size: queue.length });
             if (isBusy || queue.length === 0 || !transcriber) return;
             
-            // BACKPRESSURE: se la coda esplode, scarta i partials
             if (queue.length > MAX_QUEUE_SIZE) {
                 queue = queue.filter(item => !item.isPartial);
                 if (queue.length > MAX_QUEUE_SIZE) {
-                    const dropped = queue.shift(); // Drop del frame più vecchio
+                    const dropped = queue.shift();
                     if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: dropped.buffer }, [dropped.buffer]);
                 }
             }
@@ -304,7 +287,7 @@
                 stride_length_s: 5,
                 repetition_penalty: 1.2,
                 no_repeat_ngram_size: 3,
-                condition_on_previous_text: false
+                condition_on_previous_text: true
             }).then(res => {
                 self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
                 if (vadPort && !item.isPartial) vadPort.postMessage({ type: 'recycle_buffer', buffer: item.buffer }, [item.buffer]);
@@ -357,7 +340,6 @@
     let whisperReadyToProcess = false;
     let lastChar = "."; 
 
-    // OTTIMIZZAZIONE 1: Architettura Multithreading (Handshake rigoroso e robusto con timeout)
     let resolveVadReady, resolveWhisperReady, rejectVadReady, rejectWhisperReady;
     
     const vadPromise = new Promise((resolve, reject) => { 
@@ -386,7 +368,6 @@
         UI.loadBtn.style.display = 'inline-block';
         UI.loadBtn.disabled = false;
         UI.startBtn.disabled = true;
-        console.error("Worker Initialization Failed:", err);
     });
 
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
@@ -405,7 +386,6 @@
             resolveWhisperReady();
         } else if (d.type === 'partial' && isSessionActive) {
             let pText = d.text ? d.text.trim() : "";
-            pText = applyPhoneticCorrections(pText);
             if (pText) {
                 if (lastChar.match(/[.!?]/)) pText = pText.charAt(0).toUpperCase() + pText.slice(1);
                 interimSpan.innerText = pText + "...";
@@ -414,7 +394,6 @@
         } else if (d.type === 'final' && isSessionActive) {
             interimSpan.innerText = "";
             let newText = d.text ? d.text.trim() : "";
-            newText = applyPhoneticCorrections(newText);
             if (newText.length > 1) {
                 let prefix = " ";
                 if (lastChar.match(/[.!?]/)) newText = newText.charAt(0).toUpperCase() + newText.slice(1);
@@ -474,20 +453,17 @@
             try {
                 audioCtx = new AudioContextClass({ sampleRate: 16000 });
             } catch (err) {
-                console.warn("Inizializzazione a 16kHz non supportata dall'hardware, fallback al sample rate nativo.", err);
                 audioCtx = new AudioContextClass();
             }
 
             audioCtx.onstatechange = () => {
                 if (audioCtx.state === 'suspended' && isSessionActive) {
-                    console.warn("OS_SUSPENDED: AudioContext sospeso. Tentativo di ripristino in corso...");
                     audioCtx.resume();
                 }
             };
             
             await audioCtx.resume();
 
-            // OTTIMIZZAZIONE 3: Compatibilità Cross-Platform (forziamo l'OS al resampling di alta qualità se possibile)
             const constraints = UI.audioSource.value === 'system' 
                 ? { video: true, audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } } 
                 : { audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } };
@@ -522,13 +498,12 @@
                 };
             });
 
-            // OTTIMIZZAZIONE 2: Gestione Memoria incrementata e pulizia Resampler
             const workletStr = `
                 class P extends AudioWorkletProcessor {
                     constructor(options) { 
                         super(); 
                         this.bufPool = [];
-                        for(let i = 0; i < 50; i++) this.bufPool.push(new Float32Array(512)); // Aumentato a 50 per gestire colli di bottiglia e picchi GC
+                        for(let i = 0; i < 50; i++) this.bufPool.push(new Float32Array(512));
                         this.buf = this.bufPool.pop();
                         this.ptr = 0; this.s = 0; this.rmsCounter = 0; this.vadPort = null;
                         this.systemReady = false; 
@@ -561,7 +536,6 @@
 
                             if (this.vadPort) {
                                 if (this.bufPool.length === 0) {
-                                    // BACKPRESSURE
                                     this.port.postMessage({ type: 'OVERLOAD_DROP_FRAME' });
                                     this.ptr = 0; 
                                     this.s = 0;
@@ -589,7 +563,6 @@
                         
                         const input = inputs[0][0]; if (!input) return true;
                         
-                        // Resampler nativo rimosso: ci affidiamo al resampling del browser per evitare l'aliasing lineare
                         for (let i = 0; i < input.length; i++) {
                             this.pushSample(input[i]);
                         }
@@ -615,7 +588,6 @@
                     } else if (e.data.rms !== undefined) {
                         UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%";
                     } else if (e.data.type === 'OVERLOAD_DROP_FRAME') {
-                        console.warn("OVERLOAD_DROP_FRAME: Il Main Thread o il Worker sono troppo lenti. L'AudioWorklet sta scartando frame per evitare memory leaks!");
                     }
                 };
             });
@@ -634,7 +606,6 @@
             UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
         } catch (e) { 
             UI.status.innerText = "SYS_FAIL: CRITICAL_ERROR"; 
-            console.error(e);
         }
     }
 
