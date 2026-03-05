@@ -38,7 +38,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_1.2_OPTIMIZED
+    > MODULE_BOOT: WHISP_CORE_1.3_UNIFIED
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -287,7 +287,15 @@
 
             isBusy = true;
             transcriber(new Float32Array(item.buffer), { 
-                language: currentLanguage, task: 'transcribe', without_timestamps: true, chunk_length_s: 30, stride_length_s: 5
+                language: currentLanguage, 
+                task: 'transcribe', 
+                without_timestamps: true, 
+                chunk_length_s: 30, 
+                stride_length_s: 5,
+                // BLOCCO ANTI-ALLUCINAZIONI INTEGRATO DALLA V1.0
+                repetition_penalty: 1.2,
+                no_repeat_ngram_size: 3,
+                condition_on_previous_text: false
             }).then(res => {
                 self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
                 if (vadPort && !item.isPartial) vadPort.postMessage({ type: 'recycle_buffer', buffer: item.buffer }, [item.buffer]);
