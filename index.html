@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 2.4</title>
+    <title>WHISP // TERMINAL 2.3</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -39,7 +39,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_2.4_CHUNKED
+    > MODULE_BOOT: WHISP_CORE_2.3_FORMAT
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -88,7 +88,7 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
-    // --- LOGICA HEALING ---
+    // --- LOGICA FORMATTAZIONE E HEAL ---
     function levenshtein(a, b) {
         const m = [];
         for (let i = 0; i <= b.length; i++) m[i] = [i];
@@ -102,30 +102,35 @@
         return m[b.length][a.length];
     }
 
-    function globalHeal() {
-        const lowConfSpans = UI.output.querySelectorAll('.low-conf');
-        if (lowConfSpans.length === 0) return;
-
-        let words = UI.output.innerText.match(/[a-zA-ZÀ-ÿ]+/g) || [];
+    function globalHealAndFormat() {
+        let text = UI.output.innerText;
+        let words = text.match(/[a-zA-ZÀ-ÿ]+/g) || [];
         let freq = {};
         words.forEach(w => { let l = w.toLowerCase(); if(l.length > 4) freq[l] = (freq[l] || 0) + 1; });
-        let strong = Object.keys(freq).filter(w => freq[w] >= 2);
+        let strong = Object.keys(freq).filter(w => freq[freq] >= 2);
         
-        let count = 0;
+        const lowConfSpans = UI.output.querySelectorAll('.low-conf');
+        let correctionsCount = 0;
+
         lowConfSpans.forEach(span => {
             let original = span.innerText.trim();
+            let lower = original.toLowerCase();
             let best = null, minDist = Infinity;
             strong.forEach(st => {
-                let d = levenshtein(original.toLowerCase(), st);
+                let d = levenshtein(lower, st);
                 if (d < minDist) { minDist = d; best = st; }
             });
             if (minDist > 0 && minDist <= 2) {
-                span.innerText = original[0] === original[0].toUpperCase() ? best.charAt(0).toUpperCase() + best.slice(1) : best.toLowerCase();
+                let formatted = original[0] === original[0].toUpperCase() ? best.charAt(0).toUpperCase() + best.slice(1) : best.toLowerCase();
+                span.innerText = formatted;
                 span.classList.remove('low-conf');
-                count++;
+                correctionsCount++;
             }
         });
-        if (count > 0) UI.status.innerText = `HEALED: ${count} WORDS`;
+
+        UI.status.innerText = correctionsCount > 0 ? `FORMATTED: ${correctionsCount} FIXED` : "FORMAT_CLEAN";
+        UI.status.style.color = "var(--term-ok)";
+        setTimeout(() => { if(!isSessionActive) UI.status.innerText = "ONLINE"; }, 3000);
     }
 
     const UI = {
@@ -146,15 +151,12 @@
     }
     UI.languageSelect.value = "italian";
 
-    // --- WORKER SETUP (FIX 30S) ---
+    // --- WORKER SETUP ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
-        
-        // LIMITIAMO IL BUFFER A 25 SECONDI PER EVITARE L'ERRORE DI WHISPER
-        const MAX_FRAMES = 780; // ~25 secondi (780 * 512 / 16000)
-        const audioBuf = new Float32Array(MAX_FRAMES * 512);
+        const audioBuf = new Float32Array(1500 * 512);
         const preRoll = new Float32Array(15 * 512);
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
@@ -182,7 +184,7 @@
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
                             if (audioBufPtr % 40 === 0) flush(true); 
-                            if (audioBufPtr >= MAX_FRAMES) flush(false);
+                            if (audioBufPtr >= 1500) flush(false);
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
@@ -215,7 +217,6 @@
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
@@ -223,24 +224,23 @@
             try {
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
-                    // CHUNKING OBBLIGATORIO PER LA PUNTEGGIATURA
-                    chunk_length_s: 30, stride_length_s: 5,
                     num_beams: item.isPartial ? 1 : 5,
                     repetition_penalty: 1.5,
+                    no_speech_threshold: 0.6,
                     condition_on_previous_text: false
                 });
                 if (res.text && res.text.trim().length > 0) {
                     const isLowConf = res.text.trim().length < 10;
                     self.postMessage({ 
                         type: item.isPartial ? 'partial' : 'final', 
-                        text: res.text, isLowConf, 
+                        text: res.text, 
+                        isLowConf, 
                         isNewParagraph: item.silenceDuration > 50 
                     });
                 }
-            } catch (e) { self.postMessage({ type: 'final', text: "[ERROR_PROCESSING]" }); }
+            } catch (e) { self.postMessage({ type: 'final', text: "[ERROR]" }); }
             isBusy = false; process();
         }
-
         self.onmessage = async (e) => {
             const { type, port, precision, language } = e.data;
             if (type === 'load') {
@@ -253,7 +253,7 @@
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
             } else if (type === 'update_language') { currentLanguage = language; }
             else if (type === 'init_vad_port') {
-                vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push(ev.data); process(); } };
+                vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial, silenceDuration: ev.data.silenceDuration}); process(); } };
             }
         };
     `;
@@ -284,7 +284,13 @@
                 let prefix = " ";
                 if (lastChar.match(/[.!?]/)) newText = newText.charAt(0).toUpperCase() + newText.slice(1);
                 else newText = newText.charAt(0).toLowerCase() + newText.slice(1);
-                if (d.isNewParagraph && UI.output.innerText.length > 0) { prefix = "\n\n"; newText = newText.charAt(0).toUpperCase() + newText.slice(1); }
+                
+                // --- LOGICA PARAGRAFO ---
+                if (d.isNewParagraph && UI.output.innerText.length > 0) {
+                    prefix = "\n\n";
+                    newText = newText.charAt(0).toUpperCase() + newText.slice(1);
+                }
+
                 const span = document.createElement('span');
                 if (d.isLowConf) span.className = 'low-conf';
                 span.innerText = prefix + newText;
@@ -303,7 +309,7 @@
 
     vadWorker.onmessage = (e) => {
         const d = e.data;
-        if (d.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
+        if (d.type === 'ready') { UI.status.innerText = "INITIALIZING WHISPER..."; whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value }); }
         else if (d.type === 'vad_ui_update') {
             UI.probVal.innerText = "VAD: " + d.prob.toFixed(2); UI.vadFill.style.width = (d.prob * 100) + "%";
             if (d.isSpeaking) { UI.vadLed.classList.add('active'); UI.status.innerText = "RECORDING"; }
@@ -314,7 +320,7 @@
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "INITIALIZING VAD..."; vadWorker.postMessage({ type: 'load' }); };
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
-    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_final_${Date.now()}.txt`; a.click(); };
+    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_v23_${Date.now()}.txt`; a.click(); };
 
     async function start() {
         isSessionActive = true;
@@ -354,10 +360,9 @@
         isSessionActive = false; if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close();
         UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; 
         UI.status.innerText = "OPTIMIZING..."; UI.status.style.color = "var(--term-warn)";
-        setTimeout(globalHeal, 800);
+        setTimeout(globalHealAndFormat, 800);
     }
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
-    UI.languageSelect.onchange = (e) => whisperWorker.postMessage({ type: 'update_language', language: e.target.value });
 </script>
 </body>
 </html>
