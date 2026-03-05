@@ -284,10 +284,10 @@
                 task: 'transcribe', 
                 without_timestamps: true, 
                 chunk_length_s: 30, 
-                stride_length_s: 5,
+                stride_length_s: 3,
                 repetition_penalty: 1.5,
                 no_repeat_ngram_size: 4,
-                condition_on_previous_text: true
+                condition_on_previous_text: false
             }).then(res => {
                 self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
                 if (vadPort && !item.isPartial) vadPort.postMessage({ type: 'recycle_buffer', buffer: item.buffer }, [item.buffer]);
