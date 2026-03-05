@@ -123,8 +123,8 @@
         let isWhisperOnline = false;
         let whisperBufferPool = [];
         
-        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 2400;
-        let SILENCE_LIMIT = 45, PRE_ROLL_CAPACITY = 10;
+        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 1500;
+        let SILENCE_LIMIT = 25, PRE_ROLL_CAPACITY = 10;
 
         const MAX_PRE_ROLL = 24; 
         const audioBuf = new Float32Array(MAX_FRAMES * 512);
@@ -175,9 +175,9 @@
         self.onmessage = async (e) => {
             const { type, port, precision, size } = e.data;
             if (type === 'load') {
-                if (precision === 'q8-tiny') SILENCE_LIMIT = 75; 
-                else if (precision === 'q8') SILENCE_LIMIT = 50; 
-                else SILENCE_LIMIT = 45; 
+                if (precision === 'q8-tiny') SILENCE_LIMIT = 60; 
+                else if (precision === 'q8') SILENCE_LIMIT = 30; 
+                else SILENCE_LIMIT = 25; 
                 PRE_ROLL_CAPACITY = Math.floor(SILENCE_LIMIT * 0.4);
                 try {
                     vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
@@ -285,6 +285,8 @@
                 without_timestamps: true, 
                 chunk_length_s: 30, 
                 stride_length_s: 5,
+                repetition_penalty: 1.5,
+                no_repeat_ngram_size: 4,
                 condition_on_previous_text: true
             }).then(res => {
                 self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
