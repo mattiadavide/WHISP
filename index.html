@@ -87,6 +87,22 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
+    const PHONETIC_DICT = {
+        "l'automatica": "Lottomatica", "Radio Corpo": "Radiocor",
+        "Zing": "Sync", "Vargrup": "Var Group", "K-Energy": "KEY Energy"
+    };
+
+    function applyPhoneticCorrections(text) {
+        if (!text) return text;
+        let processedText = text;
+        for (const [wrong, right] of Object.entries(PHONETIC_DICT)) {
+            const escapedWrong = wrong.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+            const regex = new RegExp(`\\b${escapedWrong}\\b`, 'gi');
+            processedText = processedText.replace(regex, right);
+        }
+        return processedText;
+    }
+
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
@@ -123,7 +139,7 @@
         let isWhisperOnline = false;
         let whisperBufferPool = [];
         
-        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 1500;
+        const THRESHOLD_START = 0.55, THRESHOLD_HOLD = 0.35, MAX_FRAMES = 900;
         let SILENCE_LIMIT = 25, PRE_ROLL_CAPACITY = 10;
 
         const MAX_PRE_ROLL = 24; 
@@ -257,20 +273,11 @@
         env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
         env.useBrowserCache = true;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        const MAX_QUEUE_SIZE = 8;
 
         function processNext() {
             if (vadPort) vadPort.postMessage({ type: 'queue_update', size: queue.length });
             if (isBusy || queue.length === 0 || !transcriber) return;
             
-            if (queue.length > MAX_QUEUE_SIZE) {
-                queue = queue.filter(item => !item.isPartial);
-                if (queue.length > MAX_QUEUE_SIZE) {
-                    const dropped = queue.shift();
-                    if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: dropped.buffer }, [dropped.buffer]);
-                }
-            }
-
             const item = queue.shift();
 
             if (item.isPartial && queue.length > 0) {
@@ -284,9 +291,10 @@
                 task: 'transcribe', 
                 without_timestamps: true, 
                 chunk_length_s: 30, 
-                stride_length_s: 3,
-                repetition_penalty: 1.5,
-                no_repeat_ngram_size: 4,
+                stride_length_s: 5,
+                // BLOCCO ANTI-ALLUCINAZIONI INTEGRATO DALLA V1.0
+                repetition_penalty: 1.2,
+                no_repeat_ngram_size: 3,
                 condition_on_previous_text: false
             }).then(res => {
                 self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
@@ -340,36 +348,6 @@
     let whisperReadyToProcess = false;
     let lastChar = "."; 
 
-    let resolveVadReady, resolveWhisperReady, rejectVadReady, rejectWhisperReady;
-    
-    const vadPromise = new Promise((resolve, reject) => { 
-        resolveVadReady = resolve; 
-        rejectVadReady = reject;
-        setTimeout(() => reject(new Error("VAD Init Timeout (30s)")), 30000); 
-    });
-    
-    const whisperPromise = new Promise((resolve, reject) => { 
-        resolveWhisperReady = resolve; 
-        rejectWhisperReady = reject;
-        setTimeout(() => reject(new Error("Whisper Init Timeout (60s)")), 60000); 
-    });
-
-    Promise.all([vadPromise, whisperPromise]).then(() => {
-        whisperReadyToProcess = true;
-        UI.status.innerText = "ONLINE"; 
-        UI.status.style.color = "var(--term-ok)";
-        UI.progressContainer.style.display = 'none'; 
-        UI.loadBtn.style.display = 'none'; 
-        UI.startBtn.disabled = false;
-    }).catch(err => {
-        UI.status.innerText = "SYS_FAIL: INIT_TIMEOUT/ERROR";
-        UI.status.style.color = "var(--term-err)";
-        UI.progressContainer.style.display = 'none';
-        UI.loadBtn.style.display = 'inline-block';
-        UI.loadBtn.disabled = false;
-        UI.startBtn.disabled = true;
-    });
-
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
     UI.output.appendChild(interimSpan);
 
@@ -383,9 +361,14 @@
             UI.progressText.innerText = 'FETCHING_CORE: ' + p + '%';
             const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
         } else if (d.type === 'READY_TO_PROCESS') {
-            resolveWhisperReady();
+            whisperReadyToProcess = true;
+            UI.status.innerText = "ONLINE"; 
+            UI.progressContainer.style.display = 'none'; 
+            UI.loadBtn.style.display = 'none'; 
+            UI.startBtn.disabled = false;
         } else if (d.type === 'partial' && isSessionActive) {
             let pText = d.text ? d.text.trim() : "";
+            pText = applyPhoneticCorrections(pText);
             if (pText) {
                 if (lastChar.match(/[.!?]/)) pText = pText.charAt(0).toUpperCase() + pText.slice(1);
                 interimSpan.innerText = pText + "...";
@@ -394,6 +377,7 @@
         } else if (d.type === 'final' && isSessionActive) {
             interimSpan.innerText = "";
             let newText = d.text ? d.text.trim() : "";
+            newText = applyPhoneticCorrections(newText);
             if (newText.length > 1) {
                 let prefix = " ";
                 if (lastChar.match(/[.!?]/)) newText = newText.charAt(0).toUpperCase() + newText.slice(1);
@@ -406,7 +390,6 @@
             }
             if (!UI.vadLed.classList.contains('active')) UI.status.innerText = "LISTENING";
         } else if (d.type === 'error') {
-            if (rejectWhisperReady) rejectWhisperReady(new Error(d.message || "INITIALIZATION ERROR"));
             UI.status.innerText = "SYS_FAIL: " + (d.message || "INITIALIZATION ERROR");
             UI.status.style.color = "var(--term-err)";
             UI.progressContainer.style.display = 'none';
@@ -421,7 +404,6 @@
         const d = e.data;
         if (d.type === 'ready') {
             UI.status.innerText = "INITIALIZING WHISPER...";
-            resolveVadReady();
             whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
         } else if (d.type === 'vad_ui_update') {
             UI.probVal.innerText = "VAD: " + d.prob.toFixed(2);
@@ -431,8 +413,6 @@
             } else if (!d.isSpeaking && UI.vadLed.classList.contains('active')) {
                 UI.vadLed.classList.remove('active'); UI.status.innerText = "LISTENING";
             }
-        } else if (d.type === 'error') {
-            if (rejectVadReady) rejectVadReady(new Error(d.message || "VAD INIT ERROR"));
         }
     };
 
@@ -455,40 +435,16 @@
             } catch (err) {
                 audioCtx = new AudioContextClass();
             }
-
-            audioCtx.onstatechange = () => {
-                if (audioCtx.state === 'suspended' && isSessionActive) {
-                    audioCtx.resume();
-                }
-            };
             
             await audioCtx.resume();
 
             const constraints = UI.audioSource.value === 'system' 
-                ? { video: true, audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } } 
-                : { audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } };
+                ? { video: true, audio: { echoCancellation: true, noiseSuppression: true } } 
+                : { audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true } };
 
-            try {
-                stream = UI.audioSource.value === 'system' 
-                    ? await navigator.mediaDevices.getDisplayMedia(constraints) 
-                    : await navigator.mediaDevices.getUserMedia(constraints);
-            } catch (mediaErr) {
-                let errorMsg = "SYS_FAIL: MIC_ERROR";
-                if (mediaErr.name === 'NotAllowedError' || mediaErr.name === 'PermissionDeniedError') {
-                    errorMsg = "SYS_FAIL: PERMISSION_DENIED";
-                } else if (mediaErr.name === 'NotFoundError') {
-                    errorMsg = "SYS_FAIL: NO_MIC_FOUND";
-                } else if (mediaErr.name === 'NotReadableError' || mediaErr.name === 'TrackStartError') {
-                    errorMsg = "SYS_FAIL: HARDWARE_IN_USE";
-                } else if (mediaErr.name === 'SecurityError') {
-                    errorMsg = "SYS_FAIL: SECURITY_ERROR";
-                }
-                
-                UI.status.innerText = errorMsg;
-                UI.status.style.color = "var(--term-err)";
-                isSessionActive = false;
-                return;
-            }
+            stream = UI.audioSource.value === 'system' 
+                ? await navigator.mediaDevices.getDisplayMedia(constraints) 
+                : await navigator.mediaDevices.getUserMedia(constraints);
 
             stream.getTracks().forEach(track => {
                 track.onended = () => {
@@ -503,10 +459,14 @@
                     constructor(options) { 
                         super(); 
                         this.bufPool = [];
-                        for(let i = 0; i < 50; i++) this.bufPool.push(new Float32Array(512));
+                        for(let i = 0; i < 15; i++) this.bufPool.push(new Float32Array(512));
                         this.buf = this.bufPool.pop();
                         this.ptr = 0; this.s = 0; this.rmsCounter = 0; this.vadPort = null;
                         this.systemReady = false; 
+                        this.inRate = options.processorOptions.sampleRate || 16000;
+                        this.ratio = 16000 / this.inRate;
+                        this.phase = 0;
+                        this.lastSample = 0;
                         
                         this.port.onmessage = (e) => { 
                             if (e.data.type === 'SYSTEM_READY') {
@@ -535,26 +495,20 @@
                             }
 
                             if (this.vadPort) {
+                                const bufferToTransfer = this.buf.buffer;
+                                this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
+                                
                                 if (this.bufPool.length === 0) {
-                                    this.port.postMessage({ type: 'OVERLOAD_DROP_FRAME' });
-                                    this.ptr = 0; 
-                                    this.s = 0;
+                                    this.buf = new Float32Array(512); 
                                 } else {
-                                    const bufferToTransfer = this.buf.buffer;
-                                    this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
                                     this.buf = this.bufPool.pop();
-                                    this.ptr = 0; 
-                                    this.s = 0;
                                 }
                             } else {
-                                if (this.bufPool.length === 0) {
-                                    this.port.postMessage({ type: 'OVERLOAD_DROP_FRAME' });
-                                    this.ptr = 0; this.s = 0;
-                                } else {
-                                    this.buf = this.bufPool.pop();
-                                    this.ptr = 0; this.s = 0;
-                                }
+                                if (this.bufPool.length === 0) this.buf = new Float32Array(512);
+                                else this.buf = this.bufPool.pop();
                             }
+                            
+                            this.ptr = 0; this.s = 0;
                         }
                     }
 
@@ -564,7 +518,19 @@
                         const input = inputs[0][0]; if (!input) return true;
                         
                         for (let i = 0; i < input.length; i++) {
-                            this.pushSample(input[i]);
+                            const sample = input[i];
+                            
+                            if (this.inRate === 16000) {
+                                this.pushSample(sample);
+                            } else {
+                                this.phase += this.ratio;
+                                while (this.phase >= 1) {
+                                    this.phase -= 1;
+                                    const interp = this.lastSample + (sample - this.lastSample) * (1 - this.phase);
+                                    this.pushSample(interp);
+                                }
+                                this.lastSample = sample;
+                            }
                         }
                         return true;
                     }
@@ -587,7 +553,6 @@
                         resolve();
                     } else if (e.data.rms !== undefined) {
                         UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%";
-                    } else if (e.data.type === 'OVERLOAD_DROP_FRAME') {
                     }
                 };
             });
@@ -604,9 +569,7 @@
 
             UI.status.innerText = "LISTENING";
             UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
-        } catch (e) { 
-            UI.status.innerText = "SYS_FAIL: CRITICAL_ERROR"; 
-        }
+        } catch (e) { UI.status.innerText = "ERROR"; }
     }
 
     async function stop() {
