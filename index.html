@@ -279,11 +279,11 @@
             if (vadPort) vadPort.postMessage({ type: 'queue_update', size: queue.length });
             if (isBusy || queue.length === 0 || !transcriber) return;
             
-            // BACKPRESSURE: se la coda esplode, scarta i partials
             if (queue.length > MAX_QUEUE_SIZE) {
+                self.postMessage({ type: 'CRITICAL_BACKPRESSURE' });
                 queue = queue.filter(item => !item.isPartial);
                 if (queue.length > MAX_QUEUE_SIZE) {
-                    const dropped = queue.shift(); // Drop del frame più vecchio
+                    const dropped = queue.shift();
                     if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: dropped.buffer }, [dropped.buffer]);
                 }
             }
@@ -357,19 +357,25 @@
     let whisperReadyToProcess = false;
     let lastChar = "."; 
 
-    // OTTIMIZZAZIONE 1: Architettura Multithreading (Handshake rigoroso e robusto con timeout)
     let resolveVadReady, resolveWhisperReady, rejectVadReady, rejectWhisperReady;
+    let whisperInitTimeout, vadInitTimeout;
     
+    const resetVadWatchdog = () => {
+        clearTimeout(vadInitTimeout);
+        vadInitTimeout = setTimeout(() => rejectVadReady(new Error("VAD Init Timeout")), 30000);
+    };
+    
+    const resetWhisperWatchdog = () => {
+        clearTimeout(whisperInitTimeout);
+        whisperInitTimeout = setTimeout(() => rejectWhisperReady(new Error("Whisper Init Timeout")), 45000);
+    };
+
     const vadPromise = new Promise((resolve, reject) => { 
-        resolveVadReady = resolve; 
-        rejectVadReady = reject;
-        setTimeout(() => reject(new Error("VAD Init Timeout (30s)")), 30000); 
+        resolveVadReady = resolve; rejectVadReady = reject; resetVadWatchdog();
     });
     
     const whisperPromise = new Promise((resolve, reject) => { 
-        resolveWhisperReady = resolve; 
-        rejectWhisperReady = reject;
-        setTimeout(() => reject(new Error("Whisper Init Timeout (60s)")), 60000); 
+        resolveWhisperReady = resolve; rejectWhisperReady = reject; resetWhisperWatchdog();
     });
 
     Promise.all([vadPromise, whisperPromise]).then(() => {
@@ -386,7 +392,6 @@
         UI.loadBtn.style.display = 'inline-block';
         UI.loadBtn.disabled = false;
         UI.startBtn.disabled = true;
-        console.error("Worker Initialization Failed:", err);
     });
 
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
@@ -397,12 +402,18 @@
     whisperWorker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'progress') {
+            resetWhisperWatchdog();
             UI.progressContainer.style.display = 'block';
             const p = Math.round(d.p || 0);
             UI.progressText.innerText = 'FETCHING_CORE: ' + p + '%';
             const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
         } else if (d.type === 'READY_TO_PROCESS') {
             resolveWhisperReady();
+        } else if (d.type === 'CRITICAL_BACKPRESSURE') {
+            if (audioCtx && audioCtx.state === 'running') {
+                audioCtx.suspend();
+                setTimeout(() => { if (isSessionActive) audioCtx.resume(); }, 1000);
+            }
         } else if (d.type === 'partial' && isSessionActive) {
             let pText = d.text ? d.text.trim() : "";
             pText = applyPhoneticCorrections(pText);
@@ -464,6 +475,26 @@
         vadWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
     };
 
+    document.addEventListener("visibilitychange", async () => {
+        if (document.visibilityState === 'hidden') {
+            if (isSessionActive && audioCtx && audioCtx.state === 'running') {
+                await audioCtx.suspend();
+            }
+        } else {
+            if (isSessionActive && audioCtx && audioCtx.state === 'suspended') {
+                try {
+                    await audioCtx.resume();
+                } catch (e) {
+                    UI.status.innerText = "PREMI START PER RIPRENDERE";
+                    UI.status.style.color = "var(--term-warn)";
+                    UI.startBtn.style.display = 'inline-block';
+                    UI.stopBtn.style.display = 'none';
+                    isSessionActive = false;
+                }
+            }
+        }
+    });
+
     async function start() {
         try {
             if (!whisperReadyToProcess) return;
@@ -474,20 +505,17 @@
             try {
                 audioCtx = new AudioContextClass({ sampleRate: 16000 });
             } catch (err) {
-                console.warn("Inizializzazione a 16kHz non supportata dall'hardware, fallback al sample rate nativo.", err);
                 audioCtx = new AudioContextClass();
             }
 
             audioCtx.onstatechange = () => {
-                if (audioCtx.state === 'suspended' && isSessionActive) {
-                    console.warn("OS_SUSPENDED: AudioContext sospeso. Tentativo di ripristino in corso...");
+                if (audioCtx.state === 'suspended' && isSessionActive && document.visibilityState === 'visible') {
                     audioCtx.resume();
                 }
             };
             
             await audioCtx.resume();
 
-            // OTTIMIZZAZIONE 3: Compatibilità Cross-Platform (forziamo l'OS al resampling di alta qualità se possibile)
             const constraints = UI.audioSource.value === 'system' 
                 ? { video: true, audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } } 
                 : { audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } };
@@ -522,16 +550,20 @@
                 };
             });
 
-            // OTTIMIZZAZIONE 2: Gestione Memoria incrementata e pulizia Resampler
             const workletStr = `
                 class P extends AudioWorkletProcessor {
                     constructor(options) { 
                         super(); 
                         this.bufPool = [];
-                        for(let i = 0; i < 50; i++) this.bufPool.push(new Float32Array(512)); // Aumentato a 50 per gestire colli di bottiglia e picchi GC
+                        for(let i = 0; i < 50; i++) this.bufPool.push(new Float32Array(512));
                         this.buf = this.bufPool.pop();
                         this.ptr = 0; this.s = 0; this.rmsCounter = 0; this.vadPort = null;
                         this.systemReady = false; 
+                        
+                        this.inputSampleRate = options.processorOptions.sampleRate || 16000;
+                        this.targetSampleRate = 16000;
+                        this.ratio = this.inputSampleRate / this.targetSampleRate;
+                        this.phase = 0;
                         
                         this.port.onmessage = (e) => { 
                             if (e.data.type === 'SYSTEM_READY') {
@@ -561,7 +593,6 @@
 
                             if (this.vadPort) {
                                 if (this.bufPool.length === 0) {
-                                    // BACKPRESSURE
                                     this.port.postMessage({ type: 'OVERLOAD_DROP_FRAME' });
                                     this.ptr = 0; 
                                     this.s = 0;
@@ -589,9 +620,12 @@
                         
                         const input = inputs[0][0]; if (!input) return true;
                         
-                        // Resampler nativo rimosso: ci affidiamo al resampling del browser per evitare l'aliasing lineare
                         for (let i = 0; i < input.length; i++) {
-                            this.pushSample(input[i]);
+                            this.phase++;
+                            if (this.phase >= this.ratio) {
+                                this.pushSample(input[i]);
+                                this.phase -= this.ratio;
+                            }
                         }
                         return true;
                     }
@@ -615,7 +649,7 @@
                     } else if (e.data.rms !== undefined) {
                         UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%";
                     } else if (e.data.type === 'OVERLOAD_DROP_FRAME') {
-                        console.warn("OVERLOAD_DROP_FRAME: Il Main Thread o il Worker sono troppo lenti. L'AudioWorklet sta scartando frame per evitare memory leaks!");
+                        console.warn("OVERLOAD_DROP_FRAME");
                     }
                 };
             });
@@ -634,7 +668,6 @@
             UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
         } catch (e) { 
             UI.status.innerText = "SYS_FAIL: CRITICAL_ERROR"; 
-            console.error(e);
         }
     }
 
