@@ -292,7 +292,6 @@
                 without_timestamps: true, 
                 chunk_length_s: 30, 
                 stride_length_s: 5,
-                // BLOCCO ANTI-ALLUCINAZIONI INTEGRATO DALLA V1.0
                 repetition_penalty: 1.2,
                 no_repeat_ngram_size: 3,
                 condition_on_previous_text: false
@@ -348,6 +347,21 @@
     let whisperReadyToProcess = false;
     let lastChar = "."; 
 
+    // OTTIMIZZAZIONE 1: Architettura Multithreading (Handshake rigoroso)
+    let resolveVadReady, resolveWhisperReady;
+    const vadPromise = new Promise(r => resolveVadReady = r);
+    const whisperPromise = new Promise(r => resolveWhisperReady = r);
+
+    // Aspettiamo rigorosamente che entrambi i worker siano pronti prima di sbloccare la UI
+    Promise.all([vadPromise, whisperPromise]).then(() => {
+        whisperReadyToProcess = true;
+        UI.status.innerText = "ONLINE"; 
+        UI.status.style.color = "var(--term-ok)";
+        UI.progressContainer.style.display = 'none'; 
+        UI.loadBtn.style.display = 'none'; 
+        UI.startBtn.disabled = false;
+    });
+
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
     UI.output.appendChild(interimSpan);
 
@@ -361,11 +375,8 @@
             UI.progressText.innerText = 'FETCHING_CORE: ' + p + '%';
             const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
         } else if (d.type === 'READY_TO_PROCESS') {
-            whisperReadyToProcess = true;
-            UI.status.innerText = "ONLINE"; 
-            UI.progressContainer.style.display = 'none'; 
-            UI.loadBtn.style.display = 'none'; 
-            UI.startBtn.disabled = false;
+            // Sblocca la promise di Whisper
+            resolveWhisperReady();
         } else if (d.type === 'partial' && isSessionActive) {
             let pText = d.text ? d.text.trim() : "";
             pText = applyPhoneticCorrections(pText);
@@ -404,6 +415,8 @@
         const d = e.data;
         if (d.type === 'ready') {
             UI.status.innerText = "INITIALIZING WHISPER...";
+            // Sblocca la promise del VAD
+            resolveVadReady();
             whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
         } else if (d.type === 'vad_ui_update') {
             UI.probVal.innerText = "VAD: " + d.prob.toFixed(2);
@@ -430,11 +443,21 @@
             isSessionActive = true;
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
             
+            // OTTIMIZZAZIONE 3: Compatibilità Cross-Platform (Gestione sicura sampleRate)
             try {
                 audioCtx = new AudioContextClass({ sampleRate: 16000 });
             } catch (err) {
+                console.warn("Inizializzazione a 16kHz non supportata dall'hardware, fallback al sample rate nativo.", err);
                 audioCtx = new AudioContextClass();
             }
+
+            // OTTIMIZZAZIONE 4: Robustezza e Gestione OS (Listener stato AudioContext)
+            audioCtx.onstatechange = () => {
+                if (audioCtx.state === 'suspended' && isSessionActive) {
+                    console.warn("OS_SUSPENDED: AudioContext sospeso. Tentativo di ripristino in corso...");
+                    audioCtx.resume();
+                }
+            };
             
             await audioCtx.resume();
 
@@ -442,9 +465,28 @@
                 ? { video: true, audio: { echoCancellation: true, noiseSuppression: true } } 
                 : { audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true } };
 
-            stream = UI.audioSource.value === 'system' 
-                ? await navigator.mediaDevices.getDisplayMedia(constraints) 
-                : await navigator.mediaDevices.getUserMedia(constraints);
+            // OTTIMIZZAZIONE 4: Gestione Errori Dettagliata per MediaDevices
+            try {
+                stream = UI.audioSource.value === 'system' 
+                    ? await navigator.mediaDevices.getDisplayMedia(constraints) 
+                    : await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (mediaErr) {
+                let errorMsg = "SYS_FAIL: MIC_ERROR";
+                if (mediaErr.name === 'NotAllowedError' || mediaErr.name === 'PermissionDeniedError') {
+                    errorMsg = "SYS_FAIL: PERMISSION_DENIED";
+                } else if (mediaErr.name === 'NotFoundError') {
+                    errorMsg = "SYS_FAIL: NO_MIC_FOUND";
+                } else if (mediaErr.name === 'NotReadableError' || mediaErr.name === 'TrackStartError') {
+                    errorMsg = "SYS_FAIL: HARDWARE_IN_USE";
+                } else if (mediaErr.name === 'SecurityError') {
+                    errorMsg = "SYS_FAIL: SECURITY_ERROR";
+                }
+                
+                UI.status.innerText = errorMsg;
+                UI.status.style.color = "var(--term-err)";
+                isSessionActive = false;
+                return; // Ferma l'esecuzione se non possiamo catturare l'audio
+            }
 
             stream.getTracks().forEach(track => {
                 track.onended = () => {
@@ -454,6 +496,7 @@
                 };
             });
 
+            // OTTIMIZZAZIONE 2: Gestione Memoria e Backpressure integrata nell'AudioWorklet
             const workletStr = `
                 class P extends AudioWorkletProcessor {
                     constructor(options) { 
@@ -495,20 +538,28 @@
                             }
 
                             if (this.vadPort) {
-                                const bufferToTransfer = this.buf.buffer;
-                                this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
-                                
                                 if (this.bufPool.length === 0) {
-                                    this.buf = new Float32Array(512); 
+                                    // BACKPRESSURE: Buffer pool vuoto!
+                                    // Nessuna nuova allocazione: scartiamo silenziosamente i frame e ricicliamo il buffer
+                                    this.port.postMessage({ type: 'OVERLOAD_DROP_FRAME' });
+                                    this.ptr = 0; 
+                                    this.s = 0;
                                 } else {
+                                    const bufferToTransfer = this.buf.buffer;
+                                    this.vadPort.postMessage({ type: 'vad', data: bufferToTransfer }, [bufferToTransfer]);
                                     this.buf = this.bufPool.pop();
+                                    this.ptr = 0; 
+                                    this.s = 0;
                                 }
                             } else {
-                                if (this.bufPool.length === 0) this.buf = new Float32Array(512);
-                                else this.buf = this.bufPool.pop();
+                                if (this.bufPool.length === 0) {
+                                    this.port.postMessage({ type: 'OVERLOAD_DROP_FRAME' });
+                                    this.ptr = 0; this.s = 0;
+                                } else {
+                                    this.buf = this.bufPool.pop();
+                                    this.ptr = 0; this.s = 0;
+                                }
                             }
-                            
-                            this.ptr = 0; this.s = 0;
                         }
                     }
 
@@ -553,6 +604,9 @@
                         resolve();
                     } else if (e.data.rms !== undefined) {
                         UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%";
+                    } else if (e.data.type === 'OVERLOAD_DROP_FRAME') {
+                        // Monitoraggio in console dell'intervento di backpressure
+                        console.warn("OVERLOAD_DROP_FRAME: Il Main Thread o il Worker sono troppo lenti. L'AudioWorklet sta scartando frame per evitare memory leaks!");
                     }
                 };
             });
@@ -569,7 +623,10 @@
 
             UI.status.innerText = "LISTENING";
             UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
-        } catch (e) { UI.status.innerText = "ERROR"; }
+        } catch (e) { 
+            UI.status.innerText = "SYS_FAIL: CRITICAL_ERROR"; 
+            console.error(e);
+        }
     }
 
     async function stop() {
