@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL</title>
+    <title>WHISP // TERMINAL PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -38,7 +38,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_1.9_FINAL
+    > MODULE_BOOT: WHISP_CORE_1.9.1_PRO
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -83,18 +83,22 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- 1. LOGICA AUTO-CORREZIONE (MAGIC FIX) ---
+    (async function initPersistentStorage() {
+        if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
+    })();
+
+    // --- LEVENSHTEIN & AUTO-HEAL ---
     function levenshtein(a, b) {
-        const matrix = [];
-        for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-        for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
+        const m = [];
+        for (let i = 0; i <= b.length; i++) m[i] = [i];
+        for (let j = 0; j <= a.length; j++) m[0][j] = j;
         for (let i = 1; i <= b.length; i++) {
             for (let j = 1; j <= a.length; j++) {
-                if (b.charAt(i-1) === a.charAt(j-1)) matrix[i][j] = matrix[i-1][j-1];
-                else matrix[i][j] = Math.min(matrix[i-1][j-1] + 1, Math.min(matrix[i][j-1] + 1, matrix[i-1][j] + 1));
+                if (b.charAt(i-1) === a.charAt(j-1)) m[i][j] = m[i-1][j-1];
+                else m[i][j] = Math.min(m[i-1][j-1] + 1, Math.min(m[i][j-1] + 1, m[i-1][j] + 1));
             }
         }
-        return matrix[b.length][a.length];
+        return m[b.length][a.length];
     }
 
     function silentAutoCorrect() {
@@ -140,13 +144,12 @@
     }
     UI.languageSelect.value = "italian";
 
-    // --- 2. WORKER CODES (CORRECTED) ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
         const audioBuf = new Float32Array(1500 * 512);
-        const preRoll = new Float32Array(12 * 512);
+        const preRoll = new Float32Array(15 * 512); // Aumentato pre-roll per frasi solenni
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
@@ -172,27 +175,29 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 30 === 0) flush(true); // INVIO PARZIALE
+                            if (audioBufPtr % 40 === 0) flush(true); 
                             if (audioBufPtr >= 1500) flush(false);
                         } else {
-                            preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 12;
-                            if (preRollCount < 12) preRollCount++;
+                            preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
+                            if (preRollCount < 15) preRollCount++;
                         }
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        if (prob > (isSpeaking ? 0.35 : 0.55)) {
+                        if (prob > (isSpeaking ? 0.35 : 0.65)) { // Soglia di attacco più selettiva
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
-                                    let idx = (preRollPtr - preRollCount + i + 12) % 12;
+                                    let idx = (preRollPtr - preRollCount + i + 15) % 15;
                                     audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
                                 }
                             }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 25) { isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
+                            if (silenceFrames > 35) { // Tolleranza pause più lunga per oratoria
+                                isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
+                            }
                         }
                         self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
                         port.postMessage({ type: 'return_buf', data: chunk.buffer }, [chunk.buffer]);
@@ -209,12 +214,14 @@
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
-            // Salta i parziali se c'è qualcosa di nuovo
             if (item.isPartial && queue.length > 0) { isBusy = false; process(); return; }
             try {
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
-                    repetition_penalty: 1.2, condition_on_previous_text: false 
+                    num_beams: 5, // Aumentata precisione per evitare errori fonetici
+                    repetition_penalty: 1.5,
+                    no_repeat_ngram_size: 4,
+                    condition_on_previous_text: false 
                 });
                 self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
             } catch (e) { self.postMessage({ type: 'final', text: "[ERROR]" }); }
@@ -290,7 +297,7 @@
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "INITIALIZING VAD..."; vadWorker.postMessage({ type: 'load' }); };
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
-    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_final_${Date.now()}.txt`; a.click(); };
+    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_pro_${Date.now()}.txt`; a.click(); };
 
     async function start() {
         isSessionActive = true;
@@ -299,7 +306,7 @@
         
         const workletStr = `
             class P extends AudioWorkletProcessor {
-                constructor() { super(); this.bufPool=[]; for(let i=0;i<30;i++)this.bufPool.push(new Float32Array(512)); this.buf=this.bufPool.pop(); this.ptr=0; this.vadPort=null; this.s=0;
+                constructor() { super(); this.bufPool=[]; for(let i=0;i<40;i++)this.bufPool.push(new Float32Array(512)); this.buf=this.bufPool.pop(); this.ptr=0; this.vadPort=null; this.s=0;
                     this.port.onmessage=(e)=>{ if(e.data.type==='init_port') {this.vadPort=e.data.port; this.vadPort.onmessage=(m)=>this.bufPool.push(new Float32Array(m.data.data));}};
                 }
                 process(inputs) {
