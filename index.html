@@ -38,7 +38,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_1.3_UNIFIED
+    > MODULE_BOOT: WHISP_CORE_1.4_ANTI_LOOP
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -191,10 +191,11 @@
         self.onmessage = async (e) => {
             const { type, port, precision, size } = e.data;
             if (type === 'load') {
-                if (precision === 'q8-tiny') SILENCE_LIMIT = 60; 
-                else if (precision === 'q8') SILENCE_LIMIT = 30; 
-                else SILENCE_LIMIT = 25; 
+                if (precision === 'q8-tiny') SILENCE_LIMIT = 45; 
+                else if (precision === 'q8') SILENCE_LIMIT = 20; 
+                else SILENCE_LIMIT = 15; 
                 PRE_ROLL_CAPACITY = Math.floor(SILENCE_LIMIT * 0.4);
+                
                 try {
                     vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
                     ZERO_STATE.fill(0);
@@ -302,8 +303,9 @@
                 without_timestamps: true, 
                 chunk_length_s: 30, 
                 stride_length_s: 5,
-                repetition_penalty: 1.2,
-                no_repeat_ngram_size: 3,
+                temperature: [0.0, 0.2, 0.4, 0.6], 
+                repetition_penalty: 1.5,           
+                no_repeat_ngram_size: 4,           
                 condition_on_previous_text: false
             }).then(res => {
                 self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
@@ -564,6 +566,7 @@
                         this.targetSampleRate = 16000;
                         this.ratio = this.inputSampleRate / this.targetSampleRate;
                         this.phase = 0;
+                        this.accumulator = 0; 
                         
                         this.port.onmessage = (e) => { 
                             if (e.data.type === 'SYSTEM_READY') {
@@ -603,14 +606,6 @@
                                     this.ptr = 0; 
                                     this.s = 0;
                                 }
-                            } else {
-                                if (this.bufPool.length === 0) {
-                                    this.port.postMessage({ type: 'OVERLOAD_DROP_FRAME' });
-                                    this.ptr = 0; this.s = 0;
-                                } else {
-                                    this.buf = this.bufPool.pop();
-                                    this.ptr = 0; this.s = 0;
-                                }
                             }
                         }
                     }
@@ -620,11 +615,19 @@
                         
                         const input = inputs[0][0]; if (!input) return true;
                         
-                        for (let i = 0; i < input.length; i++) {
-                            this.phase++;
-                            if (this.phase >= this.ratio) {
-                                this.pushSample(input[i]);
-                                this.phase -= this.ratio;
+                        if (this.ratio === 1) {
+                            for (let i = 0; i < input.length; i++) this.pushSample(input[i]);
+                        } else {
+                            for (let i = 0; i < input.length; i++) {
+                                this.accumulator += input[i];
+                                this.phase++;
+                                
+                                if (this.phase >= this.ratio) {
+                                    const sample = this.accumulator / this.phase;
+                                    this.pushSample(sample);
+                                    this.accumulator = 0;
+                                    this.phase -= this.ratio;
+                                }
                             }
                         }
                         return true;
