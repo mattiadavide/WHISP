@@ -285,8 +285,8 @@
                 without_timestamps: true, 
                 chunk_length_s: 30, 
                 stride_length_s: 5,
-                repetition_penalty: 1.2,
-                no_repeat_ngram_size: 3,
+                repetition_penalty: 1.5,
+                no_repeat_ngram_size: 4,
                 condition_on_previous_text: true
             }).then(res => {
                 self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
