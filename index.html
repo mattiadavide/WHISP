@@ -38,7 +38,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_1.8_STABLE
+    > MODULE_BOOT: WHISP_CORE_1.9_FINAL
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -83,7 +83,7 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- 1. LOGICA AUTO-CORREZIONE ---
+    // --- 1. LOGICA AUTO-CORREZIONE (MAGIC FIX) ---
     function levenshtein(a, b) {
         const matrix = [];
         for (let i = 0; i <= b.length; i++) matrix[i] = [i];
@@ -118,7 +118,7 @@
             }
             UI.output.innerHTML = ""; UI.output.appendChild(document.createTextNode(corrected)); UI.output.appendChild(interimSpan);
             UI.status.innerText = "HEALING..."; UI.status.style.color = "var(--term-warn)";
-            setTimeout(() => { UI.status.innerText = isSessionActive ? "RECORDING" : "ONLINE"; UI.status.style.color = "var(--term-ok)"; }, 800);
+            setTimeout(() => { if(isSessionActive) { UI.status.innerText = "RECORDING"; UI.status.style.color = "var(--term-ok)"; } }, 800);
         }
     }
 
@@ -140,16 +140,23 @@
     }
     UI.languageSelect.value = "italian";
 
-    // --- 2. WORKER CODES ---
+    // --- 2. WORKER CODES (CORRECTED) ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
-        const audioBuf = new Float32Array(900 * 512);
-        const preRoll = new Float32Array(10 * 512);
+        const audioBuf = new Float32Array(1500 * 512);
+        const preRoll = new Float32Array(12 * 512);
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
+
+        function flush(isPartial = false) {
+            if (!isWhisperOnline || audioBufPtr <= 5) return;
+            const flat = new Float32Array(audioBufPtr * 512); flat.set(audioBuf.subarray(0, audioBufPtr * 512));
+            whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial }, [flat.buffer]);
+            if(!isPartial) { audioBufPtr = 0; preRollCount = 0; }
+        }
 
         self.onmessage = async (e) => {
             const { type, port } = e.data;
@@ -165,10 +172,11 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr >= 900) flush();
+                            if (audioBufPtr % 30 === 0) flush(true); // INVIO PARZIALE
+                            if (audioBufPtr >= 1500) flush(false);
                         } else {
-                            preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 10;
-                            if (preRollCount < 10) preRollCount++;
+                            preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 12;
+                            if (preRollCount < 12) preRollCount++;
                         }
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
@@ -177,14 +185,14 @@
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
-                                    let idx = (preRollPtr - preRollCount + i + 10) % 10;
+                                    let idx = (preRollPtr - preRollCount + i + 12) % 12;
                                     audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
                                 }
                             }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 25) { isSpeaking = false; flush(); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
+                            if (silenceFrames > 25) { isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
                         }
                         self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
                         port.postMessage({ type: 'return_buf', data: chunk.buffer }, [chunk.buffer]);
@@ -192,12 +200,6 @@
                 };
             }
         };
-        function flush() {
-            if (!isWhisperOnline || audioBufPtr <= 5) return;
-            const flat = new Float32Array(audioBufPtr * 512); flat.set(audioBuf.subarray(0, audioBufPtr * 512));
-            whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial: false }, [flat.buffer]);
-            audioBufPtr = 0; preRollCount = 0;
-        }
     `;
 
     const whisperWorkerCode = `
@@ -207,9 +209,14 @@
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
+            // Salta i parziali se c'è qualcosa di nuovo
+            if (item.isPartial && queue.length > 0) { isBusy = false; process(); return; }
             try {
-                const res = await transcriber(new Float32Array(item.buffer), { language: currentLanguage, task: 'transcribe', repetition_penalty: 1.2 });
-                self.postMessage({ type: 'final', text: res.text });
+                const res = await transcriber(new Float32Array(item.buffer), { 
+                    language: currentLanguage, task: 'transcribe', 
+                    repetition_penalty: 1.2, condition_on_previous_text: false 
+                });
+                self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
             } catch (e) { self.postMessage({ type: 'final', text: "[ERROR]" }); }
             isBusy = false; process();
         }
@@ -225,7 +232,7 @@
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
             } else if (type === 'update_language') { currentLanguage = language; }
             else if (type === 'init_vad_port') {
-                vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer}); process(); } };
+                vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); } };
             }
         };
     `;
@@ -250,7 +257,6 @@
             whisperReady = true; UI.status.innerText = "ONLINE"; UI.status.style.color = "var(--term-ok)";
             UI.progressContainer.style.display = 'none'; UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
         } else if (d.type === 'partial' && isSessionActive) {
-            // --- FIX 1: RIPRISTINO ANTEPRIMA ---
             let pText = d.text ? d.text.trim() : "";
             if (pText) {
                 if (lastChar.match(/[.!?]/)) pText = pText.charAt(0).toUpperCase() + pText.slice(1);
@@ -293,7 +299,7 @@
         
         const workletStr = `
             class P extends AudioWorkletProcessor {
-                constructor() { super(); this.bufPool = []; for(let i=0;i<20;i++)this.bufPool.push(new Float32Array(512)); this.buf=this.bufPool.pop(); this.ptr=0; this.vadPort=null; this.s=0; this.rmsCount=0;
+                constructor() { super(); this.bufPool=[]; for(let i=0;i<30;i++)this.bufPool.push(new Float32Array(512)); this.buf=this.bufPool.pop(); this.ptr=0; this.vadPort=null; this.s=0;
                     this.port.onmessage=(e)=>{ if(e.data.type==='init_port') {this.vadPort=e.data.port; this.vadPort.onmessage=(m)=>this.bufPool.push(new Float32Array(m.data.data));}};
                 }
                 process(inputs) {
@@ -301,8 +307,7 @@
                     for(let i=0; i<input.length; i++) {
                         const s = input[i]; this.s += s*s; this.buf[this.ptr++] = s;
                         if(this.ptr>=512) { 
-                            this.rmsCount++;
-                            if(this.rmsCount>=4) { this.port.postMessage({rms: Math.sqrt(this.s/512)}); this.rmsCount=0; }
+                            this.port.postMessage({rms: Math.sqrt(this.s/512)});
                             const b = this.buf.buffer; this.vadPort.postMessage({type:'vad', data:b}, [b]); 
                             this.buf = this.bufPool.length?this.bufPool.pop():new Float32Array(512); this.ptr=0; this.s=0;
                         }
@@ -314,14 +319,7 @@
         `;
         await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletStr], {type:'application/javascript'})));
         worklet = new AudioWorkletNode(audioCtx, 'p');
-        
-        // --- FIX 2: RIPRISTINO BARRA RMS ---
-        worklet.port.onmessage = (e) => {
-            if (e.data.rms !== undefined) {
-                UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%";
-            }
-        };
-
+        worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%"; };
         const audioChannel = new MessageChannel();
         vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
         worklet.port.postMessage({ type: 'init_port', port: audioChannel.port2 }, [audioChannel.port2]);
