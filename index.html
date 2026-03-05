@@ -273,11 +273,21 @@
         env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
         env.useBrowserCache = true;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
+        const MAX_QUEUE_SIZE = 8;
 
         function processNext() {
             if (vadPort) vadPort.postMessage({ type: 'queue_update', size: queue.length });
             if (isBusy || queue.length === 0 || !transcriber) return;
             
+            // BACKPRESSURE: se la coda esplode, scarta i partials
+            if (queue.length > MAX_QUEUE_SIZE) {
+                queue = queue.filter(item => !item.isPartial);
+                if (queue.length > MAX_QUEUE_SIZE) {
+                    const dropped = queue.shift(); // Drop del frame più vecchio
+                    if (vadPort) vadPort.postMessage({ type: 'recycle_buffer', buffer: dropped.buffer }, [dropped.buffer]);
+                }
+            }
+
             const item = queue.shift();
 
             if (item.isPartial && queue.length > 0) {
@@ -347,12 +357,21 @@
     let whisperReadyToProcess = false;
     let lastChar = "."; 
 
-    // OTTIMIZZAZIONE 1: Architettura Multithreading (Handshake rigoroso)
-    let resolveVadReady, resolveWhisperReady;
-    const vadPromise = new Promise(r => resolveVadReady = r);
-    const whisperPromise = new Promise(r => resolveWhisperReady = r);
+    // OTTIMIZZAZIONE 1: Architettura Multithreading (Handshake rigoroso e robusto con timeout)
+    let resolveVadReady, resolveWhisperReady, rejectVadReady, rejectWhisperReady;
+    
+    const vadPromise = new Promise((resolve, reject) => { 
+        resolveVadReady = resolve; 
+        rejectVadReady = reject;
+        setTimeout(() => reject(new Error("VAD Init Timeout (30s)")), 30000); 
+    });
+    
+    const whisperPromise = new Promise((resolve, reject) => { 
+        resolveWhisperReady = resolve; 
+        rejectWhisperReady = reject;
+        setTimeout(() => reject(new Error("Whisper Init Timeout (60s)")), 60000); 
+    });
 
-    // Aspettiamo rigorosamente che entrambi i worker siano pronti prima di sbloccare la UI
     Promise.all([vadPromise, whisperPromise]).then(() => {
         whisperReadyToProcess = true;
         UI.status.innerText = "ONLINE"; 
@@ -360,6 +379,14 @@
         UI.progressContainer.style.display = 'none'; 
         UI.loadBtn.style.display = 'none'; 
         UI.startBtn.disabled = false;
+    }).catch(err => {
+        UI.status.innerText = "SYS_FAIL: INIT_TIMEOUT/ERROR";
+        UI.status.style.color = "var(--term-err)";
+        UI.progressContainer.style.display = 'none';
+        UI.loadBtn.style.display = 'inline-block';
+        UI.loadBtn.disabled = false;
+        UI.startBtn.disabled = true;
+        console.error("Worker Initialization Failed:", err);
     });
 
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
@@ -375,7 +402,6 @@
             UI.progressText.innerText = 'FETCHING_CORE: ' + p + '%';
             const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
         } else if (d.type === 'READY_TO_PROCESS') {
-            // Sblocca la promise di Whisper
             resolveWhisperReady();
         } else if (d.type === 'partial' && isSessionActive) {
             let pText = d.text ? d.text.trim() : "";
@@ -401,6 +427,7 @@
             }
             if (!UI.vadLed.classList.contains('active')) UI.status.innerText = "LISTENING";
         } else if (d.type === 'error') {
+            if (rejectWhisperReady) rejectWhisperReady(new Error(d.message || "INITIALIZATION ERROR"));
             UI.status.innerText = "SYS_FAIL: " + (d.message || "INITIALIZATION ERROR");
             UI.status.style.color = "var(--term-err)";
             UI.progressContainer.style.display = 'none';
@@ -415,7 +442,6 @@
         const d = e.data;
         if (d.type === 'ready') {
             UI.status.innerText = "INITIALIZING WHISPER...";
-            // Sblocca la promise del VAD
             resolveVadReady();
             whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
         } else if (d.type === 'vad_ui_update') {
@@ -426,6 +452,8 @@
             } else if (!d.isSpeaking && UI.vadLed.classList.contains('active')) {
                 UI.vadLed.classList.remove('active'); UI.status.innerText = "LISTENING";
             }
+        } else if (d.type === 'error') {
+            if (rejectVadReady) rejectVadReady(new Error(d.message || "VAD INIT ERROR"));
         }
     };
 
@@ -443,7 +471,6 @@
             isSessionActive = true;
             const AudioContextClass = window.AudioContext || window.webkitAudioContext;
             
-            // OTTIMIZZAZIONE 3: Compatibilità Cross-Platform (Gestione sicura sampleRate)
             try {
                 audioCtx = new AudioContextClass({ sampleRate: 16000 });
             } catch (err) {
@@ -451,7 +478,6 @@
                 audioCtx = new AudioContextClass();
             }
 
-            // OTTIMIZZAZIONE 4: Robustezza e Gestione OS (Listener stato AudioContext)
             audioCtx.onstatechange = () => {
                 if (audioCtx.state === 'suspended' && isSessionActive) {
                     console.warn("OS_SUSPENDED: AudioContext sospeso. Tentativo di ripristino in corso...");
@@ -461,11 +487,11 @@
             
             await audioCtx.resume();
 
+            // OTTIMIZZAZIONE 3: Compatibilità Cross-Platform (forziamo l'OS al resampling di alta qualità se possibile)
             const constraints = UI.audioSource.value === 'system' 
-                ? { video: true, audio: { echoCancellation: true, noiseSuppression: true } } 
-                : { audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true } };
+                ? { video: true, audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } } 
+                : { audio: { echoCancellation: true, autoGainControl: true, noiseSuppression: true, sampleRate: 16000, channelCount: 1 } };
 
-            // OTTIMIZZAZIONE 4: Gestione Errori Dettagliata per MediaDevices
             try {
                 stream = UI.audioSource.value === 'system' 
                     ? await navigator.mediaDevices.getDisplayMedia(constraints) 
@@ -485,7 +511,7 @@
                 UI.status.innerText = errorMsg;
                 UI.status.style.color = "var(--term-err)";
                 isSessionActive = false;
-                return; // Ferma l'esecuzione se non possiamo catturare l'audio
+                return;
             }
 
             stream.getTracks().forEach(track => {
@@ -496,20 +522,16 @@
                 };
             });
 
-            // OTTIMIZZAZIONE 2: Gestione Memoria e Backpressure integrata nell'AudioWorklet
+            // OTTIMIZZAZIONE 2: Gestione Memoria incrementata e pulizia Resampler
             const workletStr = `
                 class P extends AudioWorkletProcessor {
                     constructor(options) { 
                         super(); 
                         this.bufPool = [];
-                        for(let i = 0; i < 15; i++) this.bufPool.push(new Float32Array(512));
+                        for(let i = 0; i < 50; i++) this.bufPool.push(new Float32Array(512)); // Aumentato a 50 per gestire colli di bottiglia e picchi GC
                         this.buf = this.bufPool.pop();
                         this.ptr = 0; this.s = 0; this.rmsCounter = 0; this.vadPort = null;
                         this.systemReady = false; 
-                        this.inRate = options.processorOptions.sampleRate || 16000;
-                        this.ratio = 16000 / this.inRate;
-                        this.phase = 0;
-                        this.lastSample = 0;
                         
                         this.port.onmessage = (e) => { 
                             if (e.data.type === 'SYSTEM_READY') {
@@ -539,8 +561,7 @@
 
                             if (this.vadPort) {
                                 if (this.bufPool.length === 0) {
-                                    // BACKPRESSURE: Buffer pool vuoto!
-                                    // Nessuna nuova allocazione: scartiamo silenziosamente i frame e ricicliamo il buffer
+                                    // BACKPRESSURE
                                     this.port.postMessage({ type: 'OVERLOAD_DROP_FRAME' });
                                     this.ptr = 0; 
                                     this.s = 0;
@@ -568,20 +589,9 @@
                         
                         const input = inputs[0][0]; if (!input) return true;
                         
+                        // Resampler nativo rimosso: ci affidiamo al resampling del browser per evitare l'aliasing lineare
                         for (let i = 0; i < input.length; i++) {
-                            const sample = input[i];
-                            
-                            if (this.inRate === 16000) {
-                                this.pushSample(sample);
-                            } else {
-                                this.phase += this.ratio;
-                                while (this.phase >= 1) {
-                                    this.phase -= 1;
-                                    const interp = this.lastSample + (sample - this.lastSample) * (1 - this.phase);
-                                    this.pushSample(interp);
-                                }
-                                this.lastSample = sample;
-                            }
+                            this.pushSample(input[i]);
                         }
                         return true;
                     }
@@ -605,7 +615,6 @@
                     } else if (e.data.rms !== undefined) {
                         UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%";
                     } else if (e.data.type === 'OVERLOAD_DROP_FRAME') {
-                        // Monitoraggio in console dell'intervento di backpressure
                         console.warn("OVERLOAD_DROP_FRAME: Il Main Thread o il Worker sono troppo lenti. L'AudioWorklet sta scartando frame per evitare memory leaks!");
                     }
                 };
