@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL PRO</title>
+    <title>WHISP // TERMINAL 2.0</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -17,6 +17,7 @@
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr 240px; gap: 20px; align-items: center; }
         #output { border: none; background: transparent; padding: 10px 0; min-height: 300px; max-height: calc(100vh - 460px); overflow-y: auto; line-height: 1.7; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; }
         .interim-text { color: var(--term-dim); font-style: italic; }
+        .low-conf { color: var(--term-err); text-decoration: underline dotted; }
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.75em; }
         .bar-bg { flex-grow: 1; height: 6px; background: #1a1a1a; border: 1px solid var(--term-dim); }
         .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s; }
@@ -87,7 +88,7 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
-    // --- LEVENSHTEIN & AUTO-HEAL ---
+    // --- LOGICA DI CURA GLOBALE (POST-SESSIONE) ---
     function levenshtein(a, b) {
         const m = [];
         for (let i = 0; i <= b.length; i++) m[i] = [i];
@@ -101,28 +102,47 @@
         return m[b.length][a.length];
     }
 
-    function silentAutoCorrect() {
-        let text = UI.output.innerText.replace(interimSpan.innerText, "");
+    function globalHeal() {
+        // Analizziamo tutto il contenuto dell'output, inclusi i tag span.low-conf
+        let text = UI.output.innerText;
         let words = text.match(/[a-zA-ZÀ-ÿ]+/g) || [];
         let freq = {};
-        words.forEach(w => { let l = w.toLowerCase(); if(l.length > 4) freq[l] = (freq[l] || 0) + 1; });
-        let strong = Object.keys(freq).filter(w => freq[w] >= 2);
-        let weak = Object.keys(freq).filter(w => freq[w] === 1);
-        let replacements = {};
-        weak.forEach(wk => {
-            let best = null, minDist = Infinity;
-            strong.forEach(st => { let d = levenshtein(wk, st); if (d < minDist) { minDist = d; best = st; } });
-            if (minDist > 0 && minDist <= 2) replacements[wk] = words.find(w => w.toLowerCase() === best) || best;
+        
+        // Costruiamo la mappa delle parole "sicure" (frequenza >= 2)
+        words.forEach(w => { 
+            let l = w.toLowerCase(); 
+            if(l.length > 4) freq[l] = (freq[l] || 0) + 1; 
         });
-        if (Object.keys(replacements).length > 0) {
-            let corrected = text;
-            for (let [wk, st] of Object.entries(replacements)) {
-                let r = new RegExp(`\\b${wk}\\b`, "gi");
-                corrected = corrected.replace(r, (m) => m[0] === m[0].toUpperCase() ? st.charAt(0).toUpperCase() + st.slice(1) : st.toLowerCase());
+
+        let strong = Object.keys(freq).filter(w => freq[w] >= 2);
+        
+        // Selezioniamo tutti gli elementi contrassegnati come dubbi
+        const lowConfSpans = UI.output.querySelectorAll('.low-conf');
+        let correctionsCount = 0;
+
+        lowConfSpans.forEach(span => {
+            let original = span.innerText.trim();
+            let lower = original.toLowerCase();
+            let best = null, minDist = Infinity;
+
+            strong.forEach(st => {
+                let d = levenshtein(lower, st);
+                if (d < minDist) { minDist = d; best = st; }
+            });
+
+            // Se troviamo una parola "forte" molto simile, la sostituiamo e rimuoviamo il rosso
+            if (minDist > 0 && minDist <= 2) {
+                let formatted = original[0] === original[0].toUpperCase() ? best.charAt(0).toUpperCase() + best.slice(1) : best.toLowerCase();
+                span.innerText = formatted;
+                span.classList.remove('low-conf');
+                correctionsCount++;
             }
-            UI.output.innerHTML = ""; UI.output.appendChild(document.createTextNode(corrected)); UI.output.appendChild(interimSpan);
-            UI.status.innerText = "HEALING..."; UI.status.style.color = "var(--term-warn)";
-            setTimeout(() => { if(isSessionActive) { UI.status.innerText = "RECORDING"; UI.status.style.color = "var(--term-ok)"; } }, 800);
+        });
+
+        if (correctionsCount > 0) {
+            UI.status.innerText = `GLOBAL_HEAL: ${correctionsCount} FIXED`;
+            UI.status.style.color = "var(--term-warn)";
+            setTimeout(() => { UI.status.innerText = "ONLINE"; UI.status.style.color = "var(--term-ok)"; }, 2000);
         }
     }
 
@@ -144,12 +164,13 @@
     }
     UI.languageSelect.value = "italian";
 
+    // --- WORKER SETUP ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
         const audioBuf = new Float32Array(1500 * 512);
-        const preRoll = new Float32Array(15 * 512); // Aumentato pre-roll per frasi solenni
+        const preRoll = new Float32Array(15 * 512);
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
@@ -184,7 +205,7 @@
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        if (prob > (isSpeaking ? 0.35 : 0.65)) { // Soglia di attacco più selettiva
+                        if (prob > (isSpeaking ? 0.35 : 0.65)) { 
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
@@ -195,7 +216,7 @@
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 35) { // Tolleranza pause più lunga per oratoria
+                            if (silenceFrames > 35) { 
                                 isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
                             }
                         }
@@ -216,14 +237,23 @@
             isBusy = true; const item = queue.shift();
             if (item.isPartial && queue.length > 0) { isBusy = false; process(); return; }
             try {
+                // Whisper può restituire logprobs se configurato correttamente
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
-                    num_beams: 5, // Aumentata precisione per evitare errori fonetici
-                    repetition_penalty: 1.5,
-                    no_repeat_ngram_size: 4,
-                    condition_on_previous_text: false 
+                    num_beams: 5, repetition_penalty: 1.5,
+                    no_speech_threshold: 0.6,
+                    logprob_threshold: -1.0, 
+                    condition_on_previous_text: false,
+                    return_timestamps: false
                 });
-                self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
+
+                if (res.text && res.text.trim().length > 0) {
+                    // Calcolo empirico della confidenza basato sulla lunghezza e parametri di sistema
+                    // Se il logprob_threshold era attivo, il fatto che sia passato indica una base minima.
+                    // Identifichiamo i segmenti "a rischio" se troppo corti o isolati.
+                    const isLowConf = res.text.trim().length < 8 || item.isPartial;
+                    self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf });
+                }
             } catch (e) { self.postMessage({ type: 'final', text: "[ERROR]" }); }
             isBusy = false; process();
         }
@@ -277,9 +307,15 @@
                 let prefix = " ";
                 if (lastChar.match(/[.!?]/)) newText = newText.charAt(0).toUpperCase() + newText.slice(1);
                 else newText = newText.charAt(0).toLowerCase() + newText.slice(1);
-                UI.output.insertBefore(document.createTextNode(prefix + newText), interimSpan);
-                lastChar = newText.slice(-1); UI.output.scrollTop = UI.output.scrollHeight;
-                silentAutoCorrect(); 
+                
+                // Creiamo l'elemento per il testo finalizzato
+                const span = document.createElement('span');
+                if (d.isLowConf) span.className = 'low-conf';
+                span.innerText = prefix + newText;
+                
+                UI.output.insertBefore(span, interimSpan);
+                lastChar = newText.slice(-1); 
+                UI.output.scrollTop = UI.output.scrollHeight;
             }
         }
     };
@@ -297,7 +333,7 @@
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "INITIALIZING VAD..."; vadWorker.postMessage({ type: 'load' }); };
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
-    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_pro_${Date.now()}.txt`; a.click(); };
+    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_final_${Date.now()}.txt`; a.click(); };
 
     async function start() {
         isSessionActive = true;
@@ -336,7 +372,11 @@
 
     async function stop() {
         isSessionActive = false; if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close();
-        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; UI.status.innerText = "IDLE"; UI.volFill.style.width="0%";
+        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; UI.status.innerText = "OPTIMIZING..."; 
+        UI.volFill.style.width="0%";
+        
+        // --- TRIGGER ANALISI FINALE ---
+        setTimeout(globalHeal, 500);
     }
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.languageSelect.onchange = (e) => whisperWorker.postMessage({ type: 'update_language', language: e.target.value });
