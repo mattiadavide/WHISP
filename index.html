@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 4.2_STABLE_PRO</title>
+    <title>WHISP // TERMINAL 4.2_STABLE_PRO_FIXED</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -49,7 +49,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_4.2_STABLE_PRO
+  > MODULE: VERSION_4.2_STABLE_PRO_FIXED
 </div>
 
 <div class="header">
@@ -107,7 +107,6 @@
 <script type="module">
     const DB_NAME = "whisp_v4_db";
     const STORE_NAME = "experience";
-    let currentInitialPrompt = "";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
 
@@ -160,7 +159,7 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 60 === 0) flush(true); 
+                            if (audioBufPtr % 40 === 0) flush(true); 
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
@@ -202,20 +201,26 @@
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        let beams = 5, initialPrompt = "";
+        let beams = 5;
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
+            
+            // Seleziona il blocco parziale più aggiornato per evitare code infinite
+            if (item.isPartial && queue.some(q => q.isPartial)) { isBusy = false; process(); return; }
+
             try {
+                // RIPRISTINATE LE IMPOSTAZIONI DI WHISPER 2.9
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: item.isPartial ? 1 : beams,
-                    prompt: initialPrompt,
-                    repetition_penalty: 1.15,
-                    no_repeat_ngram_size: 3,
-                    temperature: 0.0,
-                    condition_on_previous_text: false 
+                    repetition_penalty: 1.1,
+                    no_speech_threshold: 0.6,
+                    condition_on_previous_text: true,
+                    chunk_length_s: 30,
+                    stride_length_s: 10,
+                    temperature: 0.0
                 });
                 if (res.text && res.text.trim().length > 0) {
                     self.postMessage({ 
@@ -229,7 +234,7 @@
         }
 
         self.onmessage = async (e) => {
-            const { type, port, precision, language, num_beams, prompt } = e.data;
+            const { type, port, precision, language, num_beams } = e.data;
             if (type === 'load') {
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
                 let pipeOptions = {
@@ -260,7 +265,6 @@
             } else if (type === 'update_params') {
                 if (language) currentLanguage = language;
                 if (num_beams) beams = parseInt(num_beams);
-                if (prompt !== undefined) initialPrompt = prompt;
             } else if (type === 'init_vad_port') {
                 vadPort = port; 
                 vadPort.onmessage = (ev) => { 
@@ -357,7 +361,7 @@
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
     whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2 }, [workerChannel.port2]);
 
-    let audioCtx, stream, isSessionActive = false, lastFinalText = "";
+    let audioCtx, stream, isSessionActive = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
     function rebuildTokens(text) {
@@ -396,18 +400,7 @@
             interimSpan.innerText = "";
             const incomingText = d.text.trim();
 
-            // SCUDO ANTI-LOOP POTENZIATO (Controllo Overlap)
-            if (lastFinalText.length > 20 && incomingText.length > 20) {
-                const tail = lastFinalText.slice(-20); // Ultime 20 lettere del vecchio
-                const head = incomingText.slice(0, 20); // Prime 20 lettere del nuovo
-                
-                // Blocca se è identico, o se c'è un incastro evidente
-                if (incomingText === lastFinalText || incomingText.includes(tail) || lastFinalText.includes(head)) {
-                    console.warn("BLOCKED_LOOP_HALLUCINATION:", incomingText);
-                    return; 
-                }
-            }
-            lastFinalText = incomingText;
+            if (incomingText.length === 0) return;
 
             incomingText.split(/ +/).forEach(w => {
                 const span = document.createElement('span');
@@ -463,18 +456,10 @@
 
     async function start() {
         isSessionActive = true;
-        lastFinalText = ""; 
         
-        // FIX PUNTEGGIATURA: Generiamo un prompt che insegna a Whisper ad usare la punteggiatura
-        const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
-            .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
-            .map(t => t.innerText.trim());
-        let dnaString = [...new Set(sessionDNA)].slice(-15).join(", ");
-        currentInitialPrompt = "Testo con punteggiatura corretta. " + (dnaString ? "Termini: " + dnaString + "." : "");
-
         whisperWorker.postMessage({ 
             type: 'update_params', language: UI.languageSelect.value, 
-            num_beams: UI.beamSelect.value, prompt: currentInitialPrompt 
+            num_beams: UI.beamSelect.value 
         });
 
         audioCtx = new AudioContext({ sampleRate: 16000 });
