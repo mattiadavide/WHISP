@@ -49,7 +49,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > DESIGN BY MATTIA DAVIDE AMICO
+  > MODULE: VERSION_3.1_STABLE_PRO
 </div>
 
 <div class="header">
@@ -517,7 +517,7 @@
             if (res.ok) {
                 const text = await res.text();
                 window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0));
-                UI.status.innerText = \`DICT_LOADED [\${window.referenceDict.size} TERMS]\`;
+                UI.status.innerText = `DICT_LOADED [${window.referenceDict.size} TERMS]`;
                 UI.status.style.color = "var(--term-ok)";
             } else {
                 throw new Error("HTTP_404");
