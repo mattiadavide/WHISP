@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 3.4_STABLE_PRO</title>
+    <title>WHISP // TERMINAL 3.5_STABLE_PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -49,15 +49,15 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_3.4_STABLE_PRO
+  > MODULE: VERSION_3.5_STABLE_PRO
 </div>
 
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
-            <option value="fp16" selected>ENGINE: LARGE_FP16 (TURBO)</option>
-            <option value="q8">ENGINE: STANDARD_Q4 (FAST)</option>
-            <option value="q8-tiny">ENGINE: MOBILE_TINY</option>
+            <option value="turbo" selected>ENGINE: LARGE_TURBO (FP16_MAX)</option>
+            <option value="base">ENGINE: STANDARD_BASE (FP16_FAST)</option>
+            <option value="tiny">ENGINE: MOBILE_TINY (FP16_FASTEST)</option>
         </select>
         <select id="beamSelect">
             <option value="1">BEAMS: 1 (FAST)</option>
@@ -235,27 +235,25 @@
             const { type, port, precision, language, num_beams, prompt } = e.data;
             if (type === 'load') {
                 
+                // Niente più quantizzazione forzata! Si va di FP16 nativo.
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
-                // Usiamo 'q4' standard, supportato nativamente da transformers.js v3 per WebGPU
-                let targetDtype = 'q4'; 
                 
-                if (precision === 'fp16') {
-                    targetDtype = 'fp16'; 
-                } else if (precision === 'q8-tiny') {
+                if (precision === 'base') {
+                    modelName = 'onnx-community/whisper-base'; 
+                } else if (precision === 'tiny') {
                     modelName = 'onnx-community/whisper-tiny'; 
-                    targetDtype = 'q4';
                 }
 
                 try {
                     transcriber = await pipeline('automatic-speech-recognition', modelName, { 
                         device: 'webgpu', 
-                        dtype: targetDtype,
+                        dtype: 'fp16', // Dtype universale per far cantare i Tensor Core
                         progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                     });
                 } catch (err) {
                     console.error("WEBGPU CRASH, FORZATURA CPU...", err);
                     transcriber = await pipeline('automatic-speech-recognition', modelName, { 
-                        device: 'wasm', dtype: 'q8',
+                        device: 'wasm', dtype: 'fp32', // Fallback standard
                         progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress })
                     });
                 }
