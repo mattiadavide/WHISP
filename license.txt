@@ -1,0 +1,2 @@
+Copyright (c) 2026 [Mattia Davide Amico]
+You may not copy, distribute, modify, merge, publish, or use this code, in whole or in part, without explicit prior written permission from the author.
