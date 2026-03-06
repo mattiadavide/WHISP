@@ -203,7 +203,7 @@
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        let beams = 3, initialPrompt = "";
+        let beams = 2, initialPrompt = "";
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
@@ -315,7 +315,6 @@
                 const [_, prefix, core, suffix] = match;
                 const lowerCore = core.toLowerCase();
                 
-                // Ignoriamo categoricamente parole sotto le 6 lettere per evitare falsi positivi
                 if (lowerCore.length < 6) return;
 
                 let best = null, minDist = Infinity;
@@ -325,7 +324,6 @@
                     if (d < minDist) { minDist = d; best = ref; }
                 });
 
-                // Maggior rigore nell'Healing
                 if (best && ((minDist === 1 && lowerCore.length >= 6) || (minDist === 2 && lowerCore.length > 8))) {
                     const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
                     corrections.push({ id: item.id, newText: prefix + restored + suffix });
@@ -339,15 +337,10 @@
         self.onmessage = (e) => {
             let text = e.data.text;
             
-            // Whitelist di parole italiane che usano ripetizioni rafforzative valide
-            const whitelist = ['piano', 'quasi', 'gira', 'fuggi', 'lecca', 'zitto', 'ora', 'bene', 'su', 'giù', 'dai', 'corri', 'lì', 'là', 'qui', 'qua', 'ciao', 'vero', 'poco', 'molto', 'troppo', 'sempre', 'mai'];
-            
-            text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, (match, p1) => {
-                if (whitelist.includes(p1.toLowerCase())) {
-                    return match; // Mantiene la ripetizione
-                }
-                return p1; // Rimuove il duplicato
-            });
+            // Approccio Dinamico (Heuristic Filter): rimuove i duplicati SOLO se la parola è di 1, 2 o 3 lettere.
+            // Pialla le balbuzie di Whisper ("il il", "di di", "che che") 
+            // ma ignora automaticamente qualsiasi rafforzativo reale ("piano piano", "quasi quasi").
+            text = text.replace(/\\b(\\w{1,3})\\s+\\1\\b/gi, '$1'); 
             
             text = text.replace(/ {2,}/g, ' '); 
             self.postMessage({ type: 'REFINED', text });
@@ -436,11 +429,10 @@
             interimSpan.innerText = " " + d.text.trim() + "...";
             UI.output.scrollTop = UI.output.scrollHeight;
         } else if (d.type === 'FLUSH_COMPLETE') {
-            // Svuotamento coda completato. Ora eseguiamo davvero il refining.
             isSessionActive = false;
             UI.status.innerText = "REFINING_SEMANTICS...";
             refiningWorker.postMessage({ text: UI.output.innerText });
-            UI.startBtn.disabled = false; // Riattiviamo il bottone Start
+            UI.startBtn.disabled = false; 
         }
     };
 
@@ -494,7 +486,7 @@
 
         whisperWorker.postMessage({ 
             type: 'update_params', language: UI.languageSelect.value, 
-            num_beams: 3, prompt: currentInitialPrompt 
+            num_beams: 2, prompt: currentInitialPrompt 
         });
 
         audioCtx = new AudioContext({ sampleRate: 16000 });
@@ -533,21 +525,18 @@
     }
 
     async function stop() {
-        // 1. Forza il VAD a inviare eventuali residui audio a Whisper
         vadWorker.postMessage({ type: 'force_flush' });
         
-        // 2. Ferma il microfono immediatamente
         if(stream) stream.getTracks().forEach(t => t.stop());
         if(audioCtx) audioCtx.close();
         
         UI.stopBtn.style.display = 'none'; 
         UI.startBtn.style.display = 'inline-block'; 
-        UI.startBtn.disabled = true; // Evita riavvii mentre svuota
+        UI.startBtn.disabled = true; 
         
         UI.status.innerText = "FLUSHING_AUDIO_QUEUE...";
         UI.status.style.color = "var(--term-warn)";
         
-        // 3. Chiede a Whisper di segnalare quando la sua coda interna è vuota (innesca FLUSH_COMPLETE)
         whisperWorker.postMessage({ type: 'request_flush' });
     }
 
