@@ -4,16 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 3.0_STABLE_PRO</title>
+    <title>WHISP // TERMINAL 3.1_STABLE_PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
         .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; color: var(--term-main); }
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
-        .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
-        select, button { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
+        .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; align-items: center; }
+        select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
+        input { cursor: text; }
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr 240px; gap: 20px; align-items: center; }
         #output { border: none; background: transparent; padding: 10px 0; min-height: 400px; max-height: calc(100vh - 480px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; white-space: pre-wrap; }
         
@@ -48,7 +49,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_3.0_STABLE_PRO
+  > MODULE: VERSION_3.1_STABLE_PRO
 </div>
 
 <div class="header">
@@ -68,6 +69,9 @@
             <option value="mic">SRC: MICROPHONE</option>
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
+        
+        <input type="text" id="dictUrlInput" placeholder="URL GLOSSARIO (.txt)" style="flex-grow: 2;">
+        <button id="loadDictBtn">FETCH_DICT()</button>
         <button id="loadBtn">LOAD_CORE()</button>
     </div>
 </div>
@@ -128,7 +132,6 @@
 
     // --- WORKER DEFINITIONS ---
 
-    // VAD WORKER: Logica Podcast (Soft/Hard Limit)
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -160,7 +163,7 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 40 === 0) flush(true); // Aggiornamento Partial
+                            if (audioBufPtr % 40 === 0) flush(true); 
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
@@ -170,9 +173,8 @@
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
 
-                        // LOGICA PODCAST MODE
-                        const isSoftLimitReached = audioBufPtr > 375; // 12 secondi
-                        const isHardLimitReached = audioBufPtr > 600; // 19 secondi
+                        const isSoftLimitReached = audioBufPtr > 375; 
+                        const isHardLimitReached = audioBufPtr > 600; 
 
                         if (prob > (isSpeaking ? 0.35 : 0.65)) { 
                             if (!isSpeaking) {
@@ -182,12 +184,10 @@
                                     audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
                                 }
                             }
-                            // Se parliamo da troppo tempo, cerchiamo un micro-dip per chiudere
                             if (isSoftLimitReached && prob < 0.45) { flush(false); }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            // Pausa standard o Hard Limit
                             if (silenceFrames > 35 || isHardLimitReached) { 
                                 isSpeaking = false; flush(false); 
                                 state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
@@ -201,7 +201,6 @@
         };
     `;
 
-    // WHISPER WORKER: Initial Prompt e Context
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -216,9 +215,10 @@
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: item.isPartial ? 1 : beams,
                     prompt: initialPrompt,
-                    repetition_penalty: 1.1,
+                    repetition_penalty: 1.15,
+                    no_repeat_ngram_size: 3,
                     temperature: 0.0,
-                    condition_on_previous_text: true
+                    condition_on_previous_text: false 
                 });
                 if (res.text && res.text.trim().length > 0) {
                     self.postMessage({ 
@@ -252,7 +252,6 @@
         };
     `;
 
-    // HEALING WORKER: Regex per preservazione punteggiatura
     const healingWorkerCode = `
         function levenshtein(a, b) {
             const m = [];
@@ -270,36 +269,27 @@
         self.onmessage = (e) => {
             const { wordsToCorrect, priorityPool, referenceDict } = e.data;
             const corrections = [];
-            const connectors = ['per', 'con', 'tra', 'fra', 'su', 'che', 'non'];
+            
+            const activeKnowledge = [...priorityPool, ...(referenceDict || [])];
 
             wordsToCorrect.forEach(item => {
-                // Regex: Prefisso(simboli) + Core(Lettere) + Suffisso(Punteggiatura)
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
                 if (!match) return;
 
                 const [_, prefix, core, suffix] = match;
                 const lowerCore = core.toLowerCase();
-                if (lowerCore.length < 4) return;
-
-                // Healing con logica Bigrammi
-                for (let conn of connectors) {
-                    if (lowerCore.startsWith(conn) && lowerCore.length > conn.length + 3) {
-                        const rem = lowerCore.slice(conn.length);
-                        if (priorityPool.includes(rem) || (referenceDict && referenceDict.includes(rem))) {
-                            corrections.push({ id: item.id, newText: prefix + conn + " " + rem + suffix });
-                            return;
-                        }
-                    }
-                }
+                
+                if (lowerCore.length < 5) return;
 
                 let best = null, minDist = Infinity;
-                [...priorityPool, ...(referenceDict || [])].forEach(ref => {
-                    if (Math.abs(ref.length - lowerCore.length) > 1) return;
+                
+                activeKnowledge.forEach(ref => {
+                    if (Math.abs(ref.length - lowerCore.length) > 2) return;
                     let d = levenshtein(lowerCore, ref);
                     if (d < minDist) { minDist = d; best = ref; }
                 });
 
-                if (minDist <= 1 && best) {
+                if ((minDist === 1) || (minDist === 2 && lowerCore.length > 7) && best) {
                     const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
                     corrections.push({ id: item.id, newText: prefix + restored + suffix });
                 }
@@ -311,9 +301,8 @@
     const refiningWorkerCode = `
         self.onmessage = (e) => {
             let text = e.data.text;
-            // Pulizia sintattica conservativa
-            text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, '$1'); // Balbuzie
-            text = text.replace(/ {2,}/g, ' '); // Spazi doppi
+            text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, '$1'); 
+            text = text.replace(/ {2,}/g, ' '); 
             self.postMessage({ type: 'REFINED', text });
         };
     `;
@@ -324,6 +313,7 @@
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
         precisionSelect: document.getElementById('precisionSelect'), beamSelect: document.getElementById('beamSelect'),
         languageSelect: document.getElementById('languageSelect'), audioSource: document.getElementById('audioSource'),
+        dictUrlInput: document.getElementById('dictUrlInput'), loadDictBtn: document.getElementById('loadDictBtn'),
         loadBtn: document.getElementById('loadBtn'), startBtn: document.getElementById('startBtn'), 
         stopBtn: document.getElementById('stopBtn'), output: document.getElementById('output'),
         vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'), 
@@ -345,7 +335,6 @@
     let audioCtx, stream, isSessionActive = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
-    // Ricostruisce il DOM preservando paragrafi (\n) e Token cliccabili
     function rebuildTokens(text) {
         UI.output.innerHTML = "";
         const lines = text.split('\n');
@@ -436,7 +425,6 @@
     // --- MAIN FLOW ---
     async function start() {
         isSessionActive = true;
-        // DNA Estrazione: Prende i termini validi per guidare la nuova sessione
         const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
             .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
             .map(t => t.innerText.trim().toLowerCase());
@@ -492,7 +480,7 @@
         refiningWorker.postMessage({ text: UI.output.innerText });
     }
 
-    // --- UX VALIDATION POPUP ---
+    // --- UX VALIDATION POPUP E GESTIONE DIZIONARIO ---
     let activeToken = null;
     UI.output.onclick = (e) => {
         if (e.target.classList.contains('word-token')) {
@@ -516,6 +504,31 @@
         }
     };
 
+    UI.loadDictBtn.onclick = async () => {
+        const url = UI.dictUrlInput.value.trim();
+        if (!url) return;
+        
+        UI.loadDictBtn.disabled = true;
+        UI.status.innerText = "FETCHING_KNOWLEDGE_BASE...";
+        UI.status.style.color = "var(--term-warn)";
+        
+        try {
+            const res = await fetch(url);
+            if (res.ok) {
+                const text = await res.text();
+                window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0));
+                UI.status.innerText = \`DICT_LOADED [\${window.referenceDict.size} TERMS]\`;
+                UI.status.style.color = "var(--term-ok)";
+            } else {
+                throw new Error("HTTP_404");
+            }
+        } catch (e) {
+            UI.status.innerText = "ERR_DICT_FETCH_FAILED";
+            UI.status.style.color = "var(--term-err)";
+        }
+        UI.loadDictBtn.disabled = false;
+    };
+
     // --- INIT ---
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_CORE..."; vadWorker.postMessage({ type: 'load' }); };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
@@ -527,9 +540,6 @@
         const tx = db.transaction(STORE_NAME, "readonly");
         const req = tx.objectStore(STORE_NAME).get("words");
         req.onsuccess = () => { if(req.result) window.experienceDict = new Set(req.result); };
-        
-        const langRes = await fetch("https://raw.githubusercontent.com/napolux/paroleitaliane/main/paroleitaliane/60000_parole_italiane.txt");
-        if(langRes.ok) window.referenceDict = new Set((await langRes.text()).split('\n').map(w => w.trim().toLowerCase()));
         
         const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP" };
         for (const [c, n] of Object.entries(LANGUAGES)) {
