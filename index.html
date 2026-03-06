@@ -89,19 +89,18 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
-    // FIX: Percorso completo del dizionario (risolto 404)
     const DICTIONARY_URLS = {
         "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/main/paroleitaliane/60000_parole_italiane.txt",
         "english": "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
     };
 
-    let referenceDict = new Set();
-    let experienceDict = new Set();
-    let trendSnapshots = new Set();
+    // FIX: Esposizione globale per debugging e persistenza
+    window.referenceDict = new Set();
+    window.experienceDict = new Set();
+    window.trendSnapshots = new Set();
 
     async function fetchTrendSnapshot(lang) {
         const geo = lang === 'italian' ? 'IT' : 'US';
-        // FIX: Cambiato proxy in Codetabs per migliore compatibilità CORS
         const proxy = 'https://api.codetabs.com/v1/proxy?quest=';
         const target = encodeURIComponent(`https://trends.google.it/trends/trendingsearches/daily/rss?geo=${geo}`);
         try {
@@ -114,8 +113,8 @@
             xml.querySelectorAll("title").forEach(item => {
                 const trend = item.textContent.toLowerCase().trim();
                 if (trend.length > 3) {
-                    trendSnapshots.add(trend);
-                    trend.split(/\s+/).forEach(word => { if (word.length > 3) trendSnapshots.add(word); });
+                    window.trendSnapshots.add(trend);
+                    trend.split(/\s+/).forEach(word => { if (word.length > 3) window.trendSnapshots.add(word); });
                 }
             });
         } catch (e) { console.warn("Trend snapshot bypass."); }
@@ -127,7 +126,7 @@
             const response = await fetch(DICTIONARY_URLS[lang]);
             if(response.ok) {
                 const text = await response.text();
-                referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()));
+                window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()));
             }
             await fetchTrendSnapshot(lang);
         } catch (e) { console.warn("Resource loading skipped."); }
@@ -152,12 +151,12 @@
         let words = text.match(/[a-zA-ZÀ-ÿ]+/g) || [];
         words.forEach(w => { 
             let l = w.toLowerCase(); 
-            if(l.length > 4) experienceDict.add(l); 
+            if(l.length > 4) window.experienceDict.add(l); 
         });
         
         const lowConfSpans = UI.output.querySelectorAll('.low-conf');
         let correctionsCount = 0;
-        const priorityPool = new Set([...experienceDict, ...trendSnapshots]);
+        const priorityPool = new Set([...window.experienceDict, ...window.trendSnapshots]);
 
         lowConfSpans.forEach(span => {
             let original = span.innerText.trim();
@@ -180,7 +179,7 @@
             });
 
             if (minDist > 1) {
-                referenceDict.forEach(ref => {
+                window.referenceDict.forEach(ref => {
                     if (Math.abs(ref.length - lower.length) > 1) return;
                     let d = levenshtein(lower, ref);
                     if (d < minDist) { minDist = d; bestMatch = ref; }
@@ -388,8 +387,8 @@
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_VAD..."; vadWorker.postMessage({ type: 'load' }); };
     
     UI.resetDbBtn.onclick = () => {
-        experienceDict.clear();
-        trendSnapshots.clear();
+        window.experienceDict.clear();
+        window.trendSnapshots.clear();
         UI.status.innerText = "DB_WIPED";
         UI.status.style.color = "var(--term-warn)";
         setTimeout(() => { if(!isSessionActive) UI.status.innerText = "READY"; }, 1500);
@@ -399,8 +398,8 @@
         UI.output.innerHTML = ""; 
         UI.output.appendChild(interimSpan); 
         lastChar = "."; 
-        experienceDict.clear(); 
-        trendSnapshots.clear();
+        window.experienceDict.clear(); 
+        window.trendSnapshots.clear();
     };
 
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
