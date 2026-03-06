@@ -59,11 +59,6 @@
             <option value="base">ENGINE: STANDARD_BASE (AUTO_GPU)</option>
             <option value="tiny">ENGINE: MOBILE_TINY (AUTO_GPU)</option>
         </select>
-        <select id="beamSelect">
-            <option value="1">BEAMS: 1 (FAST)</option>
-            <option value="5" selected>BEAMS: 5 (BALANCED)</option>
-            <option value="10">BEAMS: 10 (ACCURATE)</option>
-        </select>
         <select id="languageSelect"></select>
         <select id="audioSource">
             <option value="mic">SRC: MICROPHONE</option>
@@ -202,7 +197,7 @@
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        let beams = 5, initialPrompt = "";
+        let beams = 3, initialPrompt = "";
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
@@ -336,7 +331,7 @@
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
-        precisionSelect: document.getElementById('precisionSelect'), beamSelect: document.getElementById('beamSelect'),
+        precisionSelect: document.getElementById('precisionSelect'), 
         languageSelect: document.getElementById('languageSelect'), audioSource: document.getElementById('audioSource'),
         dictUrlInput: document.getElementById('dictUrlInput'), loadDictBtn: document.getElementById('loadDictBtn'),
         loadBtn: document.getElementById('loadBtn'), startBtn: document.getElementById('startBtn'), 
@@ -396,7 +391,6 @@
             interimSpan.innerText = "";
             const incomingText = d.text.trim();
 
-            // SCUDO ANTI-LOOP CORRETTO (dalla versione 4.1)
             if (lastFinalText.length > 15 && incomingText.length > 15) {
                 if (incomingText === lastFinalText || lastFinalText.endsWith(incomingText)) {
                     console.warn("BLOCKED_LOOP_HALLUCINATION:", incomingText);
@@ -461,7 +455,6 @@
         isSessionActive = true;
         lastFinalText = ""; 
         
-        // PROMPT CORRETTO (dalla versione 4.1)
         const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
             .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
             .map(t => t.innerText.trim().toLowerCase());
@@ -469,7 +462,7 @@
 
         whisperWorker.postMessage({ 
             type: 'update_params', language: UI.languageSelect.value, 
-            num_beams: UI.beamSelect.value, prompt: currentInitialPrompt 
+            num_beams: 3, prompt: currentInitialPrompt 
         });
 
         audioCtx = new AudioContext({ sampleRate: 16000 });
