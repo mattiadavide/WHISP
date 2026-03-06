@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 3.2_STABLE_PRO</title>
+    <title>WHISP // TERMINAL 3.3_STABLE_PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -49,7 +49,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_3.2_STABLE_PRO
+  > MODULE: VERSION_3.3_STABLE_PRO
 </div>
 
 <div class="header">
@@ -163,7 +163,7 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 60 === 0) flush(true); // Aggiornato a 60 per ottimizzare le performance
+                            if (audioBufPtr % 60 === 0) flush(true); 
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
@@ -234,15 +234,30 @@
         self.onmessage = async (e) => {
             const { type, port, precision, language, num_beams, prompt } = e.data;
             if (type === 'load') {
-                // Selezione dinamica del modello per garantire performance scalabili
-                let model = 'onnx-community/whisper-large-v3-turbo';
-                if (precision === 'q8-tiny') model = 'Xenova/whisper-tiny';
-                else if (precision === 'q8') model = 'Xenova/whisper-base';
+                
+                let modelName = 'onnx-community/whisper-large-v3-turbo';
+                let targetDtype = 'q4f16'; 
+                
+                if (precision === 'fp16') {
+                    targetDtype = 'fp16'; 
+                } else if (precision === 'q8-tiny') {
+                    modelName = 'onnx-community/whisper-tiny'; 
+                    targetDtype = 'q4f16';
+                }
 
-                transcriber = await pipeline('automatic-speech-recognition', model, { 
-                    device: 'webgpu', dtype: precision === 'fp16' ? 'fp16' : 'q4f16',
-                    progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
-                }).catch(async () => await pipeline('automatic-speech-recognition', model, { device: 'wasm', dtype: 'q8' }));
+                try {
+                    transcriber = await pipeline('automatic-speech-recognition', modelName, { 
+                        device: 'webgpu', 
+                        dtype: targetDtype,
+                        progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
+                    });
+                } catch (err) {
+                    console.error("WEBGPU CRASH, FORZATURA CPU...", err);
+                    transcriber = await pipeline('automatic-speech-recognition', modelName, { 
+                        device: 'wasm', dtype: 'q8',
+                        progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress })
+                    });
+                }
                 
                 self.postMessage({ type: 'READY_TO_PROCESS' });
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
@@ -254,7 +269,6 @@
                 vadPort = port; 
                 vadPort.onmessage = (ev) => { 
                     if (ev.data.type === 'transcribe') { 
-                        // Logica Drop-Stale per la coda
                         if (ev.data.isPartial) {
                             const lastIdx = queue.length - 1;
                             if (lastIdx >= 0 && queue[lastIdx].isPartial) {
@@ -391,7 +405,6 @@
             interimSpan.innerText = "";
             const incomingText = d.text.trim();
 
-            // Scudo Anti-Loop
             if (incomingText.length > 20 && (lastFinalText.includes(incomingText) || incomingText.includes(lastFinalText))) {
                 console.warn("BLOCKED_LOOP_HALLUCINATION:", incomingText);
                 return; 
@@ -453,7 +466,7 @@
     // --- MAIN FLOW ---
     async function start() {
         isSessionActive = true;
-        lastFinalText = ""; // Resetta lo scudo all'avvio
+        lastFinalText = ""; 
         const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
             .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
             .map(t => t.innerText.trim().toLowerCase());
