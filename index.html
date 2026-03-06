@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 3.0_STABLE_FIXED</title>
+    <title>WHISP // TERMINAL 3.0_STABLE_PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -16,10 +16,13 @@
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr 240px; gap: 20px; align-items: center; }
         #output { border: none; background: transparent; padding: 10px 0; min-height: 400px; max-height: calc(100vh - 480px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; white-space: pre-wrap; }
+        
+        /* Token Word UX */
         .word-token { cursor: pointer; transition: background 0.2s; padding: 2px 1px; border-radius: 2px; display: inline-block; }
         .word-token:hover { background: rgba(255, 255, 255, 0.15); }
         .low-conf { color: var(--term-err); text-decoration: underline dotted; }
         .validated { color: var(--term-ok) !important; text-decoration: none !important; }
+        
         .interim-text { color: var(--term-dim); font-style: italic; }
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.75em; }
         .bar-bg { flex-grow: 1; height: 6px; background: #1a1a1a; border: 1px solid var(--term-dim); }
@@ -35,7 +38,7 @@
 
 <div id="word-popup">
     <input type="text" id="edit-word-input" style="background:#000; color:#fff; border:1px solid #fff; padding:5px; margin-bottom:5px; width:120px;"><br>
-    <button id="confirm-word-btn">VALIDATE</button>
+    <button id="confirm-word-btn">VALIDATE_WORD</button>
 </div>
 
 <div class="ascii-art">
@@ -45,20 +48,20 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: POST_PROCESS_V3_FIXED_STABLE
+  > MODULE: VERSION_3.0_STABLE_PRO
 </div>
 
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
-            <option value="fp16">ENGINE: LARGE_FP16</option>
+            <option value="fp16">ENGINE: LARGE_FP16 (MAX)</option>
             <option value="q8">ENGINE: STANDARD_Q8</option>
             <option value="q8-tiny">ENGINE: MOBILE_TINY</option>
         </select>
         <select id="beamSelect">
             <option value="1">BEAMS: 1 (FAST)</option>
-            <option value="5" selected>BEAMS: 5 (STD)</option>
-            <option value="10">BEAMS: 10 (MAX)</option>
+            <option value="5" selected>BEAMS: 5 (BALANCED)</option>
+            <option value="10">BEAMS: 10 (ACCURATE)</option>
         </select>
         <select id="languageSelect"></select>
         <select id="audioSource">
@@ -73,7 +76,7 @@
     <div>
         STATUS: <span id="status" class="blink">IDLE</span>
         <div id="progress-container" style="display:none; margin-top:10px;">
-            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING: 0%</div>
+            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING_MODELS: 0%</div>
             <div id="ascii-bar">[--------------------]</div>
         </div>
     </div>
@@ -81,7 +84,7 @@
         <div class="stat-row"><span>INPUT_RMS</span><div class="bar-bg"><div id="volFill" class="bar-fill" style="background: #444;"></div></div></div>
         <div class="stat-row"><span>NEURAL_VAD</span><div class="bar-bg"><div id="vadFill" class="bar-fill" style="background: var(--term-main);"></div></div></div>
         <div style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 5px;">
-            <span id="probVal" style="font-size: 0.75em;">VAD: 0.00</span>
+            <span id="probVal" style="font-size: 0.75em;">VAD_PROB: 0.00</span>
             <div class="vad-indicator" id="vadLed"></div>
         </div>
     </div>
@@ -89,17 +92,17 @@
 
 <div style="margin-bottom: 10px; display: flex; gap: 10px;">
     <button id="startBtn" disabled>EXEC_START()</button>
-    <button id="stopBtn" style="display:none; color: var(--term-err); border-color: var(--term-err);">TERMINATE()</button>
-    <button id="exportBtn" style="margin-left: auto;">EXPORT</button>
-    <button id="copyBtn">COPY</button>
-    <button id="clearBtn">FLUSH_ALL</button>
+    <button id="stopBtn" style="display:none; color: var(--term-err); border-color: var(--term-err);">TERMINATE_SESSION()</button>
+    <button id="exportBtn" style="margin-left: auto;">EXPORT_TXT</button>
+    <button id="copyBtn">COPY_ALL</button>
+    <button id="clearBtn">FLUSH_OUTPUT</button>
 </div>
 
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- CONFIG & DB ---
-    const DB_NAME = "whisp_experience_v3";
+    // --- DATABASE & PERSISTENZA ---
+    const DB_NAME = "whisp_v3_db";
     const STORE_NAME = "experience";
     let currentInitialPrompt = "";
     window.experienceDict = new Set();
@@ -123,7 +126,9 @@
         tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words");
     }
 
-    // --- WORKER CODES ---
+    // --- WORKER DEFINITIONS ---
+
+    // VAD WORKER: Logica Podcast (Soft/Hard Limit)
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -138,7 +143,7 @@
             if (!isWhisperOnline || audioBufPtr <= 5) return;
             const flat = new Float32Array(audioBufPtr * 512); flat.set(audioBuf.subarray(0, audioBufPtr * 512));
             whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial, silenceDuration: silenceFrames }, [flat.buffer]);
-            if(!isPartial) { audioBufPtr = 0; preRollCount = 0; }
+            if(!isPartial) { audioBufPtr = 0; preRollCount = 0; silenceFrames = 0; }
         }
 
         self.onmessage = async (e) => {
@@ -155,14 +160,20 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 40 === 0) flush(true); 
+                            if (audioBufPtr % 40 === 0) flush(true); // Aggiornamento Partial
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
                         }
+
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
+
+                        // LOGICA PODCAST MODE
+                        const isSoftLimitReached = audioBufPtr > 375; // 12 secondi
+                        const isHardLimitReached = audioBufPtr > 600; // 19 secondi
+
                         if (prob > (isSpeaking ? 0.35 : 0.65)) { 
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
@@ -171,10 +182,16 @@
                                     audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
                                 }
                             }
+                            // Se parliamo da troppo tempo, cerchiamo un micro-dip per chiudere
+                            if (isSoftLimitReached && prob < 0.45) { flush(false); }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 35) { isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
+                            // Pausa standard o Hard Limit
+                            if (silenceFrames > 35 || isHardLimitReached) { 
+                                isSpeaking = false; flush(false); 
+                                state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
+                            }
                         }
                         self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
                         port.postMessage({ type: 'return_buf', data: chunk.buffer }, [chunk.buffer]);
@@ -184,6 +201,7 @@
         };
     `;
 
+    // WHISPER WORKER: Initial Prompt e Context
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -199,7 +217,8 @@
                     num_beams: item.isPartial ? 1 : beams,
                     prompt: initialPrompt,
                     repetition_penalty: 1.1,
-                    temperature: 0.0
+                    temperature: 0.0,
+                    condition_on_previous_text: true
                 });
                 if (res.text && res.text.trim().length > 0) {
                     self.postMessage({ 
@@ -233,6 +252,7 @@
         };
     `;
 
+    // HEALING WORKER: Regex per preservazione punteggiatura
     const healingWorkerCode = `
         function levenshtein(a, b) {
             const m = [];
@@ -253,7 +273,7 @@
             const connectors = ['per', 'con', 'tra', 'fra', 'su', 'che', 'non'];
 
             wordsToCorrect.forEach(item => {
-                // Preserviamo punteggiatura e maiuscole estraendo il "core" della parola
+                // Regex: Prefisso(simboli) + Core(Lettere) + Suffisso(Punteggiatura)
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
                 if (!match) return;
 
@@ -261,7 +281,7 @@
                 const lowerCore = core.toLowerCase();
                 if (lowerCore.length < 4) return;
 
-                // Logica Bigrammi: scissione fusi
+                // Healing con logica Bigrammi
                 for (let conn of connectors) {
                     if (lowerCore.startsWith(conn) && lowerCore.length > conn.length + 3) {
                         const rem = lowerCore.slice(conn.length);
@@ -280,7 +300,6 @@
                 });
 
                 if (minDist <= 1 && best) {
-                    // Ripristiniamo la maiuscola se presente nell'originale
                     const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
                     corrections.push({ id: item.id, newText: prefix + restored + suffix });
                 }
@@ -292,25 +311,26 @@
     const refiningWorkerCode = `
         self.onmessage = (e) => {
             let text = e.data.text;
-            // Pulizia conservativa: solo spazi multipli e balbuzie evidenti
-            text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, '$1');
-            text = text.replace(/ {2,}/g, ' '); 
+            // Pulizia sintattica conservativa
+            text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, '$1'); // Balbuzie
+            text = text.replace(/ {2,}/g, ' '); // Spazi doppi
             self.postMessage({ type: 'REFINED', text });
         };
     `;
 
-    // --- UI HELPERS ---
+    // --- UI ENGINE & LOGICA TOKEN ---
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
-        progressContainer: document.getElementById('progress-container'), precisionSelect: document.getElementById('precisionSelect'), 
-        beamSelect: document.getElementById('beamSelect'), languageSelect: document.getElementById('languageSelect'), 
-        audioSource: document.getElementById('audioSource'), loadBtn: document.getElementById('loadBtn'), 
-        startBtn: document.getElementById('startBtn'), stopBtn: document.getElementById('stopBtn'), 
-        output: document.getElementById('output'), vadLed: document.getElementById('vadLed'), 
-        vadFill: document.getElementById('vadFill'), volFill: document.getElementById('volFill'), 
-        probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'), 
-        copyBtn: document.getElementById('copyBtn'), popup: document.getElementById('word-popup'), 
-        editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn')
+        progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
+        precisionSelect: document.getElementById('precisionSelect'), beamSelect: document.getElementById('beamSelect'),
+        languageSelect: document.getElementById('languageSelect'), audioSource: document.getElementById('audioSource'),
+        loadBtn: document.getElementById('loadBtn'), startBtn: document.getElementById('startBtn'), 
+        stopBtn: document.getElementById('stopBtn'), output: document.getElementById('output'),
+        vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'), 
+        volFill: document.getElementById('volFill'), probVal: document.getElementById('probVal'),
+        clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
+        popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), 
+        confirmBtn: document.getElementById('confirm-word-btn')
     };
 
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
@@ -325,7 +345,7 @@
     let audioCtx, stream, isSessionActive = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
-    // Funzione cruciale: ricostruisce i token rispettando i paragrafi (\n)
+    // Ricostruisce il DOM preservando paragrafi (\n) e Token cliccabili
     function rebuildTokens(text) {
         UI.output.innerHTML = "";
         const lines = text.split('\n');
@@ -345,25 +365,23 @@
                 span.innerText = (wordIdx === 0 ? "" : " ") + w;
                 UI.output.appendChild(span);
             });
-            if (lineIdx < lines.length - 1) {
-                UI.output.appendChild(document.createElement('br'));
-            }
+            if (lineIdx < lines.length - 1) UI.output.appendChild(document.createElement('br'));
         });
         UI.output.appendChild(interimSpan);
     }
 
-    // --- HANDLERS ---
+    // --- WORKER HANDLERS ---
     whisperWorker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'progress') {
             UI.progressContainer.style.display = 'block';
-            UI.progressText.innerText = 'BOOT: ' + Math.round(d.p) + '%';
+            const p = Math.round(d.p || 0); UI.progressText.innerText = 'BOOTING_MODEL: ' + p + '%';
+            const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
         } else if (d.type === 'READY_TO_PROCESS') {
-            UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none'; UI.startBtn.disabled = false;
+            UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none'; UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
         } else if (d.type === 'final' && isSessionActive) {
             interimSpan.innerText = "";
-            const words = d.text.trim().split(/ +/);
-            words.forEach(w => {
+            d.text.trim().split(/ +/).forEach(w => {
                 const span = document.createElement('span');
                 span.className = 'word-token' + (d.isLowConf ? ' low-conf' : '');
                 span.innerText = " " + w;
@@ -410,14 +428,15 @@
     vadWorker.onmessage = (e) => {
         if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
         else if (e.data.type === 'vad_ui_update') {
-            UI.probVal.innerText = "VAD: " + e.data.prob.toFixed(2); UI.vadFill.style.width = (e.data.prob * 100) + "%";
+            UI.probVal.innerText = "VAD_PROB: " + e.data.prob.toFixed(2); UI.vadFill.style.width = (e.data.prob * 100) + "%";
             UI.vadLed.classList.toggle('active', e.data.isSpeaking);
         }
     };
 
-    // --- MAIN ---
+    // --- MAIN FLOW ---
     async function start() {
         isSessionActive = true;
+        // DNA Estrazione: Prende i termini validi per guidare la nuova sessione
         const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
             .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
             .map(t => t.innerText.trim().toLowerCase());
@@ -468,12 +487,12 @@
         if(stream) stream.getTracks().forEach(t => t.stop());
         if(audioCtx) audioCtx.close();
         UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; 
-        UI.status.innerText = "ANALYZING_CONTEXT...";
+        UI.status.innerText = "REFINING_SEMANTICS...";
         UI.status.style.color = "var(--term-warn)";
         refiningWorker.postMessage({ text: UI.output.innerText });
     }
 
-    // --- POPUP ---
+    // --- UX VALIDATION POPUP ---
     let activeToken = null;
     UI.output.onclick = (e) => {
         if (e.target.classList.contains('word-token')) {
@@ -497,9 +516,11 @@
         }
     };
 
-    UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; vadWorker.postMessage({ type: 'load' }); };
+    // --- INIT ---
+    UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_CORE..."; vadWorker.postMessage({ type: 'load' }); };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
+    UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
     
     (async () => {
         const db = await openDB();
