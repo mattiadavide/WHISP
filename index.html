@@ -39,7 +39,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_2.9_STABLE
+    > MODULE_BOOT: WHISP_CORE_2.9_STABLE_MONOLITH
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -85,32 +85,51 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- PERSISTENZA DATABASE LOCALE ---
+    // --- PERSISTENZA CON INDEXEDDB ---
     const DB_NAME = "whisp_experience_db";
+    const STORE_NAME = "experience";
+
+    function openDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, 1);
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+            };
+            request.onsuccess = (e) => resolve(e.target.result);
+            request.onerror = (e) => reject(e.target.error);
+        });
+    }
+
+    async function saveExperience() {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        store.put(Array.from(window.experienceDict), "words");
+    }
+
+    async function loadExperience() {
+        try {
+            const db = await openDB();
+            const tx = db.transaction(STORE_NAME, "readonly");
+            const store = tx.objectStore(STORE_NAME);
+            const request = store.get("words");
+            request.onsuccess = () => {
+                if (request.result) {
+                    window.experienceDict = new Set(request.result);
+                    console.log(`[DB] Caricate ${window.experienceDict.size} parole da IndexedDB.`);
+                }
+            };
+        } catch(e) { console.error("Errore caricamento DB locale", e); }
+    }
 
     window.referenceDict = new Set();
     window.experienceDict = new Set();
     window.trendSnapshots = new Set();
 
-    function saveExperience() {
-        const data = Array.from(window.experienceDict);
-        localStorage.setItem(DB_NAME, JSON.stringify(data));
-    }
-
-    function loadExperience() {
-        const saved = localStorage.getItem(DB_NAME);
-        if (saved) {
-            try {
-                const data = JSON.parse(saved);
-                window.experienceDict = new Set(data);
-                console.log(`[DB] Caricate ${window.experienceDict.size} parole salvate.`);
-            } catch(e) { console.error("Errore caricamento DB locale", e); }
-        }
-    }
-
     (async function initPersistentStorage() {
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
-        loadExperience(); // Carica i dati all'avvio
+        await loadExperience();
     })();
 
     const DICTIONARY_URLS = {
@@ -152,18 +171,61 @@
         UI.status.innerText = "CORE_READY";
     }
 
-    function levenshtein(a, b) {
-        const m = [];
-        for (let i = 0; i <= b.length; i++) m[i] = [i];
-        for (let j = 0; j <= a.length; j++) m[0][j] = j;
-        for (let i = 1; i <= b.length; i++) {
-            for (let j = 1; j <= a.length; j++) {
-                if (b.charAt(i-1) === a.charAt(j-1)) m[i][j] = m[i-1][j-1];
-                else m[i][j] = Math.min(m[i-1][j-1] + 1, Math.min(m[i][j-1] + 1, m[i-1][j] + 1));
+    // --- WORKER PER IL HEALING (CORREZIONE TESTO) ---
+    const healingWorkerCode = `
+        function levenshtein(a, b) {
+            const m = [];
+            for (let i = 0; i <= b.length; i++) m[i] = [i];
+            for (let j = 0; j <= a.length; j++) m[0][j] = j;
+            for (let i = 1; i <= b.length; i++) {
+                for (let j = 1; j <= a.length; j++) {
+                    if (b.charAt(i-1) === a.charAt(j-1)) m[i][j] = m[i-1][j-1];
+                    else m[i][j] = Math.min(m[i-1][j-1] + 1, Math.min(m[i][j-1] + 1, m[i-1][j] + 1));
+                }
             }
+            return m[b.length][a.length];
         }
-        return m[b.length][a.length];
-    }
+
+        self.onmessage = (e) => {
+            const { wordsToCorrect, priorityPool, referenceDict } = e.data;
+            const corrections = [];
+
+            wordsToCorrect.forEach(item => {
+                const { original, id } = item;
+                const match = original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
+                if (!match) return;
+
+                const [_, prefix, word, suffix] = match;
+                const lower = word.toLowerCase();
+                let bestMatch = null, minDist = Infinity;
+
+                priorityPool.forEach(term => {
+                    if (Math.abs(term.length - lower.length) > 2) return;
+                    let d = levenshtein(lower, term);
+                    if (d < minDist) { minDist = d; bestMatch = term; }
+                });
+
+                if (minDist > 1 && referenceDict) {
+                    referenceDict.forEach(ref => {
+                        if (Math.abs(ref.length - lower.length) > 1) return;
+                        let d = levenshtein(lower, ref);
+                        if (d < minDist) { minDist = d; bestMatch = ref; }
+                    });
+                }
+
+                if (minDist > 0 && minDist <= 1) {
+                    const formatted = word[0] === word[0].toUpperCase() 
+                        ? bestMatch.charAt(0).toUpperCase() + bestMatch.slice(1) 
+                        : bestMatch.toLowerCase();
+                    corrections.push({ id, newText: prefix + formatted + suffix });
+                }
+            });
+
+            self.postMessage({ type: 'HEALING_DONE', corrections });
+        };
+    `;
+
+    const healingWorker = new Worker(URL.createObjectURL(new Blob([healingWorkerCode], { type: 'application/javascript' })));
 
     function globalHealAndFormat() {
         let text = UI.output.innerText;
@@ -172,56 +234,46 @@
             let l = w.toLowerCase(); 
             if(l.length > 4) window.experienceDict.add(l); 
         });
-        
-        // Salva le nuove parole nel database persistente
         saveExperience();
 
         const lowConfSpans = UI.output.querySelectorAll('.low-conf');
-        let correctionsCount = 0;
-        const priorityPool = new Set([...window.experienceDict, ...window.trendSnapshots]);
+        if (lowConfSpans.length === 0) {
+            UI.status.innerText = "HEAL_DONE: NO_TARGETS";
+            return;
+        }
 
-        lowConfSpans.forEach(span => {
-            let original = span.innerText.trim();
-            const match = original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
-            if (!match) return;
-
-            const prefix = match[1];
-            const word = match[2];
-            const suffix = match[3];
-            const lower = word.toLowerCase();
-
-            if (word[0] === word[0].toUpperCase() && word.length > 3) return;
-
-            let bestMatch = null, minDist = Infinity;
-
-            priorityPool.forEach(term => {
-                if (Math.abs(term.length - lower.length) > 3) return;
-                let d = levenshtein(lower, term);
-                if (d < minDist) { minDist = d; bestMatch = term; }
-            });
-
-            if (minDist > 1) {
-                window.referenceDict.forEach(ref => {
-                    if (Math.abs(ref.length - lower.length) > 1) return;
-                    let d = levenshtein(lower, ref);
-                    if (d < minDist) { minDist = d; bestMatch = ref; }
-                });
-            }
-
-            if (minDist > 0 && minDist <= 1) {
-                let formatted = word[0] === word[0].toUpperCase() 
-                    ? bestMatch.charAt(0).toUpperCase() + bestMatch.slice(1) 
-                    : bestMatch.toLowerCase();
-                
-                span.innerText = prefix + formatted + suffix;
-                span.classList.remove('low-conf');
-                span.style.color = "var(--term-ok)";
-                correctionsCount++;
-            }
+        const wordsToCorrect = Array.from(lowConfSpans).map((span, idx) => {
+            span.dataset.healId = idx;
+            return { original: span.innerText.trim(), id: idx };
         });
 
-        UI.status.innerText = `HEAL_COMPLETE: ${correctionsCount} FIXED | DB: ${window.experienceDict.size}`;
-        UI.status.style.color = "var(--term-ok)";
+        const priorityPool = Array.from(new Set([...window.experienceDict, ...window.trendSnapshots]));
+
+        UI.status.innerText = "HEALING_IN_BACKGROUND...";
+        UI.status.style.color = "var(--term-warn)";
+
+        healingWorker.postMessage({
+            wordsToCorrect,
+            priorityPool,
+            referenceDict: Array.from(window.referenceDict)
+        });
+
+        healingWorker.onmessage = (e) => {
+            if (e.data.type === 'HEALING_DONE') {
+                let count = 0;
+                e.data.corrections.forEach(corr => {
+                    const span = UI.output.querySelector(`[data-heal-id="${corr.id}"]`);
+                    if (span) {
+                        span.innerText = corr.newText;
+                        span.classList.remove('low-conf');
+                        span.style.color = "var(--term-ok)";
+                        count++;
+                    }
+                });
+                UI.status.innerText = `HEAL_COMPLETE: ${count} FIXED | DB: ${window.experienceDict.size}`;
+                UI.status.style.color = "var(--term-ok)";
+            }
+        };
     }
 
     const UI = {
@@ -243,6 +295,7 @@
     }
     UI.languageSelect.value = "italian";
 
+    // --- WORKER VAD & WHISPER (MANTENUTI ORIGINALI) ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -318,7 +371,7 @@
                     num_beams: item.isPartial ? 1 : 5,
                     repetition_penalty: 1.1,
                     no_speech_threshold: 0.6,
-                    condition_on_previous_text: true, // ABILITATO PER MIGLIORE PUNTEGGIATURA
+                    condition_on_previous_text: true,
                     chunk_length_s: 30,
                     stride_length_s: 10,
                     temperature: 0.0
@@ -408,21 +461,18 @@
 
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_VAD..."; vadWorker.postMessage({ type: 'load' }); };
     
-    UI.resetDbBtn.onclick = () => {
+    UI.resetDbBtn.onclick = async () => {
         window.experienceDict.clear();
         window.trendSnapshots.clear();
-        localStorage.removeItem(DB_NAME); // Svuota anche il database persistente
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.objectStore(STORE_NAME).clear();
         UI.status.innerText = "DB_WIPED";
         UI.status.style.color = "var(--term-warn)";
         setTimeout(() => { if(!isSessionActive) UI.status.innerText = "READY"; }, 1500);
     };
 
-    UI.clearBtn.onclick = () => { 
-        UI.output.innerHTML = ""; 
-        UI.output.appendChild(interimSpan); 
-        lastChar = "."; 
-    };
-
+    UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
     UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_v29_${Date.now()}.txt`; a.click(); };
 
