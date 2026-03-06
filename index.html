@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 2.4 - OPTIMIZED</title>
+    <title>WHISP // TERMINAL 1.1.1 - STABLE</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -39,7 +39,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_2.4_STABLE
+    > MODULE_BOOT: WHISP_CORE_2.4.1_STABLE
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -79,7 +79,7 @@
     <button id="exportBtn" style="margin-left: auto;">EXPORT</button>
     <button id="copyBtn">COPY</button>
     <button id="clearBtn">FLUSH</button>
-    <button id="resetDbBtn" style="font-size: 0.7em; color: var(--term-dim);">RESET_DB</button>
+    <button id="resetDbBtn" style="font-size: 0.7em; color: var(--term-dim); border-color: #333;">RESET_DB</button>
 </div>
 
 <div id="output" contenteditable="true" spellcheck="false"></div>
@@ -125,7 +125,7 @@
             const store = transaction.objectStore(STORE_NAME);
             words.forEach(word => {
                 const lowerWord = word.toLowerCase();
-                if (lowerWord.length < 4) return; // Non impara parole troppo corte
+                if (lowerWord.length < 3) return; 
                 const count = (persistentLexicon[lowerWord] || 0) + 1;
                 persistentLexicon[lowerWord] = count;
                 store.put({ word: lowerWord, count: count });
@@ -136,7 +136,7 @@
             const transaction = db.transaction(STORE_NAME, "readwrite");
             transaction.objectStore(STORE_NAME).clear();
             persistentLexicon = {};
-            alert("DATABASE_WIPED");
+            alert("LOCAL_LEXICON_WIPED");
         }
     };
 
@@ -158,7 +158,8 @@
         let highConfWords = [];
         spans.forEach(span => {
             if (!span.classList.contains('low-conf')) {
-                const matches = span.innerText.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
+                // Inclusione dell'apostrofo per l'italiano
+                const matches = span.innerText.match(/[a-zA-ZÀ-ÿ']{3,}/g) || [];
                 highConfWords.push(...matches);
             }
         });
@@ -175,18 +176,17 @@
         lowConfSpans.forEach(span => {
             const original = span.innerText.trim();
             const lower = original.toLowerCase();
-            if (lower.length < 4) return; // Non corregge parole cortissime per evitare errori
+            if (lower.length < 3) return;
 
-            let bestMatch = null, maxScore = -1, minDistance = 3;
+            let bestMatch = null, maxScore = -1;
             knownTerms.forEach(term => {
                 const dist = levenshtein(lower, term);
-                // Correzione proporzionale alla lunghezza
                 const maxAllowedDist = lower.length > 7 ? 2 : 1; 
                 
                 if (dist > 0 && dist <= maxAllowedDist) {
                     const score = ((persistentLexicon[term] || 0) * 1.5 + (sessionFreq[term] || 0)) / (dist + 1);
                     if (score > maxScore) {
-                        maxScore = score; minDistance = dist; bestMatch = term;
+                        maxScore = score; bestMatch = term;
                     }
                 }
             });
@@ -199,7 +199,7 @@
             }
         });
 
-        UI.status.innerText = correctionsCount > 0 ? `OPTIMIZED: ${correctionsCount} FIXES` : "CLEAN_OUTPUT";
+        UI.status.innerText = correctionsCount > 0 ? `OPTIMIZED: ${correctionsCount} FIXES` : "STABLE_OUTPUT";
         UI.status.style.color = "var(--term-ok)";
         setTimeout(() => { if(!isSessionActive) UI.status.innerText = "ONLINE"; }, 3000);
     }
@@ -296,13 +296,13 @@
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: item.isPartial ? 1 : 5,
-                    repetition_penalty: 1.2, // Ottimizzato per fluidità
+                    repetition_penalty: 1.2, 
                     no_speech_threshold: 0.6,
                     condition_on_previous_text: false
                 });
                 if (res.text && res.text.trim().length > 0) {
-                    // Confidenza bassa solo per segmenti brevissimi o incoerenti
-                    const isLowConf = res.text.trim().length < 5 || /[^a-zA-ZÀ-ÿ\s,.!?]/.test(res.text);
+                    // Regex migliorata per supportare apostrofi e punteggiatura italiana
+                    const isLowConf = res.text.trim().length < 2 || /[^a-zA-ZÀ-ÿ\s,.!?;:'"\-]/.test(res.text);
                     self.postMessage({ 
                         type: item.isPartial ? 'partial' : 'final', 
                         text: res.text, 
@@ -426,7 +426,7 @@
     async function stop() {
         isSessionActive = false; if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close();
         UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; 
-        UI.status.innerText = "REFINING..."; UI.status.style.color = "var(--term-warn)";
+        UI.status.innerText = "OPTIMIZING..."; UI.status.style.color = "var(--term-warn)";
         setTimeout(globalHealAndFormat, 800);
     }
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
