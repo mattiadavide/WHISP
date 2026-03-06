@@ -4,20 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 2.9_FINAL_STABLE_MONOLITH</title>
+    <title>WHISP // TERMINAL 3.0_ADVANCED_REFINED</title>
     <style>
-        :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
-        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
+        :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
+        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
         .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; color: var(--term-main); }
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
         .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; }
-        select, button { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; }
+        select, button { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr 240px; gap: 20px; align-items: center; }
-        #output { border: none; background: transparent; padding: 10px 0; min-height: 300px; max-height: calc(100vh - 460px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; }
-        .interim-text { color: var(--term-dim); font-style: italic; }
+        #output { border: none; background: transparent; padding: 10px 0; min-height: 350px; max-height: calc(100vh - 480px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; }
+        
+        /* Stili per Validazione UX */
+        .word-token { cursor: pointer; transition: background 0.2s; padding: 2px 1px; border-radius: 2px; }
+        .word-token:hover { background: rgba(255, 255, 255, 0.15); }
         .low-conf { color: var(--term-err); text-decoration: underline dotted; }
+        .validated { color: var(--term-ok) !important; text-decoration: none !important; }
+        
+        .interim-text { color: var(--term-dim); font-style: italic; }
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.75em; }
         .bar-bg { flex-grow: 1; height: 6px; background: #1a1a1a; border: 1px solid var(--term-dim); }
         .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s; }
@@ -25,9 +31,16 @@
         .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 10px var(--term-ok); border-color: var(--term-ok); }
         .blink { animation: blinker 1.5s linear infinite; }
         @keyframes blinker { 50% { opacity: 0.3; } }
+        
+        #word-popup { position: fixed; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); }
     </style>
 </head>
 <body>
+
+<div id="word-popup">
+    <input type="text" id="edit-word-input" style="background:#000; color:#fff; border:1px solid #fff; padding:5px; margin-bottom:5px; width:120px;"><br>
+    <button id="confirm-word-btn">VALIDATE</button>
+</div>
 
 <div class="ascii-art">
  ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
@@ -36,20 +49,27 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
+  > VERSION 3.0_STABLE_REFINED
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_2.9_STABLE_MONOLITH
+    > BOOT_SEQUENCE: WHISP_CORE_3.0_MULTIPLE_WORKERS
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
             <option value="q8">ENGINE: STANDARD_Q8</option>
             <option value="q8-tiny">ENGINE: MOBILE_TINY</option>
         </select>
+        <select id="beamSelect">
+            <option value="1">BEAMS: 1 (FAST)</option>
+            <option value="5" selected>BEAMS: 5 (STD)</option>
+            <option value="10">BEAMS: 10 (MAX)</option>
+        </select>
         <select id="languageSelect"></select>
-        <select id="audioSource">
-            <option value="mic">SRC: MICROPHONE</option>
-            <option value="system">SRC: SYSTEM_AUDIO</option>
+        <select id="dictSelect">
+            <option value="none">DICT: STANDARD</option>
+            <option value="legal">DICT: LEGALE (URL)</option>
+            <option value="medical">DICT: MEDICO (URL)</option>
         </select>
         <button id="loadBtn">LOAD_CORE()</button>
     </div>
@@ -63,7 +83,7 @@
             <div id="ascii-bar">[--------------------]</div>
         </div>
     </div>
-    <div class="stats-panel" style="display: flex; flex-direction: column; gap: 6px;">
+    <div class="stats-panel">
         <div class="stat-row"><span>INPUT_RMS</span><div class="bar-bg"><div id="volFill" class="bar-fill" style="background: #444;"></div></div></div>
         <div class="stat-row"><span>NEURAL_VAD</span><div class="bar-bg"><div id="vadFill" class="bar-fill" style="background: var(--term-main);"></div></div></div>
         <div style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 5px;">
@@ -78,16 +98,17 @@
     <button id="stopBtn" style="display:none; color: var(--term-err); border-color: var(--term-err);">TERMINATE()</button>
     <button id="exportBtn" style="margin-left: auto;">EXPORT</button>
     <button id="copyBtn">COPY</button>
-    <button id="resetDbBtn" style="color: var(--term-warn); border-color: var(--term-warn);">RESET_DB</button>
     <button id="clearBtn">FLUSH_ALL</button>
 </div>
 
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- PERSISTENZA CON INDEXEDDB ---
-    const DB_NAME = "whisp_experience_db";
+    // --- PERSISTENZA E DIZIONARI ---
+    const DB_NAME = "whisp_experience_v3";
     const STORE_NAME = "experience";
+    let currentInitialPrompt = "";
+    let lowConfAudioStore = []; // Memoria temporanea per Step 2
 
     function openDB() {
         return new Promise((resolve, reject) => {
@@ -101,208 +122,21 @@
         });
     }
 
-    async function saveExperience() {
+    async function saveWord(word, priority = false) {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, "readwrite");
-        const store = tx.objectStore(STORE_NAME);
-        store.put(Array.from(window.experienceDict), "words");
+        window.experienceDict.add(word.toLowerCase());
+        tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words");
     }
 
-    async function loadExperience() {
-        try {
-            const db = await openDB();
-            const tx = db.transaction(STORE_NAME, "readonly");
-            const store = tx.objectStore(STORE_NAME);
-            const request = store.get("words");
-            request.onsuccess = () => {
-                if (request.result) {
-                    window.experienceDict = new Set(request.result);
-                    console.log(`[DB] Caricate ${window.experienceDict.size} parole da IndexedDB.`);
-                }
-            };
-        } catch(e) { console.error("Errore caricamento DB locale", e); }
-    }
-
-    window.referenceDict = new Set();
-    window.experienceDict = new Set();
-    window.trendSnapshots = new Set();
-
-    (async function initPersistentStorage() {
-        if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
-        await loadExperience();
-    })();
-
-    const DICTIONARY_URLS = {
-        "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/main/paroleitaliane/60000_parole_italiane.txt",
-        "english": "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
+    const SPECIAL_DICTS = {
+        "legal": "https://raw.githubusercontent.com/napolux/paroleitaliane/main/paroleitaliane/60000_parole_italiane.txt", // Placeholder per demo
+        "medical": "https://raw.githubusercontent.com/napolux/paroleitaliane/main/paroleitaliane/60000_parole_italiane.txt"
     };
 
-    async function fetchTrendSnapshot(lang) {
-        const geo = lang === 'italian' ? 'IT' : 'US';
-        const proxy = 'https://api.codetabs.com/v1/proxy?quest=';
-        const target = encodeURIComponent(`https://trends.google.it/trends/trendingsearches/daily/rss?geo=${geo}`);
-        try {
-            UI.status.innerText = "SNAPSHOT_TRENDS...";
-            const response = await fetch(proxy + target);
-            if (!response.ok) return;
-            const text = await response.text();
-            const parser = new DOMParser();
-            const xml = parser.parseFromString(text, "text/xml");
-            xml.querySelectorAll("title").forEach(item => {
-                const trend = item.textContent.toLowerCase().trim();
-                if (trend.length > 3) {
-                    window.trendSnapshots.add(trend);
-                    trend.split(/\s+/).forEach(word => { if (word.length > 3) window.trendSnapshots.add(word); });
-                }
-            });
-        } catch (e) { console.warn("Trend snapshot bypass."); }
-    }
+    // --- 4 WORKER ARCHITECTURE ---
 
-    async function loadResources(lang) {
-        try {
-            UI.status.innerText = "FETCHING_DICT...";
-            const response = await fetch(DICTIONARY_URLS[lang]);
-            if(response.ok) {
-                const text = await response.text();
-                window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()));
-            }
-            await fetchTrendSnapshot(lang);
-        } catch (e) { console.warn("Resource loading skipped."); }
-        UI.status.innerText = "CORE_READY";
-    }
-
-    // --- WORKER PER IL HEALING (CORREZIONE TESTO) CON FILTRI ---
-    const healingWorkerCode = `
-        const BLACKLIST = new Set(['per', 'noi', 'con', 'che', 'del', 'della', 'degli', 'nelle', 'sulle', 'alla', 'agli', 'delle', 'nello', 'sullo']);
-
-        function levenshtein(a, b) {
-            const m = [];
-            for (let i = 0; i <= b.length; i++) m[i] = [i];
-            for (let j = 0; j <= a.length; j++) m[0][j] = j;
-            for (let i = 1; i <= b.length; i++) {
-                for (let j = 1; j <= a.length; j++) {
-                    if (b.charAt(i-1) === a.charAt(j-1)) m[i][j] = m[i-1][j-1];
-                    else m[i][j] = Math.min(m[i-1][j-1] + 1, Math.min(m[i][j-1] + 1, m[i-1][j] + 1));
-                }
-            }
-            return m[b.length][a.length];
-        }
-
-        self.onmessage = (e) => {
-            const { wordsToCorrect, priorityPool, referenceDict } = e.data;
-            const corrections = [];
-
-            wordsToCorrect.forEach(item => {
-                const { original, id } = item;
-                const match = original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
-                if (!match) return;
-
-                const [_, prefix, word, suffix] = match;
-                const lower = word.toLowerCase();
-
-                // FILTRI DI SICUREZZA: Evita di processare parole troppo brevi o comuni (causa di fusioni errate)
-                if (lower.length < 4 || BLACKLIST.has(lower)) return;
-
-                let bestMatch = null, minDist = Infinity;
-
-                priorityPool.forEach(term => {
-                    if (Math.abs(term.length - lower.length) > 2) return;
-                    let d = levenshtein(lower, term);
-                    if (d < minDist) { minDist = d; bestMatch = term; }
-                });
-
-                if (minDist > 1 && referenceDict) {
-                    referenceDict.forEach(ref => {
-                        if (Math.abs(ref.length - lower.length) > 1) return;
-                        let d = levenshtein(lower, ref);
-                        if (d < minDist) { minDist = d; bestMatch = ref; }
-                    });
-                }
-
-                if (minDist > 0 && minDist <= 1) {
-                    const formatted = word[0] === word[0].toUpperCase() 
-                        ? bestMatch.charAt(0).toUpperCase() + bestMatch.slice(1) 
-                        : bestMatch.toLowerCase();
-                    corrections.push({ id, newText: prefix + formatted + suffix });
-                }
-            });
-
-            self.postMessage({ type: 'HEALING_DONE', corrections });
-        };
-    `;
-
-    const healingWorker = new Worker(URL.createObjectURL(new Blob([healingWorkerCode], { type: 'application/javascript' })));
-
-    function globalHealAndFormat() {
-        let text = UI.output.innerText;
-        let words = text.match(/[a-zA-ZÀ-ÿ]+/g) || [];
-        words.forEach(w => { 
-            let l = w.toLowerCase(); 
-            // Salva nell'esperienza solo parole significative
-            if(l.length > 4) window.experienceDict.add(l); 
-        });
-        saveExperience();
-
-        const lowConfSpans = UI.output.querySelectorAll('.low-conf');
-        if (lowConfSpans.length === 0) {
-            UI.status.innerText = "CORE_READY";
-            return;
-        }
-
-        const wordsToCorrect = Array.from(lowConfSpans).map((span, idx) => {
-            span.dataset.healId = idx;
-            return { original: span.innerText.trim(), id: idx };
-        });
-
-        const priorityPool = Array.from(new Set([...window.experienceDict, ...window.trendSnapshots]));
-
-        UI.status.innerText = "HEALING_ACTIVE...";
-        UI.status.style.color = "var(--term-warn)";
-
-        healingWorker.postMessage({
-            wordsToCorrect,
-            priorityPool,
-            referenceDict: Array.from(window.referenceDict)
-        });
-
-        healingWorker.onmessage = (e) => {
-            if (e.data.type === 'HEALING_DONE') {
-                let count = 0;
-                e.data.corrections.forEach(corr => {
-                    const span = UI.output.querySelector(`[data-heal-id="${corr.id}"]`);
-                    if (span) {
-                        span.innerText = corr.newText;
-                        span.classList.remove('low-conf');
-                        span.style.color = "var(--term-ok)";
-                        count++;
-                    }
-                });
-                UI.status.innerText = `HEAL: ${count} FIXED | DB: ${window.experienceDict.size}`;
-                UI.status.style.color = "var(--term-ok)";
-            }
-        };
-    }
-
-    const UI = {
-        status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
-        progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
-        precisionSelect: document.getElementById('precisionSelect'), languageSelect: document.getElementById('languageSelect'),
-        audioSource: document.getElementById('audioSource'), loadBtn: document.getElementById('loadBtn'),
-        startBtn: document.getElementById('startBtn'), stopBtn: document.getElementById('stopBtn'),
-        output: document.getElementById('output'), vadLed: document.getElementById('vadLed'),
-        vadFill: document.getElementById('vadFill'), volFill: document.getElementById('volFill'),
-        probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'),
-        copyBtn: document.getElementById('copyBtn'), exportBtn: document.getElementById('exportBtn'),
-        resetDbBtn: document.getElementById('resetDbBtn')
-    };
-
-    const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER", "russian": "RUS" };
-    for (const [c, n] of Object.entries(LANGUAGES)) {
-        const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o);
-    }
-    UI.languageSelect.value = "italian";
-
-    // --- WORKER VAD ---
+    // 1. VAD Worker (Immutato o quasi)
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -335,7 +169,6 @@
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
                             if (audioBufPtr % 40 === 0) flush(true); 
-                            if (audioBufPtr >= 1500) flush(false);
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
@@ -364,168 +197,312 @@
         };
     `;
 
-    // --- WORKER WHISPER ---
+    // 2. Whisper Worker (Supporto initial_prompt e beams)
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
+        let beams = 5, initialPrompt = "";
+
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
-            if (item.isPartial && queue.some(q => q.isPartial)) { isBusy = false; process(); return; }
             try {
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
-                    num_beams: item.isPartial ? 1 : 5,
+                    num_beams: item.isPartial ? 1 : beams,
+                    prompt: initialPrompt,
                     repetition_penalty: 1.1,
-                    no_speech_threshold: 0.6,
-                    condition_on_previous_text: true,
-                    chunk_length_s: 30,
-                    stride_length_s: 10,
                     temperature: 0.0
                 });
                 if (res.text && res.text.trim().length > 0) {
-                    const isLowConf = res.text.trim().length < 10;
                     self.postMessage({ 
                         type: item.isPartial ? 'partial' : 'final', 
                         text: res.text, 
-                        isLowConf, 
-                        isNewParagraph: item.silenceDuration > 50 
+                        buffer: item.buffer, // Ritorna il buffer per Step 2
+                        isLowConf: res.chunks ? res.chunks.some(c => c.confidence < 0.6) : false
                     });
                 }
-            } catch (e) { self.postMessage({ type: 'final', text: "[ERROR]" }); }
+            } catch (e) { console.error(e); }
             isBusy = false; process();
         }
+
         self.onmessage = async (e) => {
-            const { type, port, precision, language } = e.data;
+            const { type, port, precision, language, num_beams, prompt } = e.data;
             if (type === 'load') {
                 const model = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
                 transcriber = await pipeline('automatic-speech-recognition', model, { 
                     device: 'webgpu', dtype: precision === 'fp16' ? 'fp16' : 'q4f16',
                     progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
-                }).catch(async () => await pipeline('automatic-speech-recognition', model, { device: 'wasm', dtype: 'q8' }));
+                });
                 self.postMessage({ type: 'READY_TO_PROCESS' });
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
-            } else if (type === 'update_language') { currentLanguage = language; }
-            else if (type === 'init_vad_port') {
-                vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial, silenceDuration: ev.data.silenceDuration}); process(); } };
+            } else if (type === 'update_params') {
+                if (language) currentLanguage = language;
+                if (num_beams) beams = parseInt(num_beams);
+                if (prompt !== undefined) initialPrompt = prompt;
+            } else if (type === 'init_vad_port') {
+                vadPort = port; 
+                vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); } };
             }
+        };
+    `;
+
+    // 3. Healing Worker (Bigram Levenshtein)
+    const healingWorkerCode = `
+        function levenshtein(a, b) {
+            const m = [];
+            for (let i = 0; i <= b.length; i++) m[i] = [i];
+            for (let j = 0; j <= a.length; j++) m[0][j] = j;
+            for (let i = 1; i <= b.length; i++) {
+                for (let j = 1; j <= a.length; j++) {
+                    if (b.charAt(i-1) === a.charAt(j-1)) m[i][j] = m[i-1][j-1];
+                    else m[i][j] = Math.min(m[i-1][j-1] + 1, Math.min(m[i][j-1] + 1, m[i-1][j] + 1));
+                }
+            }
+            return m[b.length][a.length];
+        }
+
+        self.onmessage = (e) => {
+            const { wordsToCorrect, priorityPool, referenceDict } = e.data;
+            const corrections = [];
+            const commonConnectors = ['per', 'con', 'tra', 'fra', 'su', 'che', 'non'];
+
+            wordsToCorrect.forEach(item => {
+                const word = item.original.toLowerCase();
+                if (word.length < 4) return;
+
+                // LOGICA BIGRAMMI: Controlla se la parola fusa è in realtà un articolo+parola (es: 'pernoi' -> 'per noi')
+                for (let conn of commonConnectors) {
+                    if (word.startsWith(conn) && word.length > conn.length + 3) {
+                        const remainder = word.slice(conn.length);
+                        if (priorityPool.includes(remainder) || (referenceDict && referenceDict.includes(remainder))) {
+                            corrections.push({ id: item.id, newText: conn + " " + remainder, split: true });
+                            return;
+                        }
+                    }
+                }
+
+                let bestMatch = null, minDist = Infinity;
+                [...priorityPool, ...(referenceDict || [])].forEach(ref => {
+                    if (Math.abs(ref.length - word.length) > 1) return;
+                    let d = levenshtein(word, ref);
+                    if (d < minDist) { minDist = d; bestMatch = ref; }
+                });
+
+                if (minDist <= 1 && bestMatch) {
+                    corrections.push({ id: item.id, newText: bestMatch });
+                }
+            });
+            self.postMessage({ type: 'HEALING_DONE', corrections });
+        };
+    `;
+
+    // 4. Refining Worker (Semantic Clean)
+    const refiningWorkerCode = `
+        self.onmessage = (e) => {
+            let text = e.data.text;
+            // Rimuovi ripetizioni (balbuzie)
+            text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, '$1');
+            // Normalizza punteggiatura
+            text = text.replace(/\\s+([,.!?])/g, '$1');
+            // Uniforma termini tecnici basandosi sul contesto (placeholder logica)
+            self.postMessage({ type: 'REFINED', text });
         };
     `;
 
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
+    const healingWorker = new Worker(URL.createObjectURL(new Blob([healingWorkerCode], { type: 'application/javascript' })));
+    const refiningWorker = new Worker(URL.createObjectURL(new Blob([refiningWorkerCode], { type: 'application/javascript' })));
+
     const workerChannel = new MessageChannel();
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
     whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2 }, [workerChannel.port2]);
 
-    let audioCtx, worklet, stream, isSessionActive = false, lastChar = ".";
+    // --- UX & LOGICA DI CONTROLLO ---
+    const UI = {
+        status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
+        progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
+        precisionSelect: document.getElementById('precisionSelect'), beamSelect: document.getElementById('beamSelect'),
+        languageSelect: document.getElementById('languageSelect'), dictSelect: document.getElementById('dictSelect'),
+        loadBtn: document.getElementById('loadBtn'), startBtn: document.getElementById('startBtn'), 
+        stopBtn: document.getElementById('stopBtn'), output: document.getElementById('output'),
+        vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'), 
+        volFill: document.getElementById('volFill'), probVal: document.getElementById('probVal'),
+        clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'), 
+        exportBtn: document.getElementById('exportBtn'), popup: document.getElementById('word-popup'),
+        editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn')
+    };
+
+    const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA" };
+    for (const [c, n] of Object.entries(LANGUAGES)) {
+        const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o);
+    }
+
+    let activeToken = null;
+    UI.output.onclick = (e) => {
+        if (e.target.classList.contains('word-token')) {
+            activeToken = e.target;
+            UI.editInput.value = activeToken.innerText.trim();
+            UI.popup.style.display = 'block';
+            UI.popup.style.top = (e.clientY + 10) + 'px';
+            UI.popup.style.left = (e.clientX) + 'px';
+        } else { UI.popup.style.display = 'none'; }
+    };
+
+    UI.confirmBtn.onclick = async () => {
+        if (activeToken) {
+            const newWord = UI.editInput.value.trim();
+            activeToken.innerText = newWord;
+            activeToken.classList.add('validated');
+            activeToken.classList.remove('low-conf');
+            await saveWord(newWord, true);
+            UI.popup.style.display = 'none';
+        }
+    };
+
+    async function globalHealAndFormat() {
+        UI.status.innerText = "ANALYZING_CONTEXT";
+        const tokens = UI.output.querySelectorAll('.word-token');
+        
+        // Estrazione DNA sessione (parole lunghe e validate)
+        const sessionDNA = Array.from(tokens)
+            .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
+            .map(t => t.innerText.toLowerCase());
+        
+        currentInitialPrompt = [...new Set(sessionDNA)].join(" ");
+        
+        UI.status.innerText = "REFINING";
+        refiningWorker.postMessage({ text: UI.output.innerText });
+        
+        refiningWorker.onmessage = (e) => {
+            if (e.data.type === 'REFINED') {
+                // Esegui Healing su low-conf rimanenti
+                const lowConf = Array.from(UI.output.querySelectorAll('.low-conf')).map((s, i) => {
+                    s.dataset.hid = i;
+                    return { original: s.innerText, id: i };
+                });
+                
+                healingWorker.postMessage({
+                    wordsToCorrect: lowConf,
+                    priorityPool: Array.from(window.experienceDict),
+                    referenceDict: Array.from(window.referenceDict || [])
+                });
+            }
+        };
+
+        healingWorker.onmessage = (e) => {
+            e.data.corrections.forEach(c => {
+                const el = UI.output.querySelector(`[data-hid="${c.id}"]`);
+                if (el) { el.innerText = c.newText; el.classList.remove('low-conf'); el.style.color = "var(--term-ok)"; }
+            });
+            UI.status.innerText = "CORE_READY";
+        };
+    }
+
+    // --- CICLO AUDIO ---
+    let audioCtx, stream, isSessionActive = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
-    UI.output.appendChild(interimSpan);
 
     whisperWorker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'progress') {
             UI.progressContainer.style.display = 'block';
-            const p = Math.round(d.p || 0); UI.progressText.innerText = 'BOOT_CORE: ' + p + '%';
-            const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
+            const p = Math.round(d.p || 0); UI.progressText.innerText = 'BOOT: ' + p + '%';
         } else if (d.type === 'READY_TO_PROCESS') {
-            UI.status.innerText = "ONLINE"; UI.status.style.color = "var(--term-ok)";
-            UI.progressContainer.style.display = 'none'; UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
-            loadResources(UI.languageSelect.value);
+            UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none'; UI.startBtn.disabled = false;
         } else if (d.type === 'final' && isSessionActive) {
             interimSpan.innerText = "";
-            let newText = d.text ? d.text.trim() : "";
-            if (newText.length > 1) {
-                let prefix = " ";
-                if (lastChar.match(/[.!?]/)) newText = newText.charAt(0).toUpperCase() + newText.slice(1);
-                else newText = newText.charAt(0).toLowerCase() + newText.slice(1);
-                if (d.isNewParagraph && UI.output.innerText.length > 0) { prefix = "\n\n"; newText = newText.charAt(0).toUpperCase() + newText.slice(1); }
+            const words = d.text.trim().split(/\s+/);
+            words.forEach(w => {
                 const span = document.createElement('span');
-                if (d.isLowConf) span.className = 'low-conf';
-                span.innerText = prefix + newText;
+                span.className = 'word-token' + (d.isLowConf ? ' low-conf' : '');
+                span.innerText = " " + w;
                 UI.output.insertBefore(span, interimSpan);
-                lastChar = newText.slice(-1); UI.output.scrollTop = UI.output.scrollHeight;
-            }
-        } else if (d.type === 'partial' && isSessionActive) {
-            let pText = d.text ? d.text.trim() : "";
-            if (pText) {
-                if (lastChar.match(/[.!?]/)) pText = pText.charAt(0).toUpperCase() + pText.slice(1);
-                interimSpan.innerText = pText + "...";
-                UI.output.scrollTop = UI.output.scrollHeight;
-            }
+            });
+            UI.output.scrollTop = UI.output.scrollHeight;
+            if (d.isLowConf) lowConfAudioStore.push(d.buffer);
         }
+    };
+
+    UI.loadBtn.onclick = () => {
+        UI.loadBtn.disabled = true;
+        vadWorker.postMessage({ type: 'load' });
     };
 
     vadWorker.onmessage = (e) => {
-        const d = e.data;
-        if (d.type === 'ready') { UI.status.innerText = "READY"; whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value }); }
-        else if (d.type === 'vad_ui_update') {
-            UI.probVal.innerText = "VAD: " + d.prob.toFixed(2); UI.vadFill.style.width = (d.prob * 100) + "%";
-            if (d.isSpeaking) { UI.vadLed.classList.add('active'); UI.status.innerText = "STREAMING"; }
-            else if (isSessionActive) { UI.vadLed.classList.remove('active'); UI.status.innerText = "LISTENING"; }
+        if (e.data.type === 'ready') {
+            whisperWorker.postMessage({ 
+                type: 'load', 
+                precision: UI.precisionSelect.value 
+            });
+        } else if (e.data.type === 'vad_ui_update') {
+            UI.vadFill.style.width = (e.data.prob * 100) + "%";
+            UI.vadLed.classList.toggle('active', e.data.isSpeaking);
         }
     };
 
-    UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_VAD..."; vadWorker.postMessage({ type: 'load' }); };
-    
-    UI.resetDbBtn.onclick = async () => {
-        window.experienceDict.clear();
-        window.trendSnapshots.clear();
-        const db = await openDB();
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        tx.objectStore(STORE_NAME).clear();
-        UI.status.innerText = "DB_WIPED";
-        UI.status.style.color = "var(--term-warn)";
-        setTimeout(() => { if(!isSessionActive) UI.status.innerText = "READY"; }, 1500);
-    };
-
-    UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; };
-    UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
-    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_v29_${Date.now()}.txt`; a.click(); };
-
-    async function start() {
+    UI.startBtn.onclick = async () => {
         isSessionActive = true;
-        whisperWorker.postMessage({ type: 'update_language', language: UI.languageSelect.value });
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
-        const workletStr = `
+        whisperWorker.postMessage({ 
+            type: 'update_params', 
+            language: UI.languageSelect.value, 
+            num_beams: UI.beamSelect.value,
+            prompt: currentInitialPrompt 
+        });
+        audioCtx = new AudioContext({ sampleRate: 16000 });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
             class P extends AudioWorkletProcessor {
-                constructor() { super(); this.bufPool=[]; for(let i=0;i<40;i++)this.bufPool.push(new Float32Array(512)); this.buf=this.bufPool.pop(); this.ptr=0; this.vadPort=null; this.s=0;
-                    this.port.onmessage=(e)=>{ if(e.data.type==='init_port') {this.vadPort=e.data.port; this.vadPort.onmessage=(m)=>this.bufPool.push(new Float32Array(m.data.data));}};
+                constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; 
+                    this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; };
                 }
                 process(inputs) {
-                    const input = inputs[0][0]; if(!input || !this.vadPort) return true;
+                    const input = inputs[0][0]; if(!input || !this.vPort) return true;
                     for(let i=0; i<input.length; i++) {
-                        const s = input[i]; this.s += s*s; this.buf[this.ptr++] = s;
+                        this.buf[this.ptr++] = input[i];
                         if(this.ptr>=512) { 
-                            this.port.postMessage({rms: Math.sqrt(this.s/512)});
-                            const b = this.buf.buffer; this.vadPort.postMessage({type:'vad', data:b}, [b]); 
-                            this.buf = this.bufPool.length?this.bufPool.pop():new Float32Array(512); this.ptr=0; this.s=0;
+                            const b = this.buf.buffer.slice(0); this.vPort.postMessage({type:'vad', data:b}, [b]); 
+                            this.ptr=0; 
                         }
                     }
                     return true;
                 }
             }
             registerProcessor('p', P);
-        `;
-        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletStr], {type:'application/javascript'})));
-        worklet = new AudioWorkletNode(audioCtx, 'p');
-        worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%"; };
+        `], {type:'application/javascript'})));
+        
+        const worklet = new AudioWorkletNode(audioCtx, 'p');
         const audioChannel = new MessageChannel();
         vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
-        worklet.port.postMessage({ type: 'init_port', port: audioChannel.port2 }, [audioChannel.port2]);
+        worklet.port.postMessage({ port: audioChannel.port2 }, [audioChannel.port2]);
         audioCtx.createMediaStreamSource(stream).connect(worklet);
+        
         UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
-    }
+        UI.output.appendChild(interimSpan);
+    };
 
-    async function stop() {
-        isSessionActive = false; if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close();
-        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; 
-        UI.status.innerText = "POST_PROCESSING..."; UI.status.style.color = "var(--term-warn)";
-        setTimeout(globalHealAndFormat, 800);
-    }
-    UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
+    UI.stopBtn.onclick = async () => {
+        isSessionActive = false;
+        if(stream) stream.getTracks().forEach(t => t.stop());
+        if(audioCtx) audioCtx.close();
+        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block';
+        await globalHealAndFormat();
+    };
+
+    // --- INIZIALIZZAZIONE ---
+    window.experienceDict = new Set();
+    (async () => {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const req = tx.objectStore(STORE_NAME).get("words");
+        req.onsuccess = () => { if(req.result) window.experienceDict = new Set(req.result); };
+    })();
+
+    UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
+    UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
 </script>
 </body>
 </html>
