@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 2.7_PRO_FIXED</title>
+    <title>WHISP // TERMINAL 2.8_PRECISION_FIX</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -39,7 +39,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_2.7_FINAL_FIX
+    > MODULE_BOOT: WHISP_CORE_2.8_PRECISION_FIX
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -88,9 +88,8 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
-    // FIX: URL corretto del dizionario italiano su branch main e sottocartella
     const DICTIONARY_URLS = {
-        "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/main/paroleitaliane/60000_parole_italiane.txt",
+        "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/main/60000_parole_italiane.txt",
         "english": "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
     };
 
@@ -100,15 +99,14 @@
 
     async function fetchTrendSnapshot(lang) {
         const geo = lang === 'italian' ? 'IT' : 'US';
-        // FIX: Usato endpoint /raw per AllOrigins per evitare problemi CORS in Cross-Origin Isolated context
         const proxy = 'https://api.allorigins.win/raw?url=';
         const target = encodeURIComponent(`https://trends.google.it/trends/trendingsearches/daily/rss?geo=${geo}`);
         try {
             UI.status.innerText = "SNAPSHOT_TRENDS...";
             const response = await fetch(proxy + target);
-            const xmlText = await response.text();
+            const text = await response.text();
             const parser = new DOMParser();
-            const xml = parser.parseFromString(xmlText, "text/xml");
+            const xml = parser.parseFromString(text, "text/xml");
             xml.querySelectorAll("title").forEach(item => {
                 const trend = item.textContent.toLowerCase().trim();
                 if (trend.length > 3) {
@@ -123,11 +121,10 @@
         try {
             UI.status.innerText = "FETCHING_DICT...";
             const response = await fetch(DICTIONARY_URLS[lang]);
-            if (!response.ok) throw new Error("Dict 404");
             const text = await response.text();
             referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()));
             await fetchTrendSnapshot(lang);
-        } catch (e) { console.warn("Resource load failed:", e); }
+        } catch (e) { console.warn("Dictionary load failed."); }
         UI.status.innerText = "CORE_READY";
     }
 
@@ -166,6 +163,9 @@
             const suffix = match[3];
             const lower = word.toLowerCase();
 
+            // Protezione nomi propri (non correggere se inizia con maiuscola)
+            if (word[0] === word[0].toUpperCase() && word.length > 3) return;
+
             let bestMatch = null, minDist = Infinity;
 
             priorityPool.forEach(term => {
@@ -174,7 +174,7 @@
                 if (d < minDist) { minDist = d; bestMatch = term; }
             });
 
-            if (minDist > 2) {
+            if (minDist > 1) { // Soglia più restrittiva per evitare falsi positivi
                 referenceDict.forEach(ref => {
                     if (Math.abs(ref.length - lower.length) > 1) return;
                     let d = levenshtein(lower, ref);
@@ -182,7 +182,7 @@
                 });
             }
 
-            if (minDist > 0 && minDist <= 2) {
+            if (minDist > 0 && minDist <= 1) { // Solo correzioni quasi perfette
                 let formatted = word[0] === word[0].toUpperCase() 
                     ? bestMatch.charAt(0).toUpperCase() + bestMatch.slice(1) 
                     : bestMatch.toLowerCase();
@@ -286,15 +286,16 @@
             isBusy = true; const item = queue.shift();
             if (item.isPartial && queue.some(q => q.isPartial)) { isBusy = false; process(); return; }
             try {
-                // FIX: Aggiunti esplicitamente parametri di chunking per gestire buffer > 30s
+                // BUG FIX: Repetition penalty ridotto a 1.1 e Stride aumentato a 10s per coerenza
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: item.isPartial ? 1 : 5,
-                    repetition_penalty: 1.5,
+                    repetition_penalty: 1.1,
                     no_speech_threshold: 0.6,
                     condition_on_previous_text: false,
                     chunk_length_s: 30,
-                    stride_length_s: 5
+                    stride_length_s: 10,
+                    temperature: 0.0
                 });
                 if (res.text && res.text.trim().length > 0) {
                     const isLowConf = res.text.trim().length < 10;
@@ -382,7 +383,7 @@
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_VAD..."; vadWorker.postMessage({ type: 'load' }); };
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; experienceDict.clear(); };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
-    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_v27_${Date.now()}.txt`; a.click(); };
+    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_v28_${Date.now()}.txt`; a.click(); };
 
     async function start() {
         isSessionActive = true;
