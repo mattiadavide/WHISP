@@ -149,6 +149,12 @@
                 self.postMessage({ type: 'ready' });
             } else if (type === 'init_whisper_port') {
                 whisperPort = port; whisperPort.onmessage = (ev) => { if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true; };
+            } else if (type === 'force_flush') {
+                if (isSpeaking) {
+                    isSpeaking = false;
+                    flush(false);
+                    state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
+                }
             } else if (type === 'init_worklet_port') {
                 port.onmessage = async (we) => {
                     if (we.data.type === 'vad' && vadModel) {
@@ -256,6 +262,13 @@
                 if (language) currentLanguage = language;
                 if (num_beams) beams = parseInt(num_beams);
                 if (prompt !== undefined) initialPrompt = prompt;
+            } else if (type === 'request_flush') {
+                const checkInterval = setInterval(() => {
+                    if (queue.length === 0 && !isBusy) {
+                        clearInterval(checkInterval);
+                        self.postMessage({ type: 'FLUSH_COMPLETE' });
+                    }
+                }, 200);
             } else if (type === 'init_vad_port') {
                 vadPort = port; 
                 vadPort.onmessage = (ev) => { 
@@ -301,7 +314,9 @@
 
                 const [_, prefix, core, suffix] = match;
                 const lowerCore = core.toLowerCase();
-                if (lowerCore.length < 5) return;
+                
+                // Ignoriamo categoricamente parole sotto le 6 lettere per evitare falsi positivi
+                if (lowerCore.length < 6) return;
 
                 let best = null, minDist = Infinity;
                 activeKnowledge.forEach(ref => {
@@ -310,7 +325,8 @@
                     if (d < minDist) { minDist = d; best = ref; }
                 });
 
-                if ((minDist === 1) || (minDist === 2 && lowerCore.length > 7) && best) {
+                // Maggior rigore nell'Healing
+                if (best && ((minDist === 1 && lowerCore.length >= 6) || (minDist === 2 && lowerCore.length > 8))) {
                     const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
                     corrections.push({ id: item.id, newText: prefix + restored + suffix });
                 }
@@ -322,7 +338,17 @@
     const refiningWorkerCode = `
         self.onmessage = (e) => {
             let text = e.data.text;
-            text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, '$1'); 
+            
+            // Whitelist di parole italiane che usano ripetizioni rafforzative valide
+            const whitelist = ['piano', 'quasi', 'gira', 'fuggi', 'lecca', 'zitto', 'ora', 'bene', 'su', 'giù', 'dai', 'corri', 'lì', 'là', 'qui', 'qua', 'ciao', 'vero', 'poco', 'molto', 'troppo', 'sempre', 'mai'];
+            
+            text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, (match, p1) => {
+                if (whitelist.includes(p1.toLowerCase())) {
+                    return match; // Mantiene la ripetizione
+                }
+                return p1; // Rimuove il duplicato
+            });
+            
             text = text.replace(/ {2,}/g, ' '); 
             self.postMessage({ type: 'REFINED', text });
         };
@@ -409,6 +435,12 @@
         } else if (d.type === 'partial' && isSessionActive) {
             interimSpan.innerText = " " + d.text.trim() + "...";
             UI.output.scrollTop = UI.output.scrollHeight;
+        } else if (d.type === 'FLUSH_COMPLETE') {
+            // Svuotamento coda completato. Ora eseguiamo davvero il refining.
+            isSessionActive = false;
+            UI.status.innerText = "REFINING_SEMANTICS...";
+            refiningWorker.postMessage({ text: UI.output.innerText });
+            UI.startBtn.disabled = false; // Riattiviamo il bottone Start
         }
     };
 
@@ -501,13 +533,22 @@
     }
 
     async function stop() {
-        isSessionActive = false;
+        // 1. Forza il VAD a inviare eventuali residui audio a Whisper
+        vadWorker.postMessage({ type: 'force_flush' });
+        
+        // 2. Ferma il microfono immediatamente
         if(stream) stream.getTracks().forEach(t => t.stop());
         if(audioCtx) audioCtx.close();
-        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; 
-        UI.status.innerText = "REFINING_SEMANTICS...";
+        
+        UI.stopBtn.style.display = 'none'; 
+        UI.startBtn.style.display = 'inline-block'; 
+        UI.startBtn.disabled = true; // Evita riavvii mentre svuota
+        
+        UI.status.innerText = "FLUSHING_AUDIO_QUEUE...";
         UI.status.style.color = "var(--term-warn)";
-        refiningWorker.postMessage({ text: UI.output.innerText });
+        
+        // 3. Chiede a Whisper di segnalare quando la sua coda interna è vuota (innesca FLUSH_COMPLETE)
+        whisperWorker.postMessage({ type: 'request_flush' });
     }
 
     let activeToken = null;
