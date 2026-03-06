@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 3.0_POST_PROCESS_FIX</title>
+    <title>WHISP // TERMINAL 3.0_STABLE_FIXED</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -15,8 +15,8 @@
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr 240px; gap: 20px; align-items: center; }
-        #output { border: none; background: transparent; padding: 10px 0; min-height: 350px; max-height: calc(100vh - 480px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; }
-        .word-token { cursor: pointer; transition: background 0.2s; padding: 2px 1px; border-radius: 2px; }
+        #output { border: none; background: transparent; padding: 10px 0; min-height: 400px; max-height: calc(100vh - 480px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 80px; outline: none; white-space: pre-wrap; }
+        .word-token { cursor: pointer; transition: background 0.2s; padding: 2px 1px; border-radius: 2px; display: inline-block; }
         .word-token:hover { background: rgba(255, 255, 255, 0.15); }
         .low-conf { color: var(--term-err); text-decoration: underline dotted; }
         .validated { color: var(--term-ok) !important; text-decoration: none !important; }
@@ -45,7 +45,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: POST_PROCESS_V3_FIXED
+  > MODULE: POST_PROCESS_V3_FIXED_STABLE
 </div>
 
 <div class="header">
@@ -73,7 +73,7 @@
     <div>
         STATUS: <span id="status" class="blink">IDLE</span>
         <div id="progress-container" style="display:none; margin-top:10px;">
-            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">BOOT: 0%</div>
+            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING: 0%</div>
             <div id="ascii-bar">[--------------------]</div>
         </div>
     </div>
@@ -93,17 +93,19 @@
     <button id="exportBtn" style="margin-left: auto;">EXPORT</button>
     <button id="copyBtn">COPY</button>
     <button id="clearBtn">FLUSH_ALL</button>
-    <button id="resetDbBtn" style="color: var(--term-warn); border-color: var(--term-warn);">RESET_DB</button>
 </div>
 
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- PERSISTENZA INDEXEDDB ---
+    // --- CONFIG & DB ---
     const DB_NAME = "whisp_experience_v3";
     const STORE_NAME = "experience";
+    let currentInitialPrompt = "";
+    window.experienceDict = new Set();
+    window.referenceDict = new Set();
 
-    function openDB() {
+    async function openDB() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, 1);
             request.onupgradeneeded = (e) => {
@@ -153,8 +155,7 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 40 === 0) flush(true);
-                            if (audioBufPtr >= 1500) flush(false);
+                            if (audioBufPtr % 40 === 0) flush(true); 
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
@@ -162,7 +163,7 @@
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        if (prob > (isSpeaking ? 0.35 : 0.65)) {
+                        if (prob > (isSpeaking ? 0.35 : 0.65)) { 
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
@@ -193,18 +194,17 @@
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
             try {
-                const res = await transcriber(new Float32Array(item.buffer), {
-                    language: currentLanguage, task: 'transcribe',
+                const res = await transcriber(new Float32Array(item.buffer), { 
+                    language: currentLanguage, task: 'transcribe', 
                     num_beams: item.isPartial ? 1 : beams,
                     prompt: initialPrompt,
                     repetition_penalty: 1.1,
-                    temperature: 0.0,
-                    chunk_length_s: 30, stride_length_s: 5
+                    temperature: 0.0
                 });
                 if (res.text && res.text.trim().length > 0) {
-                    self.postMessage({
-                        type: item.isPartial ? 'partial' : 'final',
-                        text: res.text,
+                    self.postMessage({ 
+                        type: item.isPartial ? 'partial' : 'final', 
+                        text: res.text, 
                         isLowConf: res.chunks ? res.chunks.some(c => (c.confidence || 1) < 0.6) : false
                     });
                 }
@@ -216,9 +216,9 @@
             const { type, port, precision, language, num_beams, prompt } = e.data;
             if (type === 'load') {
                 const model = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
-                transcriber = await pipeline('automatic-speech-recognition', model, {
+                transcriber = await pipeline('automatic-speech-recognition', model, { 
                     device: 'webgpu', dtype: precision === 'fp16' ? 'fp16' : 'q4f16',
-                    progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress })
+                    progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                 }).catch(async () => await pipeline('automatic-speech-recognition', model, { device: 'wasm', dtype: 'q8' }));
                 self.postMessage({ type: 'READY_TO_PROCESS' });
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
@@ -227,7 +227,7 @@
                 if (num_beams) beams = parseInt(num_beams);
                 if (prompt !== undefined) initialPrompt = prompt;
             } else if (type === 'init_vad_port') {
-                vadPort = port;
+                vadPort = port; 
                 vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); } };
             }
         };
@@ -253,14 +253,20 @@
             const connectors = ['per', 'con', 'tra', 'fra', 'su', 'che', 'non'];
 
             wordsToCorrect.forEach(item => {
-                const word = item.original.toLowerCase().trim().replace(/[.,!?]/g, '');
-                if (word.length < 4) return;
+                // Preserviamo punteggiatura e maiuscole estraendo il "core" della parola
+                const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
+                if (!match) return;
 
+                const [_, prefix, core, suffix] = match;
+                const lowerCore = core.toLowerCase();
+                if (lowerCore.length < 4) return;
+
+                // Logica Bigrammi: scissione fusi
                 for (let conn of connectors) {
-                    if (word.startsWith(conn) && word.length > conn.length + 3) {
-                        const rem = word.slice(conn.length);
+                    if (lowerCore.startsWith(conn) && lowerCore.length > conn.length + 3) {
+                        const rem = lowerCore.slice(conn.length);
                         if (priorityPool.includes(rem) || (referenceDict && referenceDict.includes(rem))) {
-                            corrections.push({ id: item.id, newText: conn + " " + rem });
+                            corrections.push({ id: item.id, newText: prefix + conn + " " + rem + suffix });
                             return;
                         }
                     }
@@ -268,12 +274,16 @@
 
                 let best = null, minDist = Infinity;
                 [...priorityPool, ...(referenceDict || [])].forEach(ref => {
-                    if (Math.abs(ref.length - word.length) > 1) return;
-                    let d = levenshtein(word, ref);
+                    if (Math.abs(ref.length - lowerCore.length) > 1) return;
+                    let d = levenshtein(lowerCore, ref);
                     if (d < minDist) { minDist = d; best = ref; }
                 });
 
-                if (minDist <= 1 && best) corrections.push({ id: item.id, newText: best });
+                if (minDist <= 1 && best) {
+                    // Ripristiniamo la maiuscola se presente nell'originale
+                    const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
+                    corrections.push({ id: item.id, newText: prefix + restored + suffix });
+                }
             });
             self.postMessage({ type: 'HEALING_DONE', corrections });
         };
@@ -282,8 +292,9 @@
     const refiningWorkerCode = `
         self.onmessage = (e) => {
             let text = e.data.text;
+            // Pulizia conservativa: solo spazi multipli e balbuzie evidenti
             text = text.replace(/\\b(\\w+)\\s+\\1\\b/gi, '$1');
-            text = text.replace(/\\s+([,.!?])/g, '$1');
+            text = text.replace(/ {2,}/g, ' '); 
             self.postMessage({ type: 'REFINED', text });
         };
     `;
@@ -291,17 +302,15 @@
     // --- UI HELPERS ---
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
-        progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
-        precisionSelect: document.getElementById('precisionSelect'), beamSelect: document.getElementById('beamSelect'),
-        languageSelect: document.getElementById('languageSelect'), audioSource: document.getElementById('audioSource'),
-        loadBtn: document.getElementById('loadBtn'), startBtn: document.getElementById('startBtn'),
-        stopBtn: document.getElementById('stopBtn'), output: document.getElementById('output'),
-        vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'),
-        volFill: document.getElementById('volFill'), probVal: document.getElementById('probVal'),
-        clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
-        resetDbBtn: document.getElementById('resetDbBtn'),
-        popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'),
-        confirmBtn: document.getElementById('confirm-word-btn')
+        progressContainer: document.getElementById('progress-container'), precisionSelect: document.getElementById('precisionSelect'), 
+        beamSelect: document.getElementById('beamSelect'), languageSelect: document.getElementById('languageSelect'), 
+        audioSource: document.getElementById('audioSource'), loadBtn: document.getElementById('loadBtn'), 
+        startBtn: document.getElementById('startBtn'), stopBtn: document.getElementById('stopBtn'), 
+        output: document.getElementById('output'), vadLed: document.getElementById('vadLed'), 
+        vadFill: document.getElementById('vadFill'), volFill: document.getElementById('volFill'), 
+        probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'), 
+        copyBtn: document.getElementById('copyBtn'), popup: document.getElementById('word-popup'), 
+        editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn')
     };
 
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
@@ -313,35 +322,48 @@
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
     whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2 }, [workerChannel.port2]);
 
-    window.experienceDict = new Set();
-    window.referenceDict = new Set();
     let audioCtx, stream, isSessionActive = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
+    // Funzione cruciale: ricostruisce i token rispettando i paragrafi (\n)
     function rebuildTokens(text) {
         UI.output.innerHTML = "";
-        const words = text.trim().split(/\s+/);
-        words.forEach((w, i) => {
-            if (!w) return;
-            const span = document.createElement('span');
-            span.className = 'word-token';
-            span.dataset.hid = i;
-            span.innerText = (i === 0 ? "" : " ") + w;
-            UI.output.appendChild(span);
+        const lines = text.split('\n');
+        let globalIdx = 0;
+
+        lines.forEach((line, lineIdx) => {
+            if (line.trim() === "" && lineIdx > 0) {
+                UI.output.appendChild(document.createElement('br'));
+                return;
+            }
+            const words = line.trim().split(/ +/);
+            words.forEach((w, wordIdx) => {
+                if (!w) return;
+                const span = document.createElement('span');
+                span.className = 'word-token';
+                span.dataset.hid = globalIdx++;
+                span.innerText = (wordIdx === 0 ? "" : " ") + w;
+                UI.output.appendChild(span);
+            });
+            if (lineIdx < lines.length - 1) {
+                UI.output.appendChild(document.createElement('br'));
+            }
         });
         UI.output.appendChild(interimSpan);
     }
 
+    // --- HANDLERS ---
     whisperWorker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'progress') {
             UI.progressContainer.style.display = 'block';
-            const p = Math.round(d.p || 0); UI.progressText.innerText = 'BOOT: ' + p + '%';
+            UI.progressText.innerText = 'BOOT: ' + Math.round(d.p) + '%';
         } else if (d.type === 'READY_TO_PROCESS') {
             UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none'; UI.startBtn.disabled = false;
         } else if (d.type === 'final' && isSessionActive) {
             interimSpan.innerText = "";
-            d.text.trim().split(/\s+/).forEach(w => {
+            const words = d.text.trim().split(/ +/);
+            words.forEach(w => {
                 const span = document.createElement('span');
                 span.className = 'word-token' + (d.isLowConf ? ' low-conf' : '');
                 span.innerText = " " + w;
@@ -357,7 +379,7 @@
     refiningWorker.onmessage = (e) => {
         if (e.data.type === 'REFINED') {
             rebuildTokens(e.data.text);
-            UI.status.innerText = "HEALING...";
+            UI.status.innerText = "HEALING_ACTIVE...";
             const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({
                 original: s.innerText.trim(),
                 id: s.dataset.hid
@@ -371,58 +393,56 @@
     };
 
     healingWorker.onmessage = (e) => {
-        if (e.data.type === 'HEALING_DONE') {
-            e.data.corrections.forEach(c => {
-                const el = UI.output.querySelector(`[data-hid="${c.id}"]`);
-                if (el) {
-                    el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText;
-                    el.classList.add('validated');
-                    el.style.color = "var(--term-ok)";
-                }
-            });
-            saveExperience();
-            UI.status.innerText = "READY";
-            UI.status.style.color = "var(--term-ok)";
-        }
+        e.data.corrections.forEach(c => {
+            const el = UI.output.querySelector(`[data-hid="${c.id}"]`);
+            if (el) {
+                const prefix = el.dataset.hid === "0" ? "" : " ";
+                el.innerText = prefix + c.newText;
+                el.classList.add('validated');
+                el.style.color = "var(--term-ok)";
+            }
+        });
+        saveExperience();
+        UI.status.innerText = "READY";
+        UI.status.style.color = "var(--term-ok)";
     };
 
     vadWorker.onmessage = (e) => {
-        if (e.data.type === 'ready') { whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value }); }
+        if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
         else if (e.data.type === 'vad_ui_update') {
             UI.probVal.innerText = "VAD: " + e.data.prob.toFixed(2); UI.vadFill.style.width = (e.data.prob * 100) + "%";
             UI.vadLed.classList.toggle('active', e.data.isSpeaking);
         }
     };
 
-    // --- MAIN LOGIC ---
+    // --- MAIN ---
     async function start() {
         isSessionActive = true;
         const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
             .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
             .map(t => t.innerText.trim().toLowerCase());
-        
-        whisperWorker.postMessage({
-            type: 'update_params',
-            language: UI.languageSelect.value,
-            num_beams: UI.beamSelect.value,
-            prompt: [...new Set(sessionDNA)].slice(-50).join(" ")
+        currentInitialPrompt = [...new Set(sessionDNA)].slice(-50).join(" ");
+
+        whisperWorker.postMessage({ 
+            type: 'update_params', language: UI.languageSelect.value, 
+            num_beams: UI.beamSelect.value, prompt: currentInitialPrompt 
         });
 
         audioCtx = new AudioContext({ sampleRate: 16000 });
         stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
-
+        
         await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
             class P extends AudioWorkletProcessor {
                 constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; this.s=0;
-                    this.port.onmessage=(e)=>{ if(e.data.type==='init') this.vPort=e.data.port; };
+                    this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; };
                 }
                 process(inputs) {
                     const input = inputs[0][0]; if(!input || !this.vPort) return true;
                     for(let i=0; i<input.length; i++) {
                         const s = input[i]; this.s += s*s; this.buf[this.ptr++] = s;
-                        if(this.ptr>=512) {
+                        if(this.ptr>=512) { 
                             this.port.postMessage({rms: Math.sqrt(this.s/512)});
-                            const b = this.buf.buffer; this.vPort.postMessage({type:'vad', data:b}, [b]);
+                            const b = this.buf.buffer; this.vPort.postMessage({type:'vad', data:b}, [b]); 
                             this.buf = new Float32Array(512); this.ptr=0; this.s=0;
                         }
                     }
@@ -431,16 +451,14 @@
             }
             registerProcessor('p', P);
         `], {type:'application/javascript'})));
-
+        
         const worklet = new AudioWorkletNode(audioCtx, 'p');
         worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%"; };
         const audioChannel = new MessageChannel();
         vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
-        
-        // --- FIX: Aggiunto type: 'init' per sbloccare la comunicazione ---
-        worklet.port.postMessage({ type: 'init', port: audioChannel.port2 }, [audioChannel.port2]);
-        
+        worklet.port.postMessage({ port: audioChannel.port2 }, [audioChannel.port2]);
         audioCtx.createMediaStreamSource(stream).connect(worklet);
+        
         UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block';
         UI.output.appendChild(interimSpan);
     }
@@ -449,13 +467,13 @@
         isSessionActive = false;
         if(stream) stream.getTracks().forEach(t => t.stop());
         if(audioCtx) audioCtx.close();
-        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block';
-        UI.status.innerText = "POST-PROCESSING...";
+        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; 
+        UI.status.innerText = "ANALYZING_CONTEXT...";
         UI.status.style.color = "var(--term-warn)";
         refiningWorker.postMessage({ text: UI.output.innerText });
     }
 
-    // --- UX VALIDATION ---
+    // --- POPUP ---
     let activeToken = null;
     UI.output.onclick = (e) => {
         if (e.target.classList.contains('word-token')) {
@@ -469,7 +487,8 @@
 
     UI.confirmBtn.onclick = async () => {
         if (activeToken) {
-            activeToken.innerText = (activeToken.dataset.hid === "0" ? "" : " ") + UI.editInput.value.trim();
+            const prefix = activeToken.dataset.hid === "0" ? "" : " ";
+            activeToken.innerText = prefix + UI.editInput.value.trim();
             activeToken.classList.add('validated');
             activeToken.classList.remove('low-conf');
             window.experienceDict.add(UI.editInput.value.trim().toLowerCase());
@@ -481,14 +500,7 @@
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; vadWorker.postMessage({ type: 'load' }); };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
-    UI.resetDbBtn.onclick = async () => { 
-        window.experienceDict.clear(); 
-        const db = await openDB(); 
-        db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).clear(); 
-        UI.status.innerText = "DB_WIPED"; 
-    };
-
-    // --- BOOTSTRAP ---
+    
     (async () => {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, "readonly");
