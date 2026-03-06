@@ -55,9 +55,9 @@
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
-            <option value="turbo" selected>ENGINE: LARGE_TURBO (Q4_GPU)</option>
-            <option value="base">ENGINE: STANDARD_BASE (AUTO_GPU)</option>
-            <option value="tiny">ENGINE: MOBILE_TINY (AUTO_GPU)</option>
+            <option value="turbo" selected>ENGINE: LARGE_TURBO (FP16_GPU)</option>
+            <option value="base">ENGINE: STANDARD_BASE (FP16_GPU)</option>
+            <option value="tiny">ENGINE: MOBILE_TINY (FP16_GPU)</option>
         </select>
         <select id="languageSelect"></select>
         <select id="audioSource">
@@ -233,18 +233,18 @@
             const { type, port, precision, language, num_beams, prompt } = e.data;
             if (type === 'load') {
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
+                
+                // Impostiamo SEMPRE fp16 per la massima qualità non quantizzata
                 let pipeOptions = {
                     device: 'webgpu',
-                    dtype: 'q4f16', 
+                    dtype: 'fp16', 
                     progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress })
                 };
                 
                 if (precision === 'base') {
                     modelName = 'onnx-community/whisper-base'; 
-                    delete pipeOptions.dtype; 
                 } else if (precision === 'tiny') {
                     modelName = 'onnx-community/whisper-tiny'; 
-                    delete pipeOptions.dtype; 
                 }
 
                 try {
@@ -252,7 +252,8 @@
                 } catch (err) {
                     console.error("WEBGPU CRASH, FORZATURA CPU...", err);
                     pipeOptions.device = 'wasm';
-                    pipeOptions.dtype = 'q8'; 
+                    // Il WASM usa tipamente q8 o fp32 di default se fp16 non è supportato dal backend
+                    pipeOptions.dtype = 'fp32'; 
                     transcriber = await pipeline('automatic-speech-recognition', modelName, pipeOptions);
                 }
                 
@@ -338,8 +339,6 @@
             let text = e.data.text;
             
             // Approccio Dinamico (Heuristic Filter): rimuove i duplicati SOLO se la parola è di 1, 2 o 3 lettere.
-            // Pialla le balbuzie di Whisper ("il il", "di di", "che che") 
-            // ma ignora automaticamente qualsiasi rafforzativo reale ("piano piano", "quasi quasi").
             text = text.replace(/\\b(\\w{1,3})\\s+\\1\\b/gi, '$1'); 
             
             text = text.replace(/ {2,}/g, ' '); 
@@ -484,8 +483,7 @@
             .map(t => t.innerText.trim().toLowerCase());
         currentInitialPrompt = [...new Set(sessionDNA)].slice(-50).join(" ");
 
-        // Calcolo Adaptive Beams in base al modello scelto!
-        let adaptiveBeams = 1; // Default
+        let adaptiveBeams = 1; 
         const selectedEngine = UI.precisionSelect.value;
         if (selectedEngine === 'turbo') adaptiveBeams = 1;
         else if (selectedEngine === 'base') adaptiveBeams = 2;
