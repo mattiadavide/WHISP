@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 2.7_PRO_FORMAT</title>
+    <title>WHISP // TERMINAL 2.7_PRO_FORMAT_UPDATED</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -39,7 +39,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_2.7_PUNCT_GUARD
+    > MODULE_BOOT: WHISP_CORE_2.7_PUNCT_GUARD (FIXED)
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -88,8 +88,9 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
+    // BUG FIX: Aggiornato URL dizionario italiano (risolto 404)
     const DICTIONARY_URLS = {
-        "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/master/60000_parole_italiane.txt",
+        "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/master/parole_italiane.txt",
         "english": "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
     };
 
@@ -99,14 +100,15 @@
 
     async function fetchTrendSnapshot(lang) {
         const geo = lang === 'italian' ? 'IT' : 'US';
-        const proxy = 'https://api.allorigins.win/get?url=';
+        // BUG FIX: Cambiato endpoint in /raw per AllOrigins e aggiunta robustezza
+        const proxy = 'https://api.allorigins.win/raw?url=';
         const target = encodeURIComponent(`https://trends.google.it/trends/trendingsearches/daily/rss?geo=${geo}`);
         try {
             UI.status.innerText = "SNAPSHOT_TRENDS...";
             const response = await fetch(proxy + target);
-            const data = await response.json();
+            const text = await response.text();
             const parser = new DOMParser();
-            const xml = parser.parseFromString(data.contents, "text/xml");
+            const xml = parser.parseFromString(text, "text/xml");
             xml.querySelectorAll("title").forEach(item => {
                 const trend = item.textContent.toLowerCase().trim();
                 if (trend.length > 3) {
@@ -114,15 +116,17 @@
                     trend.split(/\s+/).forEach(word => { if (word.length > 3) trendSnapshots.add(word); });
                 }
             });
-        } catch (e) { console.warn("Trend snapshot failed."); }
+        } catch (e) { console.warn("Trend snapshot failed: CORS or Network Error."); }
     }
 
     async function loadResources(lang) {
-        UI.status.innerText = "FETCHING_DICT...";
-        const response = await fetch(DICTIONARY_URLS[lang]);
-        const text = await response.text();
-        referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()));
-        await fetchTrendSnapshot(lang);
+        try {
+            UI.status.innerText = "FETCHING_DICT...";
+            const response = await fetch(DICTIONARY_URLS[lang]);
+            const text = await response.text();
+            referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()));
+            await fetchTrendSnapshot(lang);
+        } catch (e) { console.warn("Dictionary load failed."); }
         UI.status.innerText = "CORE_READY";
     }
 
@@ -139,7 +143,6 @@
         return m[b.length][a.length];
     }
 
-    // --- LOGICA DI ASSOCIAZIONE PUNCTUATION-AWARE ---
     function globalHealAndFormat() {
         let text = UI.output.innerText;
         let words = text.match(/[a-zA-ZÀ-ÿ]+/g) || [];
@@ -154,7 +157,6 @@
 
         lowConfSpans.forEach(span => {
             let original = span.innerText.trim();
-            // BUG FIX: Isola la parola dalla punteggiatura (es: "casa," -> ["casa", ","])
             const match = original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
             if (!match) return;
 
@@ -165,14 +167,12 @@
 
             let bestMatch = null, minDist = Infinity;
 
-            // Confronto con Trend/Esperienza
             priorityPool.forEach(term => {
                 if (Math.abs(term.length - lower.length) > 3) return;
                 let d = levenshtein(lower, term);
                 if (d < minDist) { minDist = d; bestMatch = term; }
             });
 
-            // Fallback su Dizionario Statico
             if (minDist > 2) {
                 referenceDict.forEach(ref => {
                     if (Math.abs(ref.length - lower.length) > 1) return;
@@ -186,7 +186,6 @@
                     ? bestMatch.charAt(0).toUpperCase() + bestMatch.slice(1) 
                     : bestMatch.toLowerCase();
                 
-                // RIATTACCA PUNTEGGIATURA E FORMATTA
                 span.innerText = prefix + formatted + suffix;
                 span.classList.remove('low-conf');
                 span.style.color = "var(--term-ok)";
@@ -216,7 +215,6 @@
     }
     UI.languageSelect.value = "italian";
 
-    // --- WORKER CODE ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -287,12 +285,15 @@
             isBusy = true; const item = queue.shift();
             if (item.isPartial && queue.some(q => q.isPartial)) { isBusy = false; process(); return; }
             try {
+                // BUG FIX: Aggiunti chunk_length_s e stride_length_s per audio lunghi
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: item.isPartial ? 1 : 5,
                     repetition_penalty: 1.5,
                     no_speech_threshold: 0.6,
-                    condition_on_previous_text: false
+                    condition_on_previous_text: false,
+                    chunk_length_s: 30,
+                    stride_length_s: 5
                 });
                 if (res.text && res.text.trim().length > 0) {
                     const isLowConf = res.text.trim().length < 10;
