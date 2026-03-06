@@ -203,7 +203,7 @@
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        let beams = 2, initialPrompt = "";
+        let beams = 1, initialPrompt = "";
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
@@ -484,9 +484,16 @@
             .map(t => t.innerText.trim().toLowerCase());
         currentInitialPrompt = [...new Set(sessionDNA)].slice(-50).join(" ");
 
+        // Calcolo Adaptive Beams in base al modello scelto!
+        let adaptiveBeams = 1; // Default
+        const selectedEngine = UI.precisionSelect.value;
+        if (selectedEngine === 'turbo') adaptiveBeams = 1;
+        else if (selectedEngine === 'base') adaptiveBeams = 2;
+        else if (selectedEngine === 'tiny') adaptiveBeams = 3;
+
         whisperWorker.postMessage({ 
             type: 'update_params', language: UI.languageSelect.value, 
-            num_beams: 2, prompt: currentInitialPrompt 
+            num_beams: adaptiveBeams, prompt: currentInitialPrompt 
         });
 
         audioCtx = new AudioContext({ sampleRate: 16000 });
