@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 4.3</title>
+    <title>WHISP // TERMINAL 4.4</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -14,22 +14,17 @@
         select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
-        
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr 280px; gap: 20px; align-items: center; }
         #output { border: 1px solid rgba(255,255,255,0.1); background: transparent; padding: 15px; min-height: 400px; max-height: calc(100vh - 550px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
-        
-        /* Tabella Harvest */
-        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(0, 170, 255, 0.05); }
+        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(0, 170, 255, 0.05); max-height: 300px; overflow-y: auto; }
         table { width: 100%; border-collapse: collapse; font-size: 0.8em; margin-top: 10px; }
         th { text-align: left; border-bottom: 1px solid var(--term-accent); padding: 5px; color: var(--term-accent); }
         td { padding: 5px; border-bottom: 1px solid #222; }
-
         .word-token { cursor: pointer; transition: background 0.2s; padding: 2px 1px; border-radius: 2px; display: inline-block; }
         .word-token:hover { background: rgba(255, 255, 255, 0.15); }
         .low-conf { color: var(--term-err); text-decoration: underline dotted; }
         .validated { color: var(--term-ok) !important; text-decoration: none !important; }
         .interim-text { color: var(--term-dim); font-style: italic; }
-        
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.75em; }
         .bar-bg { flex-grow: 1; height: 6px; background: #1a1a1a; border: 1px solid var(--term-dim); }
         .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s; }
@@ -54,7 +49,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > DESIGN BY MATTIA DAVIDE AMICO
+  > DESIGN BY MATTIA DAVIDE AMICO | V4.4_TOTAL_CAPTURE
 </div>
 
 <div class="header">
@@ -69,7 +64,6 @@
             <option value="mic">SRC: MICROPHONE</option>
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
-        
         <input type="text" id="dictUrlInput" placeholder="URL GLOSSARIO (.txt)" style="flex-grow: 2;">
         <button id="loadDictBtn">FETCH_DICT()</button>
         <button id="loadBtn">LOAD_CORE()</button>
@@ -100,11 +94,8 @@
         <button id="closeHarvestBtn" style="flex-grow:0; padding: 2px 10px; border-color: var(--term-accent);">CLOSE</button>
     </div>
     <table id="harvest-table">
-        <thead>
-            <tr><th>LEMMA</th><th>EXTRACTION_TYPE</th><th>STATUS</th></tr>
-        </thead>
-        <tbody id="harvest-body">
-            </tbody>
+        <thead><tr><th>LEMMA</th><th>TYPE</th><th>DB_STATUS</th></tr></thead>
+        <tbody id="harvest-body"></tbody>
     </table>
 </div>
 
@@ -125,7 +116,6 @@
     let currentInitialPrompt = "";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
-    let sessionHarvested = new Set();
 
     async function openDB() {
         return new Promise((resolve, reject) => {
@@ -145,15 +135,12 @@
         tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words");
     }
 
-    // --- WORKERS DEFINITION ---
+    // --- WORKER CODES ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
-        const audioBuf = new Float32Array(1500 * 512);
-        const preRoll = new Float32Array(15 * 512);
-        const ZERO_STATE = new Float32Array(2 * 1 * 128);
-        const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
+        const audioBuf = new Float32Array(1500 * 512), preRoll = new Float32Array(15 * 512), ZERO_STATE = new Float32Array(2 * 1 * 128), SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
 
         function flush(isPartial = false) {
@@ -207,8 +194,7 @@
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-        let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        let beams = 1, initialPrompt = "";
+        let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null, beams = 1, initialPrompt = "";
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
@@ -267,19 +253,16 @@
         }
         self.onmessage = (e) => {
             const { wordsToCorrect, priorityPool, referenceDict } = e.data; 
-            const corrections = []; 
-            const active = [...priorityPool, ...(referenceDict || [])];
+            const corrections = []; const active = [...priorityPool, ...(referenceDict || [])];
             wordsToCorrect.forEach(item => {
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
                 if (!match) return;
-                const [_, prefix, core, suffix] = match; const lower = core.toLowerCase(); 
-                if (lower.length < 5) return;
+                const [_, prefix, core, suffix] = match; const lower = core.toLowerCase(); if (lower.length < 5) return;
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
                     if (Math.abs(ref.length - lower.length) > 2) return; 
                     let d = levenshtein(lower, ref); if (d < minDist) { minDist = d; best = ref; } 
                 });
-                // Ratio 0.25: Permettiamo correzioni se l'errore è contenuto nel 25% della parola
                 if (best && (minDist / lower.length <= 0.25)) {
                     const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
                     corrections.push({ id: item.id, newText: prefix + restored + suffix });
@@ -292,14 +275,29 @@
     const refiningWorkerCode = `
         self.onmessage = (e) => {
             let text = e.data.text;
-            // Pulizia ripetizioni estesa (fino a 12 char)
+            // 1. Elimina ripetizioni esatte (es: "il il")
             text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1'); 
-            text = text.replace(/ {2,}/g, ' '); 
+            
+            // 2. FUZZY DEDUPLICATION: Elimina partenze errate (es: "strutturo struttura")
+            // Se due parole adiacenti condividono i primi 5 caratteri, teniamo la seconda.
+            const words = text.split(/\\s+/);
+            const cleanWords = [];
+            for (let i = 0; i < words.length; i++) {
+                if (i < words.length - 1) {
+                    const w1 = words[i].toLowerCase().replace(/[^a-z]/g, '');
+                    const w2 = words[i+1].toLowerCase().replace(/[^a-z]/g, '');
+                    if (w1.length >= 5 && w2.length >= 5 && w1.substring(0,5) === w2.substring(0,5)) {
+                        continue; // Salta la prima versione (probabile errore fonetico)
+                    }
+                }
+                cleanWords.push(words[i]);
+            }
+            text = cleanWords.join(' ').replace(/ {2,}/g, ' '); 
             self.postMessage({ type: 'REFINED', text });
         };
     `;
 
-    // --- MAIN UI LOGIC ---
+    // --- UI & LOGIC ---
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
@@ -307,8 +305,7 @@
         audioSource: document.getElementById('audioSource'), dictUrlInput: document.getElementById('dictUrlInput'),
         loadDictBtn: document.getElementById('loadDictBtn'), loadBtn: document.getElementById('loadBtn'),
         startBtn: document.getElementById('startBtn'), stopBtn: document.getElementById('stopBtn'), output: document.getElementById('output'),
-        vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'), 
-        volFill: document.getElementById('volFill'), probVal: document.getElementById('probVal'),
+        vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'), volFill: document.getElementById('volFill'), probVal: document.getElementById('probVal'),
         clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
         popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn'),
         harvestPanel: document.getElementById('harvest-panel'), harvestBody: document.getElementById('harvest-body'),
@@ -327,22 +324,20 @@
     let audioCtx, stream, isSessionActive = false, lastFinalText = "";
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
-    function updateHarvestUI(term, type = "AUTO_LEARN") {
+    function addHarvestRow(term, type) {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">SAVED_IN_DB</td>`;
+        tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">COMMITTED</td>`;
         UI.harvestBody.prepend(tr);
     }
 
-    function harvestNewTerms() {
+    function harvestAll() {
         const text = UI.output.innerText;
         const words = text.split(/\s+/);
         words.forEach(w => {
             const clean = w.toLowerCase().replace(/[^a-zÀ-ÿ]/g, '');
-            // Harvest se > 7 lettere e non presente nei dizionari
-            if (clean.length > 7 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
+            if (clean.length > 6 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
                 window.experienceDict.add(clean);
-                sessionHarvested.add(clean);
-                updateHarvestUI(clean, "AUTO_HARVEST");
+                addHarvestRow(clean, "AUTO_LEARN");
             }
         });
         saveExperience();
@@ -367,29 +362,25 @@
         } else if (d.type === 'READY_TO_PROCESS') { UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none'; UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false; }
         else if (d.type === 'final' && isSessionActive) {
             interimSpan.innerText = ""; const incomingText = d.text.trim();
-            if (lastFinalText.length > 15 && incomingText.length > 15) { if (incomingText === lastFinalText || lastFinalText.endsWith(incomingText)) return; }
+            if (lastFinalText.length > 10 && incomingText.length > 10) { if (incomingText === lastFinalText || lastFinalText.endsWith(incomingText)) return; }
             lastFinalText = incomingText;
             incomingText.split(/ +/).forEach(w => { const span = document.createElement('span'); span.className = 'word-token' + (d.isLowConf ? ' low-conf' : ''); span.innerText = " " + w; UI.output.insertBefore(span, interimSpan); });
             UI.output.scrollTop = UI.output.scrollHeight;
         } else if (d.type === 'partial' && isSessionActive) { interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; }
-        else if (d.type === 'FLUSH_COMPLETE') { isSessionActive = false; UI.status.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); UI.startBtn.disabled = false; }
+        else if (d.type === 'FLUSH_COMPLETE') { isSessionActive = false; UI.status.innerText = "REFINING_TOTAL_TRANSCRIPT..."; refiningWorker.postMessage({ text: UI.output.innerText }); UI.startBtn.disabled = false; }
     };
 
     refiningWorker.onmessage = (e) => {
         if (e.data.type === 'REFINED') {
-            rebuildTokens(e.data.text); UI.status.innerText = "HEALING_ACTIVE...";
+            rebuildTokens(e.data.text); UI.status.innerText = "HEALING_PHONETICS...";
             const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
             healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: Array.from(window.experienceDict), referenceDict: Array.from(window.referenceDict) });
         }
     };
 
     healingWorker.onmessage = (e) => {
-        e.data.corrections.forEach(c => { 
-            const el = UI.output.querySelector(`[data-hid="${c.id}"]`); 
-            if (el) { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; } 
-        });
-        harvestNewTerms(); // Innesca l'apprendimento post-healing
-        UI.status.innerText = "READY"; UI.status.style.color = "var(--term-ok)";
+        e.data.corrections.forEach(c => { const el = UI.output.querySelector(`[data-hid="${c.id}"]`); if (el) { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; } });
+        harvestAll(); UI.status.innerText = "IDLE"; UI.status.style.color = "var(--term-ok)";
     };
 
     vadWorker.onmessage = (e) => {
@@ -421,37 +412,22 @@
         UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block'; UI.output.appendChild(interimSpan);
     }
 
-    async function stop() { 
-        vadWorker.postMessage({ type: 'force_flush' }); 
-        if(stream) stream.getTracks().forEach(t => t.stop()); 
-        if(audioCtx) audioCtx.close(); 
-        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; UI.startBtn.disabled = true; 
-        UI.status.innerText = "FLUSHING_AUDIO_QUEUE..."; UI.status.style.color = "var(--term-warn)"; 
-        whisperWorker.postMessage({ type: 'request_flush' }); 
-    }
+    async function stop() { vadWorker.postMessage({ type: 'force_flush' }); if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; UI.startBtn.disabled = true; UI.status.innerText = "COMMITTING_AUDIO..."; whisperWorker.postMessage({ type: 'request_flush' }); }
 
     let activeToken = null;
     UI.output.onclick = (e) => { if (e.target.classList.contains('word-token')) { activeToken = e.target; UI.editInput.value = activeToken.innerText.trim(); UI.popup.style.display = 'block'; UI.popup.style.top = (e.clientY + 10) + 'px'; UI.popup.style.left = (e.clientX) + 'px'; } else { UI.popup.style.display = 'none'; } };
-    UI.confirmBtn.onclick = async () => { if (activeToken) { 
-        const newWord = UI.editInput.value.trim();
-        activeToken.innerText = (activeToken.dataset.hid === "0" ? "" : " ") + newWord; 
-        activeToken.classList.add('validated'); activeToken.classList.remove('low-conf'); 
-        window.experienceDict.add(newWord.toLowerCase()); 
-        updateHarvestUI(newWord.toLowerCase(), "MANUAL_VALIDATE");
-        await saveExperience(); UI.popup.style.display = 'none'; 
-    } };
+    UI.confirmBtn.onclick = async () => { if (activeToken) { const newW = UI.editInput.value.trim(); activeToken.innerText = (activeToken.dataset.hid === "0" ? "" : " ") + newW; activeToken.classList.add('validated'); window.experienceDict.add(newW.toLowerCase()); addHarvestRow(newW.toLowerCase(), "MANUAL_FIX"); await saveExperience(); UI.popup.style.display = 'none'; } };
 
     UI.loadDictBtn.onclick = async () => {
-        const url = UI.dictUrlInput.value.trim(); if (!url) return; UI.loadDictBtn.disabled = true; UI.status.innerText = "FETCHING_KNOWLEDGE_BASE...";
-        try { const res = await fetch(url); if (res.ok) { const text = await res.text(); window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); UI.status.innerText = `DICT_LOADED [${window.referenceDict.size} TERMS]`; UI.status.style.color = "var(--term-ok)"; } else { throw new Error("404"); } } 
-        catch (e) { UI.status.innerText = "ERR_DICT_FETCH_FAILED"; UI.status.style.color = "var(--term-err)"; } UI.loadDictBtn.disabled = false;
+        const url = UI.dictUrlInput.value.trim(); if (!url) return; UI.loadDictBtn.disabled = true; UI.status.innerText = "FETCHING_EXT_GLOSSARY...";
+        try { const res = await fetch(url); if (res.ok) { const t = await res.text(); window.referenceDict = new Set(t.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); UI.status.innerText = `GLOSSARY_LOADED [${window.referenceDict.size} TERMS]`; } } catch (e) { UI.status.innerText = "ERR_FETCH"; } UI.loadDictBtn.disabled = false;
     };
 
     UI.toggleHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'block'; };
     UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_CORE..."; vadWorker.postMessage({ type: 'load' }); };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
-    UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
+    UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); UI.harvestBody.innerHTML = ""; };
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
     
     (async () => {
