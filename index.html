@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 2.4.2</title>
+    <title>WHISP // TERMINAL 1.1.1 - STABLE</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 950px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -39,7 +39,7 @@
 </div>
 
 <div class="header">
-    > MODULE_BOOT: WHISP_CORE_2.4.2_STABLE
+    > MODULE_BOOT: WHISP_CORE_2.4.1_STABLE
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16</option>
@@ -79,7 +79,7 @@
     <button id="exportBtn" style="margin-left: auto;">EXPORT</button>
     <button id="copyBtn">COPY</button>
     <button id="clearBtn">FLUSH</button>
-    <button id="resetDbBtn" style="font-size: 0.75em; color: var(--term-dim); border-color: #333;">RESET_DB</button>
+    <button id="resetDbBtn" style="font-size: 0.7em; color: var(--term-dim); border-color: #333;">RESET_DB</button>
 </div>
 
 <div id="output" contenteditable="true" spellcheck="false"></div>
@@ -89,7 +89,6 @@
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
     })();
 
-    // --- PERSISTENT LEXICON MANAGER (IndexedDB) ---
     const DB_NAME = "WhispLexiconDB";
     const STORE_NAME = "lexicon";
     let persistentLexicon = {};
@@ -108,22 +107,25 @@
         },
         async loadAll() {
             const db = await this.open();
-            const transaction = db.transaction(STORE_NAME, "readonly");
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.getAll();
-            request.onsuccess = () => {
-                const result = {};
-                request.result.forEach(item => result[item.word] = item.count);
-                persistentLexicon = result;
-            };
+            return new Promise((resolve) => {
+                const transaction = db.transaction(STORE_NAME, "readonly");
+                const store = transaction.objectStore(STORE_NAME);
+                const request = store.getAll();
+                request.onsuccess = () => {
+                    const result = {};
+                    request.result.forEach(item => result[item.word] = item.count);
+                    persistentLexicon = result;
+                    resolve(result);
+                };
+            });
         },
         async updateWeights(words) {
             const db = await this.open();
             const transaction = db.transaction(STORE_NAME, "readwrite");
             const store = transaction.objectStore(STORE_NAME);
             words.forEach(word => {
-                const lowerWord = word.toLowerCase().replace(/[’']/g, "'");
-                if (lowerWord.length < 3) return;
+                const lowerWord = word.toLowerCase();
+                if (lowerWord.length < 3) return; 
                 const count = (persistentLexicon[lowerWord] || 0) + 1;
                 persistentLexicon[lowerWord] = count;
                 store.put({ word: lowerWord, count: count });
@@ -156,7 +158,8 @@
         let highConfWords = [];
         spans.forEach(span => {
             if (!span.classList.contains('low-conf')) {
-                const matches = span.innerText.match(/[a-zA-ZÀ-ÿ'’]{3,}/g) || [];
+                // Inclusione dell'apostrofo per l'italiano
+                const matches = span.innerText.match(/[a-zA-ZÀ-ÿ']{3,}/g) || [];
                 highConfWords.push(...matches);
             }
         });
@@ -164,10 +167,7 @@
         if (highConfWords.length > 0) LexiconDB.updateWeights(highConfWords);
 
         let sessionFreq = {};
-        highConfWords.forEach(w => { 
-            let l = w.toLowerCase().replace(/[’']/g, "'"); 
-            sessionFreq[l] = (sessionFreq[l] || 0) + 1; 
-        });
+        highConfWords.forEach(w => { let l = w.toLowerCase(); sessionFreq[l] = (sessionFreq[l] || 0) + 1; });
 
         const lowConfSpans = UI.output.querySelectorAll('.low-conf');
         let correctionsCount = 0;
@@ -175,16 +175,19 @@
 
         lowConfSpans.forEach(span => {
             const original = span.innerText.trim();
-            const lower = original.toLowerCase().replace(/[’']/g, "'");
+            const lower = original.toLowerCase();
             if (lower.length < 3) return;
 
             let bestMatch = null, maxScore = -1;
             knownTerms.forEach(term => {
                 const dist = levenshtein(lower, term);
-                const maxAllowedDist = lower.length > 7 ? 2 : 1;
+                const maxAllowedDist = lower.length > 7 ? 2 : 1; 
+                
                 if (dist > 0 && dist <= maxAllowedDist) {
                     const score = ((persistentLexicon[term] || 0) * 1.5 + (sessionFreq[term] || 0)) / (dist + 1);
-                    if (score > maxScore) { maxScore = score; bestMatch = term; }
+                    if (score > maxScore) {
+                        maxScore = score; bestMatch = term;
+                    }
                 }
             });
 
@@ -214,13 +217,12 @@
         resetDbBtn: document.getElementById('resetDbBtn')
     };
 
-    const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER" };
+    const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER", "russian": "RUS" };
     for (const [c, n] of Object.entries(LANGUAGES)) {
         const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o);
     }
     UI.languageSelect.value = "italian";
 
-    // --- WORKER STRINGS ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -286,7 +288,6 @@
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
@@ -300,8 +301,8 @@
                     condition_on_previous_text: false
                 });
                 if (res.text && res.text.trim().length > 0) {
-                    // Whitelist estesa: apostrofi curvi, punteggiatura e simboli comuni
-                    const isLowConf = res.text.trim().length < 2 || /[^a-zA-ZÀ-ÿ\\s,.!?;:'"’“”\\-()\\[\\]]/.test(res.text);
+                    // Regex migliorata per supportare apostrofi e punteggiatura italiana
+                    const isLowConf = res.text.trim().length < 2 || /[^a-zA-ZÀ-ÿ\s,.!?;:'"\-]/.test(res.text);
                     self.postMessage({ 
                         type: item.isPartial ? 'partial' : 'final', 
                         text: res.text, 
@@ -309,10 +310,9 @@
                         isNewParagraph: item.silenceDuration > 50 
                     });
                 }
-            } catch (e) { self.postMessage({ type: 'final', text: "[ERROR_NODE]" }); }
+            } catch (e) { self.postMessage({ type: 'final', text: "[ERROR]" }); }
             isBusy = false; process();
         }
-
         self.onmessage = async (e) => {
             const { type, port, precision, language } = e.data;
             if (type === 'load') {
@@ -330,7 +330,6 @@
         };
     `;
 
-    // --- WORKER INITIALIZATION ---
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const workerChannel = new MessageChannel();
@@ -376,7 +375,7 @@
 
     vadWorker.onmessage = (e) => {
         const d = e.data;
-        if (d.type === 'ready') { vadWorker.postMessage({ type: 'load' }); whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value }); }
+        if (d.type === 'ready') { UI.status.innerText = "INITIALIZING WHISPER..."; whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value }); }
         else if (d.type === 'vad_ui_update') {
             UI.probVal.innerText = "VAD: " + d.prob.toFixed(2); UI.vadFill.style.width = (d.prob * 100) + "%";
             if (d.isSpeaking) { UI.vadLed.classList.add('active'); UI.status.innerText = "RECORDING"; }
@@ -384,18 +383,17 @@
         }
     };
 
-    UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "INITIALIZING..."; vadWorker.postMessage({ type: 'load' }); };
+    UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "INITIALIZING VAD..."; vadWorker.postMessage({ type: 'load' }); };
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); lastChar = "."; };
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
-    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_${Date.now()}.txt`; a.click(); };
+    UI.exportBtn.onclick = () => { const blob = new Blob([UI.output.innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `whisp_v24_${Date.now()}.txt`; a.click(); };
     UI.resetDbBtn.onclick = () => LexiconDB.clear();
 
     async function start() {
         isSessionActive = true;
         audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
         stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
-        
-        const workletCode = `
+        const workletStr = `
             class P extends AudioWorkletProcessor {
                 constructor() { super(); this.bufPool=[]; for(let i=0;i<40;i++)this.bufPool.push(new Float32Array(512)); this.buf=this.bufPool.pop(); this.ptr=0; this.vadPort=null; this.s=0;
                     this.port.onmessage=(e)=>{ if(e.data.type==='init_port') {this.vadPort=e.data.port; this.vadPort.onmessage=(m)=>this.bufPool.push(new Float32Array(m.data.data));}};
@@ -415,8 +413,7 @@
             }
             registerProcessor('p', P);
         `;
-
-        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' })));
+        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletStr], {type:'application/javascript'})));
         worklet = new AudioWorkletNode(audioCtx, 'p');
         worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%"; };
         const audioChannel = new MessageChannel();
@@ -429,7 +426,7 @@
     async function stop() {
         isSessionActive = false; if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close();
         UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; 
-        UI.status.innerText = "REFINING..."; UI.status.style.color = "var(--term-warn)";
+        UI.status.innerText = "OPTIMIZING..."; UI.status.style.color = "var(--term-warn)";
         setTimeout(globalHealAndFormat, 800);
     }
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
