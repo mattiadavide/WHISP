@@ -85,19 +85,38 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
+    // --- PERSISTENZA DATABASE LOCALE ---
+    const DB_NAME = "whisp_experience_db";
+
+    window.referenceDict = new Set();
+    window.experienceDict = new Set();
+    window.trendSnapshots = new Set();
+
+    function saveExperience() {
+        const data = Array.from(window.experienceDict);
+        localStorage.setItem(DB_NAME, JSON.stringify(data));
+    }
+
+    function loadExperience() {
+        const saved = localStorage.getItem(DB_NAME);
+        if (saved) {
+            try {
+                const data = JSON.parse(saved);
+                window.experienceDict = new Set(data);
+                console.log(`[DB] Caricate ${window.experienceDict.size} parole salvate.`);
+            } catch(e) { console.error("Errore caricamento DB locale", e); }
+        }
+    }
+
     (async function initPersistentStorage() {
         if (navigator.storage && navigator.storage.persist) await navigator.storage.persist();
+        loadExperience(); // Carica i dati all'avvio
     })();
 
     const DICTIONARY_URLS = {
         "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/main/paroleitaliane/60000_parole_italiane.txt",
         "english": "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
     };
-
-    // FIX: Esposizione globale per debugging e persistenza
-    window.referenceDict = new Set();
-    window.experienceDict = new Set();
-    window.trendSnapshots = new Set();
 
     async function fetchTrendSnapshot(lang) {
         const geo = lang === 'italian' ? 'IT' : 'US';
@@ -154,6 +173,9 @@
             if(l.length > 4) window.experienceDict.add(l); 
         });
         
+        // Salva le nuove parole nel database persistente
+        saveExperience();
+
         const lowConfSpans = UI.output.querySelectorAll('.low-conf');
         let correctionsCount = 0;
         const priorityPool = new Set([...window.experienceDict, ...window.trendSnapshots]);
@@ -198,7 +220,7 @@
             }
         });
 
-        UI.status.innerText = `HEAL_COMPLETE: ${correctionsCount} FIXED`;
+        UI.status.innerText = `HEAL_COMPLETE: ${correctionsCount} FIXED | DB: ${window.experienceDict.size}`;
         UI.status.style.color = "var(--term-ok)";
     }
 
@@ -296,7 +318,7 @@
                     num_beams: item.isPartial ? 1 : 5,
                     repetition_penalty: 1.1,
                     no_speech_threshold: 0.6,
-                    condition_on_previous_text: false,
+                    condition_on_previous_text: true, // ABILITATO PER MIGLIORE PUNTEGGIATURA
                     chunk_length_s: 30,
                     stride_length_s: 10,
                     temperature: 0.0
@@ -389,6 +411,7 @@
     UI.resetDbBtn.onclick = () => {
         window.experienceDict.clear();
         window.trendSnapshots.clear();
+        localStorage.removeItem(DB_NAME); // Svuota anche il database persistente
         UI.status.innerText = "DB_WIPED";
         UI.status.style.color = "var(--term-warn)";
         setTimeout(() => { if(!isSessionActive) UI.status.innerText = "READY"; }, 1500);
@@ -398,8 +421,6 @@
         UI.output.innerHTML = ""; 
         UI.output.appendChild(interimSpan); 
         lastChar = "."; 
-        window.experienceDict.clear(); 
-        window.trendSnapshots.clear();
     };
 
     UI.copyBtn.onclick = () => { navigator.clipboard.writeText(UI.output.innerText); };
