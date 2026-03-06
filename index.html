@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 3.6_STABLE_PRO</title>
+    <title>WHISP // TERMINAL 4.0_FINAL</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -49,15 +49,15 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_3.6_STABLE_PRO
+  > MODULE: VERSION_4.0_FINAL
 </div>
 
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
-            <option value="turbo" selected>ENGINE: LARGE_TURBO (FP16_MAX)</option>
-            <option value="base">ENGINE: DISTIL_BASE (Q4_GPU)</option>
-            <option value="tiny">ENGINE: MOBILE_TINY (Q4_GPU)</option>
+            <option value="turbo" selected>ENGINE: LARGE_TURBO (Q4_GPU)</option>
+            <option value="base">ENGINE: STANDARD_BASE (AUTO_GPU)</option>
+            <option value="tiny">ENGINE: MOBILE_TINY (AUTO_GPU)</option>
         </select>
         <select id="beamSelect">
             <option value="1">BEAMS: 1 (FAST)</option>
@@ -105,8 +105,7 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- DATABASE & PERSISTENZA ---
-    const DB_NAME = "whisp_v3_db";
+    const DB_NAME = "whisp_v4_db";
     const STORE_NAME = "experience";
     let currentInitialPrompt = "";
     window.experienceDict = new Set();
@@ -129,8 +128,6 @@
         const tx = db.transaction(STORE_NAME, "readwrite");
         tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words");
     }
-
-    // --- WORKER DEFINITIONS ---
 
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
@@ -236,30 +233,30 @@
             if (type === 'load') {
                 
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
-                let targetDtype = 'fp16'; // Il Turbo vola in fp16
+                
+                // Opzioni base per l'inizializzazione della pipeline
+                let pipeOptions = {
+                    device: 'webgpu',
+                    dtype: 'q4f16', // Ottimale per evitare crash di VRAM su Chrome
+                    progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress })
+                };
                 
                 if (precision === 'base') {
-                    // Usiamo la versione DISTILLED ottimizzata per WebGPU!
-                    modelName = 'onnx-community/distil-whisper-large-v3'; 
-                    targetDtype = 'q4f16'; // Questa variante digerisce la quantizzazione in WebGPU
+                    modelName = 'onnx-community/whisper-base'; 
+                    delete pipeOptions.dtype; // Rimuove il vincolo: scaricherà il default disponibile senza dare Error 404
                 } else if (precision === 'tiny') {
-                    // Il Tiny ha un branch specifico per il Web
-                    modelName = 'Xenova/whisper-tiny'; 
-                    targetDtype = 'q4'; 
+                    modelName = 'onnx-community/whisper-tiny'; 
+                    delete pipeOptions.dtype; 
                 }
 
                 try {
-                    transcriber = await pipeline('automatic-speech-recognition', modelName, { 
-                        device: 'webgpu', 
-                        dtype: targetDtype,
-                        progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
-                    });
+                    transcriber = await pipeline('automatic-speech-recognition', modelName, pipeOptions);
                 } catch (err) {
                     console.error("WEBGPU CRASH, FORZATURA CPU...", err);
-                    transcriber = await pipeline('automatic-speech-recognition', modelName, { 
-                        device: 'wasm', dtype: 'q8',
-                        progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress })
-                    });
+                    // Fallback di emergenza sulla CPU
+                    pipeOptions.device = 'wasm';
+                    pipeOptions.dtype = 'q8'; // CPU lavora meglio in Q8
+                    transcriber = await pipeline('automatic-speech-recognition', modelName, pipeOptions);
                 }
                 
                 self.postMessage({ type: 'READY_TO_PROCESS' });
@@ -305,7 +302,6 @@
         self.onmessage = (e) => {
             const { wordsToCorrect, priorityPool, referenceDict } = e.data;
             const corrections = [];
-            
             const activeKnowledge = [...priorityPool, ...(referenceDict || [])];
 
             wordsToCorrect.forEach(item => {
@@ -314,11 +310,9 @@
 
                 const [_, prefix, core, suffix] = match;
                 const lowerCore = core.toLowerCase();
-                
                 if (lowerCore.length < 5) return;
 
                 let best = null, minDist = Infinity;
-                
                 activeKnowledge.forEach(ref => {
                     if (Math.abs(ref.length - lowerCore.length) > 2) return;
                     let d = levenshtein(lowerCore, ref);
@@ -343,7 +337,6 @@
         };
     `;
 
-    // --- UI ENGINE & LOGICA TOKEN ---
     const UI = {
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
@@ -395,7 +388,6 @@
         UI.output.appendChild(interimSpan);
     }
 
-    // --- WORKER HANDLERS ---
     whisperWorker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'progress') {
@@ -466,7 +458,6 @@
         }
     };
 
-    // --- MAIN FLOW ---
     async function start() {
         isSessionActive = true;
         lastFinalText = ""; 
@@ -525,7 +516,6 @@
         refiningWorker.postMessage({ text: UI.output.innerText });
     }
 
-    // --- UX VALIDATION POPUP E GESTIONE DIZIONARIO ---
     let activeToken = null;
     UI.output.onclick = (e) => {
         if (e.target.classList.contains('word-token')) {
@@ -574,7 +564,6 @@
         UI.loadDictBtn.disabled = false;
     };
 
-    // --- INIT ---
     UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_CORE..."; vadWorker.postMessage({ type: 'load' }); };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
