@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 3.3_STABLE_PRO</title>
+    <title>WHISP // TERMINAL 3.4_STABLE_PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -49,14 +49,14 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_3.3_STABLE_PRO
+  > MODULE: VERSION_3.4_STABLE_PRO
 </div>
 
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
-            <option value="fp16">ENGINE: LARGE_FP16 (MAX)</option>
-            <option value="q8" selected>ENGINE: STANDARD_Q8</option>
+            <option value="fp16" selected>ENGINE: LARGE_FP16 (TURBO)</option>
+            <option value="q8">ENGINE: STANDARD_Q4 (FAST)</option>
             <option value="q8-tiny">ENGINE: MOBILE_TINY</option>
         </select>
         <select id="beamSelect">
@@ -236,13 +236,14 @@
             if (type === 'load') {
                 
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
-                let targetDtype = 'q4f16'; 
+                // Usiamo 'q4' standard, supportato nativamente da transformers.js v3 per WebGPU
+                let targetDtype = 'q4'; 
                 
                 if (precision === 'fp16') {
                     targetDtype = 'fp16'; 
                 } else if (precision === 'q8-tiny') {
                     modelName = 'onnx-community/whisper-tiny'; 
-                    targetDtype = 'q4f16';
+                    targetDtype = 'q4';
                 }
 
                 try {
