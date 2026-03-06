@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 3.1_STABLE_PRO</title>
+    <title>WHISP // TERMINAL 3.2_STABLE_PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -49,14 +49,14 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_3.1_STABLE_PRO
+  > MODULE: VERSION_3.2_STABLE_PRO
 </div>
 
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
             <option value="fp16">ENGINE: LARGE_FP16 (MAX)</option>
-            <option value="q8">ENGINE: STANDARD_Q8</option>
+            <option value="q8" selected>ENGINE: STANDARD_Q8</option>
             <option value="q8-tiny">ENGINE: MOBILE_TINY</option>
         </select>
         <select id="beamSelect">
@@ -163,7 +163,7 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 40 === 0) flush(true); 
+                            if (audioBufPtr % 60 === 0) flush(true); // Aggiornato a 60 per ottimizzare le performance
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
@@ -234,11 +234,16 @@
         self.onmessage = async (e) => {
             const { type, port, precision, language, num_beams, prompt } = e.data;
             if (type === 'load') {
-                const model = precision === 'q8-tiny' ? 'Xenova/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
+                // Selezione dinamica del modello per garantire performance scalabili
+                let model = 'onnx-community/whisper-large-v3-turbo';
+                if (precision === 'q8-tiny') model = 'Xenova/whisper-tiny';
+                else if (precision === 'q8') model = 'Xenova/whisper-base';
+
                 transcriber = await pipeline('automatic-speech-recognition', model, { 
                     device: 'webgpu', dtype: precision === 'fp16' ? 'fp16' : 'q4f16',
                     progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                 }).catch(async () => await pipeline('automatic-speech-recognition', model, { device: 'wasm', dtype: 'q8' }));
+                
                 self.postMessage({ type: 'READY_TO_PROCESS' });
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
             } else if (type === 'update_params') {
@@ -247,7 +252,21 @@
                 if (prompt !== undefined) initialPrompt = prompt;
             } else if (type === 'init_vad_port') {
                 vadPort = port; 
-                vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); } };
+                vadPort.onmessage = (ev) => { 
+                    if (ev.data.type === 'transcribe') { 
+                        // Logica Drop-Stale per la coda
+                        if (ev.data.isPartial) {
+                            const lastIdx = queue.length - 1;
+                            if (lastIdx >= 0 && queue[lastIdx].isPartial) {
+                                queue[lastIdx] = { buffer: ev.data.audioBuffer, isPartial: true };
+                                process();
+                                return;
+                            }
+                        }
+                        queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); 
+                        process(); 
+                    } 
+                };
             }
         };
     `;
@@ -332,7 +351,7 @@
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
     whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2 }, [workerChannel.port2]);
 
-    let audioCtx, stream, isSessionActive = false;
+    let audioCtx, stream, isSessionActive = false, lastFinalText = "";
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
     function rebuildTokens(text) {
@@ -370,7 +389,16 @@
             UI.status.innerText = "ONLINE"; UI.progressContainer.style.display = 'none'; UI.loadBtn.style.display = 'none'; UI.startBtn.disabled = false;
         } else if (d.type === 'final' && isSessionActive) {
             interimSpan.innerText = "";
-            d.text.trim().split(/ +/).forEach(w => {
+            const incomingText = d.text.trim();
+
+            // Scudo Anti-Loop
+            if (incomingText.length > 20 && (lastFinalText.includes(incomingText) || incomingText.includes(lastFinalText))) {
+                console.warn("BLOCKED_LOOP_HALLUCINATION:", incomingText);
+                return; 
+            }
+            lastFinalText = incomingText;
+
+            incomingText.split(/ +/).forEach(w => {
                 const span = document.createElement('span');
                 span.className = 'word-token' + (d.isLowConf ? ' low-conf' : '');
                 span.innerText = " " + w;
@@ -425,6 +453,7 @@
     // --- MAIN FLOW ---
     async function start() {
         isSessionActive = true;
+        lastFinalText = ""; // Resetta lo scudo all'avvio
         const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
             .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
             .map(t => t.innerText.trim().toLowerCase());
