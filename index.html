@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 4.1_FINAL</title>
+    <title>WHISP // TERMINAL 4.2_STABLE_PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -49,7 +49,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_4.1_FINAL
+  > MODULE: VERSION_4.2_STABLE_PRO
 </div>
 
 <div class="header">
@@ -231,7 +231,6 @@
         self.onmessage = async (e) => {
             const { type, port, precision, language, num_beams, prompt } = e.data;
             if (type === 'load') {
-                
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
                 let pipeOptions = {
                     device: 'webgpu',
@@ -397,10 +396,13 @@
             interimSpan.innerText = "";
             const incomingText = d.text.trim();
 
-            // SCUDO ANTI-LOOP CORRETTO
-            // Ora si attiva solo se lastFinalText NON è vuoto ed è effettivamente una copia
-            if (lastFinalText.length > 15 && incomingText.length > 15) {
-                if (incomingText === lastFinalText || lastFinalText.endsWith(incomingText)) {
+            // SCUDO ANTI-LOOP POTENZIATO (Controllo Overlap)
+            if (lastFinalText.length > 20 && incomingText.length > 20) {
+                const tail = lastFinalText.slice(-20); // Ultime 20 lettere del vecchio
+                const head = incomingText.slice(0, 20); // Prime 20 lettere del nuovo
+                
+                // Blocca se è identico, o se c'è un incastro evidente
+                if (incomingText === lastFinalText || incomingText.includes(tail) || lastFinalText.includes(head)) {
                     console.warn("BLOCKED_LOOP_HALLUCINATION:", incomingText);
                     return; 
                 }
@@ -461,11 +463,14 @@
 
     async function start() {
         isSessionActive = true;
-        lastFinalText = ""; // Reset pulito
+        lastFinalText = ""; 
+        
+        // FIX PUNTEGGIATURA: Generiamo un prompt che insegna a Whisper ad usare la punteggiatura
         const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
             .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
-            .map(t => t.innerText.trim().toLowerCase());
-        currentInitialPrompt = [...new Set(sessionDNA)].slice(-50).join(" ");
+            .map(t => t.innerText.trim());
+        let dnaString = [...new Set(sessionDNA)].slice(-15).join(", ");
+        currentInitialPrompt = "Testo con punteggiatura corretta. " + (dnaString ? "Termini: " + dnaString + "." : "");
 
         whisperWorker.postMessage({ 
             type: 'update_params', language: UI.languageSelect.value, 
