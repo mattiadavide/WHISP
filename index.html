@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 4.2_STABLE_PRO_FIXED</title>
+    <title>WHISP // TERMINAL 4.1_FINAL</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1000px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -49,7 +49,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > MODULE: VERSION_4.2_STABLE_PRO_FIXED
+  > MODULE: VERSION_4.1_FINAL
 </div>
 
 <div class="header">
@@ -107,6 +107,7 @@
 <script type="module">
     const DB_NAME = "whisp_v4_db";
     const STORE_NAME = "experience";
+    let currentInitialPrompt = "";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
 
@@ -159,7 +160,7 @@
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) {
                             audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++;
-                            if (audioBufPtr % 40 === 0) flush(true); 
+                            if (audioBufPtr % 60 === 0) flush(true); 
                         } else {
                             preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15;
                             if (preRollCount < 15) preRollCount++;
@@ -201,26 +202,20 @@
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        let beams = 5;
+        let beams = 5, initialPrompt = "";
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
-            
-            // Seleziona il blocco parziale più aggiornato per evitare code infinite
-            if (item.isPartial && queue.some(q => q.isPartial)) { isBusy = false; process(); return; }
-
             try {
-                // RIPRISTINATE LE IMPOSTAZIONI DI WHISPER 2.9
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: item.isPartial ? 1 : beams,
-                    repetition_penalty: 1.1,
-                    no_speech_threshold: 0.6,
-                    condition_on_previous_text: true,
-                    chunk_length_s: 30,
-                    stride_length_s: 10,
-                    temperature: 0.0
+                    prompt: initialPrompt,
+                    repetition_penalty: 1.15,
+                    no_repeat_ngram_size: 3,
+                    temperature: 0.0,
+                    condition_on_previous_text: false 
                 });
                 if (res.text && res.text.trim().length > 0) {
                     self.postMessage({ 
@@ -234,8 +229,9 @@
         }
 
         self.onmessage = async (e) => {
-            const { type, port, precision, language, num_beams } = e.data;
+            const { type, port, precision, language, num_beams, prompt } = e.data;
             if (type === 'load') {
+                
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
                 let pipeOptions = {
                     device: 'webgpu',
@@ -265,6 +261,7 @@
             } else if (type === 'update_params') {
                 if (language) currentLanguage = language;
                 if (num_beams) beams = parseInt(num_beams);
+                if (prompt !== undefined) initialPrompt = prompt;
             } else if (type === 'init_vad_port') {
                 vadPort = port; 
                 vadPort.onmessage = (ev) => { 
@@ -361,7 +358,7 @@
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
     whisperWorker.postMessage({ type: 'init_vad_port', port: workerChannel.port2 }, [workerChannel.port2]);
 
-    let audioCtx, stream, isSessionActive = false;
+    let audioCtx, stream, isSessionActive = false, lastFinalText = "";
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
     function rebuildTokens(text) {
@@ -400,7 +397,15 @@
             interimSpan.innerText = "";
             const incomingText = d.text.trim();
 
-            if (incomingText.length === 0) return;
+            // SCUDO ANTI-LOOP CORRETTO
+            // Ora si attiva solo se lastFinalText NON è vuoto ed è effettivamente una copia
+            if (lastFinalText.length > 15 && incomingText.length > 15) {
+                if (incomingText === lastFinalText || lastFinalText.endsWith(incomingText)) {
+                    console.warn("BLOCKED_LOOP_HALLUCINATION:", incomingText);
+                    return; 
+                }
+            }
+            lastFinalText = incomingText;
 
             incomingText.split(/ +/).forEach(w => {
                 const span = document.createElement('span');
@@ -456,10 +461,15 @@
 
     async function start() {
         isSessionActive = true;
-        
+        lastFinalText = ""; // Reset pulito
+        const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token'))
+            .filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf'))
+            .map(t => t.innerText.trim().toLowerCase());
+        currentInitialPrompt = [...new Set(sessionDNA)].slice(-50).join(" ");
+
         whisperWorker.postMessage({ 
             type: 'update_params', language: UI.languageSelect.value, 
-            num_beams: UI.beamSelect.value 
+            num_beams: UI.beamSelect.value, prompt: currentInitialPrompt 
         });
 
         audioCtx = new AudioContext({ sampleRate: 16000 });
