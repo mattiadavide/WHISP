@@ -164,15 +164,22 @@
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
                         
-                        if (prob > (isSpeaking ? 0.40 : 0.60)) { 
+                        if (prob > (isSpeaking ? 0.50 : 0.75)) { 
                             if (!isSpeaking) { isSpeaking = true; audioChunks = [...preRoll]; }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 35) { 
+                            if (silenceFrames > 30) { 
                                 isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
                             }
                         }
+
+                        if (isSpeaking && audioChunks.length > 300) {
+                            isSpeaking = false; 
+                            flush(false); 
+                            state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
+                        }
+
                         self.postMessage({ type: 'vad_ui_update', prob, isSpeaking, rms });
                     }
                 };
@@ -218,6 +225,25 @@
             } else if (type === 'init_vad_port') {
                 vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); } };
             }
+        };
+    `;
+
+    const refiningWorkerCode = `
+        self.onmessage = (e) => {
+            let text = e.data.text;
+            if (!text) {
+                self.postMessage({ type: 'REFINED', batchId: e.data.batchId, text: "", isLowConf: e.data.isLowConf });
+                return;
+            }
+            text = text.replace(/\\b([a-zA-ZÀ-ÿ\\s']{2,50}?)\\b(?:\\s+\\1\\b){1,}/gi, '$1'); 
+            const rules = [
+                { rx: /\\b(un)\\s+po\\b/gi, rep: "$1 po'" },
+                { rx: /\\b(qual)\\s+e\\b/gi, rep: "$1 è" },
+                { rx: /\\b(lo|dello|allo|sullo)\\s+([bcdfghkmnpqrtvw]\\w+)\\b/gi, rep: (m, p1, p2) => p1 + ' s' + p2 }
+            ];
+            rules.forEach(r => text = text.replace(r.rx, r.rep));
+            
+            self.postMessage({ type: 'REFINED', batchId: e.data.batchId, text, isLowConf: e.data.isLowConf });
         };
     `;
 
@@ -284,7 +310,7 @@
         harvestBody: document.getElementById('harvest-body')
     };
 
-    let workerStore = { vad: null, whisper: null, healing: null };
+    let workerStore = { vad: null, whisper: null, refining: null, healing: null };
     let audioCtx, stream, isCoreLoaded = false, activeToken = null;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
@@ -297,11 +323,30 @@
     function initWorkers() {
         workerStore.vad = createWorker(vadWorkerCode);
         workerStore.whisper = createWorker(whisperWorkerCode);
+        workerStore.refining = createWorker(refiningWorkerCode, 'classic');
         workerStore.healing = createWorker(healingWorkerCode, 'classic');
 
         const channel = new MessageChannel();
         workerStore.vad.worker.postMessage({ type: 'init_whisper_port', port: channel.port1 }, [channel.port1]);
         workerStore.whisper.worker.postMessage({ type: 'init_vad_port', port: channel.port2 }, [channel.port2]);
+
+        workerStore.refining.worker.onmessage = (e) => {
+            if (e.data.type === 'REFINED') {
+                const txt = e.data.text.trim();
+                if (!txt) {
+                    interimSpan.innerText = "";
+                    return;
+                }
+                const batchId = e.data.batchId;
+                pendingTokens[batchId] = txt.split(/ +/).map((w, i) => ({ id: `${batchId}_${i}`, original: w, isLowConf: e.data.isLowConf, healed: false }));
+                workerStore.healing.worker.postMessage({
+                    batchId,
+                    wordsToCorrect: pendingTokens[batchId],
+                    priorityPool: Array.from(window.experienceDict),
+                    referenceDict: Array.from(window.referenceDict)
+                });
+            }
+        };
 
         workerStore.healing.worker.onmessage = (e) => {
             if (e.data.type === 'HEALING_DONE') {
@@ -332,18 +377,11 @@
                 UI.progressContainer.style.display = 'none'; isCoreLoaded = true; UI.sysPowerBtn.innerText = "SHUTDOWN_SYSTEM()"; UI.sysPowerBtn.style.color = "var(--term-err)"; UI.sysPowerBtn.disabled = false;
                 UI.status.innerText = "ONLINE"; UI.status.style.color = "var(--term-ok)";
             } else if (d.type === 'final') {
-                const txt = d.text.trim();
-                if (!txt) {
-                    interimSpan.innerText = "";
-                    return;
-                }
                 const batchId = Date.now().toString();
-                pendingTokens[batchId] = txt.split(/ +/).map((w, i) => ({ id: `${batchId}_${i}`, original: w, isLowConf: d.isLowConf, healed: false }));
-                workerStore.healing.worker.postMessage({
+                workerStore.refining.worker.postMessage({
                     batchId,
-                    wordsToCorrect: pendingTokens[batchId],
-                    priorityPool: Array.from(window.experienceDict),
-                    referenceDict: Array.from(window.referenceDict)
+                    text: d.text,
+                    isLowConf: d.isLowConf
                 });
             } else if (d.type === 'partial') { 
                 interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; 
