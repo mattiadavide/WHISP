@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 4.3</title>
+    <title>WHISP // TERMINAL 4.4 - NER SHIELD</title>
     <style>
-        :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
+        :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
         .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; color: var(--term-main); }
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
@@ -28,6 +28,7 @@
         .word-token:hover { background: rgba(255, 255, 255, 0.15); }
         .low-conf { color: var(--term-err); text-decoration: underline dotted; }
         .validated { color: var(--term-ok) !important; text-decoration: none !important; }
+        .shielded { color: var(--term-shield) !important; text-decoration: none !important; }
         .interim-text { color: var(--term-dim); font-style: italic; }
         
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.75em; }
@@ -266,23 +267,34 @@
             } } return m[b.length][a.length];
         }
         self.onmessage = (e) => {
-            const { wordsToCorrect, priorityPool, referenceDict } = e.data; 
+            const { wordsToCorrect, priorityPool, referenceDict, protectedWords } = e.data; 
             const corrections = []; 
             const active = [...priorityPool, ...(referenceDict || [])];
+            
+            // Creiamo un Set per le parole protette (il nostro Lucchetto)
+            const protectedSet = new Set(protectedWords || []);
+
             wordsToCorrect.forEach(item => {
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
                 if (!match) return;
                 const [_, prefix, core, suffix] = match; const lower = core.toLowerCase(); 
                 if (lower.length < 5) return;
+                
+                // IL LUCCHETTO: Se la parola è identificata dal NER, ignoriamo il calcolo di Levenshtein
+                if (protectedSet.has(lower)) {
+                    corrections.push({ id: item.id, newText: item.original, isShielded: true });
+                    return;
+                }
+
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
                     if (Math.abs(ref.length - lower.length) > 2) return; 
                     let d = levenshtein(lower, ref); if (d < minDist) { minDist = d; best = ref; } 
                 });
-                // Ratio 0.25: Permettiamo correzioni se l'errore è contenuto nel 25% della parola
+                
                 if (best && (minDist / lower.length <= 0.25)) {
                     const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
-                    corrections.push({ id: item.id, newText: prefix + restored + suffix });
+                    corrections.push({ id: item.id, newText: prefix + restored + suffix, isShielded: false });
                 }
             });
             self.postMessage({ type: 'HEALING_DONE', corrections });
@@ -290,12 +302,51 @@
     `;
 
     const refiningWorkerCode = `
-        self.onmessage = (e) => {
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
+        env.allowLocalModels = false;
+
+        let nerPipeline = null;
+
+        async function loadNER() {
+            try {
+                // Carica il modello NER multilingua (viene scaricato e tenuto in cache)
+                nerPipeline = await pipeline('token-classification', 'Xenova/bert-base-multilingual-cased-ner-hrl', {
+                    device: 'wasm' // wasm è più stabile per la token classification in background
+                });
+                self.postMessage({ type: 'NER_READY' });
+            } catch (err) {
+                console.error("NER Init Error:", err);
+            }
+        }
+
+        self.onmessage = async (e) => {
+            if (e.data.type === 'load') {
+                await loadNER();
+                return;
+            }
+
             let text = e.data.text;
-            // Pulizia ripetizioni estesa (fino a 12 char)
+            
+            // 1. Pulizia sintattica (Regex originali)
             text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1'); 
             text = text.replace(/ {2,}/g, ' '); 
-            self.postMessage({ type: 'REFINED', text });
+
+            // 2. Estrazione Entità (Il Lucchetto)
+            let protectedWords = [];
+            if (nerPipeline && text.trim().length > 0) {
+                try {
+                    // aggregation_strategy unisce automaticamente le sillabe frammentate
+                    const entities = await nerPipeline(text, { aggregation_strategy: 'simple' });
+                    
+                    protectedWords = entities
+                        .filter(ent => ['PER', 'LOC', 'ORG'].includes(ent.entity_group))
+                        .map(ent => ent.word.replace(/[^a-zA-ZÀ-ÿ]/g, '').toLowerCase())
+                        .filter(w => w.length > 0);
+                        
+                } catch (err) { console.warn("NER processing failed:", err); }
+            }
+
+            self.postMessage({ type: 'REFINED', text, protectedWords });
         };
     `;
 
@@ -318,7 +369,7 @@
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const healingWorker = new Worker(URL.createObjectURL(new Blob([healingWorkerCode], { type: 'application/javascript' })));
-    const refiningWorker = new Worker(URL.createObjectURL(new Blob([refiningWorkerCode], { type: 'application/javascript' })));
+    const refiningWorker = new Worker(URL.createObjectURL(new Blob([refiningWorkerCode], { type: 'application/javascript' })), { type: 'module' });
 
     const workerChannel = new MessageChannel();
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
@@ -338,7 +389,6 @@
         const words = text.split(/\s+/);
         words.forEach(w => {
             const clean = w.toLowerCase().replace(/[^a-zÀ-ÿ]/g, '');
-            // Harvest se > 7 lettere e non presente nei dizionari
             if (clean.length > 7 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
                 window.experienceDict.add(clean);
                 sessionHarvested.add(clean);
@@ -379,16 +429,33 @@
         if (e.data.type === 'REFINED') {
             rebuildTokens(e.data.text); UI.status.innerText = "HEALING_ACTIVE...";
             const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
-            healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: Array.from(window.experienceDict), referenceDict: Array.from(window.referenceDict) });
+            // Passiamo sia i dizionari che il nuovo Lucchetto (protectedWords)
+            healingWorker.postMessage({ 
+                wordsToCorrect: tokens, 
+                priorityPool: Array.from(window.experienceDict), 
+                referenceDict: Array.from(window.referenceDict),
+                protectedWords: e.data.protectedWords
+            });
+        } else if (e.data.type === 'NER_READY') {
+            console.log("NER Shield Engine Online");
         }
     };
 
     healingWorker.onmessage = (e) => {
         e.data.corrections.forEach(c => { 
             const el = UI.output.querySelector(`[data-hid="${c.id}"]`); 
-            if (el) { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; } 
+            if (el) { 
+                if (c.isShielded) {
+                    // Evidenzia visivamente le parole che sono state protette
+                    el.classList.add('shielded');
+                    el.title = "Protetta dal sistema NER";
+                } else {
+                    el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; 
+                    el.classList.add('validated'); el.style.color = "var(--term-ok)"; 
+                }
+            } 
         });
-        harvestNewTerms(); // Innesca l'apprendimento post-healing
+        harvestNewTerms();
         UI.status.innerText = "READY"; UI.status.style.color = "var(--term-ok)";
     };
 
@@ -449,7 +516,12 @@
 
     UI.toggleHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'block'; };
     UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
-    UI.loadBtn.onclick = () => { UI.loadBtn.disabled = true; UI.status.innerText = "BOOT_CORE..."; vadWorker.postMessage({ type: 'load' }); };
+    UI.loadBtn.onclick = () => { 
+        UI.loadBtn.disabled = true; 
+        UI.status.innerText = "BOOT_CORE..."; 
+        vadWorker.postMessage({ type: 'load' }); 
+        refiningWorker.postMessage({ type: 'load' }); // Avviamo il motore NER insieme al VAD
+    };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
