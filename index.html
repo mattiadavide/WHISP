@@ -6,7 +6,16 @@
     <script src="coi-serviceworker.js"></script>
     <title>WHISP // TERMINAL OS [ULTIMATE]</title>
     <style>
-        :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
+        /* TEMA DI DEFAULT: AMBER CRT */
+        :root { 
+            --term-bg: #000; --term-main: #ffb000; --term-dim: #540; 
+            --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; --term-shield: #a3f;
+        }
+        
+        /* TEMI ALTERNATIVI */
+        body.theme-white { --term-main: #fff; --term-dim: #777; --term-accent: #aaa; }
+        body.theme-green { --term-main: #0f0; --term-dim: #040; --term-accent: #0af; }
+        body.theme-cyan { --term-main: #0ff; --term-dim: #044; --term-accent: #0af; }
         
         * { box-sizing: border-box; }
         
@@ -22,6 +31,7 @@
             min-height: 100vh;
             display: flex;
             flex-direction: column;
+            transition: color 0.3s ease; /* Transizione morbida tra i temi */
         }
         
         .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; color: var(--term-main); flex-shrink: 0; }
@@ -39,7 +49,7 @@
             border: 1px solid rgba(255,255,255,0.1); 
             background: transparent; 
             padding: 15px; 
-            flex-grow: 1; /* Riempi lo spazio rimanente */
+            flex-grow: 1; 
             min-height: 200px;
             overflow-y: auto; 
             line-height: 1.8; 
@@ -77,9 +87,7 @@
         .controls-row { margin-bottom: 10px; display: flex; gap: 10px; flex-shrink: 0; }
     </style>
 </head>
-<body>
-
-<div id="word-popup">
+<body class="theme-amber"> <div id="word-popup">
     <input type="text" id="edit-word-input" style="background:#000; color:#fff; border:1px solid #fff; padding:5px; margin-bottom:5px; width:120px;"><br>
     <button id="confirm-word-btn">VALIDATE_WORD</button>
 </div>
@@ -96,23 +104,32 @@
 
 <div class="header">
     <div class="settings-panel">
-        <select id="precisionSelect">
-            <option value="turbo" selected>ENG: LARGE_TURBO (FP16_GPU)</option>
-            <option value="base">ENG: STANDARD_BASE (FP16_GPU)</option>
-            <option value="tiny">ENG: MOBILE_TINY (FP16_GPU)</option>
+        <select id="themeSelect">
+            <option value="amber" selected>UI: AMBER_CRT</option>
+            <option value="green">UI: GREEN_MONO</option>
+            <option value="cyan">UI: NEON_CYAN</option>
+            <option value="white">UI: LAB_WHITE</option>
         </select>
+        
+        <select id="precisionSelect">
+            <option value="turbo" selected>ENG: LARGE_TURBO (FP16)</option>
+            <option value="base">ENG: STANDARD_BASE (FP16)</option>
+            <option value="tiny">ENG: MOBILE_TINY (FP16)</option>
+        </select>
+        
         <select id="languageSelect"></select>
+        
         <select id="audioSource">
-            <option value="mic">SRC: MICROPHONE</option>
-            <option value="system">SRC: SYSTEM_AUDIO</option>
+            <option value="mic">SRC: MICRO</option>
+            <option value="system">SRC: SYSTEM</option>
         </select>
         
         <select id="domainSelect" style="flex-grow: 2;">
-            <option value="general">DOM: GENERALIST (NEWS SNAPSHOT)</option>
-            <option value="tech">DOM: TECH & IT (NEWS SNAPSHOT)</option>
-            <option value="finance">DOM: FINANCE & ECON (NEWS SNAPSHOT)</option>
-            <option value="medical">DOM: MEDICAL & HEALTH (NEWS SNAPSHOT)</option>
-            <option value="custom">DOM: LOCAL_FILE (.TXT)</option>
+            <option value="general">DOM: GENERALIST</option>
+            <option value="tech">DOM: TECH & IT</option>
+            <option value="finance">DOM: FINANCE</option>
+            <option value="medical">DOM: MEDICAL</option>
+            <option value="custom">DOM: FILE (.TXT)</option>
         </select>
         
         <input type="file" id="dictFileInput" accept=".txt" style="display: none; flex-grow: 2;">
@@ -255,7 +272,6 @@
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
             try {
-                // IL MOTORE AGGIORNATO CON CHUNKING E STRIDE
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: beams, prompt: initialPrompt,
@@ -361,6 +377,7 @@
 
     // --- MAIN UI LOGIC ---
     const UI = {
+        themeSelect: document.getElementById('themeSelect'),
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'), zeitgeistLog: document.getElementById('zeitgeist-log'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
         precisionSelect: document.getElementById('precisionSelect'), languageSelect: document.getElementById('languageSelect'),
@@ -368,10 +385,15 @@
         sysPowerBtn: document.getElementById('sysPowerBtn'), output: document.getElementById('output'),
         vadLed: document.getElementById('vadLed'), volAscii: document.getElementById('volAscii'), vadAscii: document.getElementById('vadAscii'), 
         probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
-        exportBtn: document.getElementById('exportBtn'), // <-- FIX INSERITO QUI
+        exportBtn: document.getElementById('exportBtn'),
         popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn'),
         harvestPanel: document.getElementById('harvest-panel'), harvestBody: document.getElementById('harvest-body'),
         toggleHarvestBtn: document.getElementById('toggleHarvestBtn'), closeHarvestBtn: document.getElementById('closeHarvestBtn')
+    };
+
+    // --- EVENT LISTENER PER I TEMI ---
+    UI.themeSelect.onchange = (e) => {
+        document.body.className = 'theme-' + e.target.value;
     };
 
     let vadWorker, whisperWorker, healingWorker, refiningWorker, workerChannel;
