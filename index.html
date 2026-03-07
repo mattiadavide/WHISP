@@ -16,8 +16,8 @@
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         
-        /* FIX: Colonna destra auto-size per evitare wrap */
-        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: center; }
+        /* FIX: Grid bilanciata con gap ridotto */
+        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
         #output { border: 1px solid rgba(255,255,255,0.1); background: transparent; padding: 15px; min-height: 400px; max-height: calc(100vh - 550px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
         
         #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(0, 170, 255, 0.05); }
@@ -32,10 +32,12 @@
         .shielded { color: var(--term-shield) !important; text-decoration: none !important; }
         .interim-text { color: var(--term-dim); font-style: italic; }
         
-        /* FIX: Stat row rigida con altezze bloccate */
-        .stat-row { display: flex; align-items: center; justify-content: flex-end; gap: 15px; font-size: 0.85em; height: 1.2em; line-height: 1.2em; white-space: nowrap; }
-        .ascii-meter { display: inline-block; width: 22ch; text-align: left; font-weight: bold; letter-spacing: 1px; color: var(--term-main); flex-shrink: 0; }
-        .vad-indicator { width: 10px; height: 10px; border: 1px solid var(--term-dim); display: inline-block; vertical-align: middle; margin-left: 10px; flex-shrink: 0; }
+        /* FIX: Allineamento a sinistra del blocco stats e no-wrap garantito */
+        .stats-panel { min-width: 320px; padding-right: 40px; }
+        .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; height: 1.4em; line-height: 1.4em; white-space: nowrap; }
+        .stat-row span:first-child { width: 8ch; flex-shrink: 0; }
+        .ascii-meter { display: inline-block; width: 23ch; text-align: left; font-weight: bold; color: var(--term-main); flex-shrink: 0; overflow: hidden; }
+        .vad-indicator { width: 10px; height: 10px; border: 1px solid var(--term-dim); display: inline-block; vertical-align: middle; margin-left: 5px; flex-shrink: 0; }
         .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 8px var(--term-ok); border-color: var(--term-ok); }
         
         .blink { animation: blinker 1.5s linear infinite; }
@@ -95,11 +97,11 @@
         </div>
         <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-accent); margin-top: 5px;"></div>
     </div>
-    <div class="stats-panel" style="min-width: 350px;">
+    <div class="stats-panel">
         <div class="stat-row"><span>SIG_RMS</span><span id="volAscii" class="ascii-meter">[--------------------]</span></div>
         <div class="stat-row"><span>VAD_NET</span><span id="vadAscii" class="ascii-meter">[--------------------]</span></div>
         <div class="stat-row" style="margin-top: 5px; font-size: 0.75em;">
-            <span id="probVal">PROB: 0.00</span><div class="vad-indicator" id="vadLed"></div>
+            <span>PROB_VAL</span><span id="probVal" style="width: auto; min-width: 10ch;">PROB: 0.00</span><div class="vad-indicator" id="vadLed"></div>
         </div>
     </div>
 </div>
