@@ -16,7 +16,6 @@
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         
-        /* FIX: Grid bilanciata con gap ridotto */
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
         #output { border: 1px solid rgba(255,255,255,0.1); background: transparent; padding: 15px; min-height: 400px; max-height: calc(100vh - 550px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
         
@@ -32,7 +31,6 @@
         .shielded { color: var(--term-shield) !important; text-decoration: none !important; }
         .interim-text { color: var(--term-dim); font-style: italic; }
         
-        /* FIX: Allineamento a sinistra del blocco stats e no-wrap garantito */
         .stats-panel { min-width: 320px; padding-right: 40px; }
         .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; height: 1.4em; line-height: 1.4em; white-space: nowrap; }
         .stat-row span:first-child { width: 8ch; flex-shrink: 0; }
@@ -59,7 +57,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
-  > DESIGN BY MATTIA DAVIDE AMICO
+ > DESIGN BY MATTIA DAVIDE AMICO
 </div>
 
 <div class="header">
@@ -223,10 +221,10 @@
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
             try {
+                // Rimosse repetition_penalty e no_repeat_ngram_size per evitare problemi di tokenizzazione
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: beams, prompt: initialPrompt,
-                    repetition_penalty: 1.15, no_repeat_ngram_size: 3,
                     temperature: 0.0, condition_on_previous_text: false 
                 });
                 if (res.text && res.text.trim().length > 0) {
@@ -340,7 +338,29 @@
 
     let vadWorker, whisperWorker, healingWorker, refiningWorker, workerChannel;
     let audioCtx, stream, isSessionActive = false, lastFinalText = "", isCoreLoaded = false;
+    let activeToken = null;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
+
+    function scrollOutput() {
+        requestAnimationFrame(() => {
+            UI.output.scrollTop = UI.output.scrollHeight;
+        });
+    }
+
+    // Funzione aggiunta: ricostruisce il DOM testuale assegnando un ID a ogni parola, essenziale per la pipeline di healing
+    function rebuildTokens(text) {
+        UI.output.innerHTML = "";
+        const words = text.split(/ +/);
+        words.forEach((w, i) => {
+            if (!w) return;
+            const span = document.createElement('span');
+            span.className = 'word-token';
+            span.dataset.hid = i;
+            span.innerText = (i === 0 ? "" : " ") + w;
+            UI.output.appendChild(span);
+        });
+        UI.output.appendChild(interimSpan);
+    }
 
     function initWorkers() {
         vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
@@ -370,8 +390,11 @@
                 if (lastFinalText.length > 15 && incomingText.length > 15 && (incomingText === lastFinalText || lastFinalText.endsWith(incomingText))) return;
                 lastFinalText = incomingText;
                 incomingText.split(/ +/).forEach(w => { const span = document.createElement('span'); span.className = 'word-token' + (d.isLowConf ? ' low-conf' : ''); span.innerText = " " + w; UI.output.insertBefore(span, interimSpan); });
-                UI.output.scrollTop = UI.output.scrollHeight;
-            } else if (d.type === 'partial' && isSessionActive) { interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; }
+                scrollOutput();
+            } else if (d.type === 'partial' && isSessionActive) { 
+                interimSpan.innerText = " " + d.text.trim() + "..."; 
+                scrollOutput(); 
+            }
             else if (d.type === 'FLUSH_COMPLETE') { UI.status.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); }
         };
 
@@ -398,13 +421,18 @@
             UI.status.style.color = isSessionActive ? "var(--term-ok)" : "var(--term-dim)";
         };
 
+        let lastVadUpdate = 0;
         vadWorker.onmessage = (e) => {
             if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
             else if (e.data.type === 'vad_ui_update') { 
-                UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2); 
-                let blocks = Math.round(e.data.prob * 20);
-                UI.vadAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
-                UI.vadLed.classList.toggle('active', e.data.isSpeaking); 
+                const now = performance.now();
+                if (now - lastVadUpdate > 50) { // Throttling: massimo 20 FPS per l'interfaccia VAD
+                    UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2); 
+                    let blocks = Math.round(e.data.prob * 20);
+                    UI.vadAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
+                    UI.vadLed.classList.toggle('active', e.data.isSpeaking); 
+                    lastVadUpdate = now;
+                }
             }
         };
     }
@@ -451,10 +479,17 @@
             }
             registerProcessor('p', P);
         `], {type:'application/javascript'})));
-        const worklet = new AudioWorkletNode(audioCtx, 'p'); worklet.port.onmessage = (e) => { 
+        
+        const worklet = new AudioWorkletNode(audioCtx, 'p'); 
+        let lastRmsUpdate = 0;
+        worklet.port.onmessage = (e) => { 
             if (e.data.rms !== undefined) {
-                let blocks = Math.min(Math.round(Math.sqrt(e.data.rms) * 40), 20); 
-                UI.volAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
+                const now = performance.now();
+                if (now - lastRmsUpdate > 50) { // Throttling grafico per il misuratore di volume
+                    let blocks = Math.min(Math.round(Math.sqrt(e.data.rms) * 40), 20); 
+                    UI.volAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
+                    lastRmsUpdate = now;
+                }
             } 
         };
         const audioChannel = new MessageChannel(); vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
