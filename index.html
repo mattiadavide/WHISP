@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL v4.2 STABLE</title>
+    <title>WHISP // TERMINAL</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -50,7 +50,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // OPTIMIZED v4.2
+ > DESIGN BY MATTIA DAVIDE AMICO
 </div>
 <div class="header">
     <div class="settings-panel">
@@ -398,10 +398,10 @@
         if (!isCoreLoaded) {
             UI.sysPowerBtn.disabled = true;
             try {
-                await startListening();
-                await fetchZeitgeist(UI.domainSelect.value);
                 initWorkers();
+                await startListening();
                 workerStore.vad.worker.postMessage({ type: 'load' });
+                await fetchZeitgeist(UI.domainSelect.value);
             } catch (err) {
                 UI.sysPowerBtn.disabled = false;
                 UI.status.innerText = "MIC_ERROR";
