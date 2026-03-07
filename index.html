@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL V9 [ULTIMATE ENGINE]</title>
+    <title>WHISP // TERMINAL V9 [MASTER BUTTON EDITION]</title>
     <style>
         :root { 
             --term-bg: #000; --term-main: #ffb000; --term-dim: #540; 
@@ -23,6 +23,13 @@
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         
+        /* Master Button Styles */
+        #master-btn { background: var(--term-ok); color: #000; font-weight: bold; border-color: var(--term-ok); transition: all 0.2s; }
+        #master-btn:hover { background: transparent; color: var(--term-ok); }
+        #master-btn.running { background: var(--term-err); border-color: var(--term-err); color: #000; }
+        #master-btn.running:hover { background: transparent; color: var(--term-err); }
+        #master-btn.booting { background: var(--term-warn); border-color: var(--term-warn); color: #000; cursor: wait; }
+
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
         #output { border: 1px solid rgba(255,255,255,0.1); padding: 15px; min-height: 400px; max-height: calc(100vh - 600px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; margin-bottom: 20px; outline: none; white-space: pre-wrap; scroll-behavior: smooth; }
         
@@ -40,7 +47,7 @@
         .word-node.shielded { color: var(--term-shield) !important; text-decoration: none !important; }
         .interim-text { color: #666; font-style: italic; }
         
-        /* METERS (Ottimizzati per performance, look V9) */
+        /* METERS */
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 15px; font-size: 0.85em; white-space: nowrap; margin-bottom: 8px; }
         .bar-bg { flex-grow: 1; height: 10px; background: #111; border: 1px solid var(--term-dim); min-width: 150px; }
         .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s linear; }
@@ -68,7 +75,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // NEXUS V9
+ > DESIGN BY MATTIA DAVIDE AMICO // NEXUS V9 [SINGLE BUTTON UX]
 </div>
 
 <div class="header">
@@ -98,13 +105,13 @@
             <option value="italian" selected>LANG: ITA</option>
             <option value="english">LANG: ENG</option>
         </select>
-        <button id="boot-btn" style="flex-grow: 2; font-weight: bold;">BOOT_SYSTEM()</button>
+        <button id="master-btn" style="flex-grow: 2;">▶ START_SESSION</button>
     </div>
 </div>
 
 <div class="status-bar">
     <div>
-        STATE: <span id="state-text" class="blink" style="color: var(--term-warn);">OFFLINE</span>
+        STATE: <span id="state-text" class="blink" style="color: var(--term-warn);">IDLE</span>
         <div id="progress-container" style="display:none; margin-top:10px;">
             <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING_MODELS: 0%</div>
             <div class="bar-bg" style="width: 200px;"><div id="boot-fill" class="bar-fill" style="background: var(--term-accent);"></div></div>
@@ -133,8 +140,6 @@
 </div>
 
 <div style="margin-bottom: 10px; display: flex; gap: 10px;">
-    <button id="start-btn" disabled style="color: var(--term-ok); border-color: var(--term-ok);">EXEC_START()</button>
-    <button id="stop-btn" style="display:none; color: var(--term-err); border-color: var(--term-err);">PAUSE_MIC()</button>
     <button id="toggle-harvest-btn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW_HARVEST</button>
     <button id="export-btn" style="margin-left: auto;">EXPORT_TXT</button>
     <button id="copy-btn">COPY_ALL</button>
@@ -350,7 +355,7 @@
         progressContainer: document.getElementById('progress-container'), bootFill: document.getElementById('boot-fill'),
         precisionSelect: document.getElementById('model-select'), languageSelect: document.getElementById('lang-select'),
         audioSource: document.getElementById('audio-source'), domainSelect: document.getElementById('domain-select'),
-        bootBtn: document.getElementById('boot-btn'), startBtn: document.getElementById('start-btn'), stopBtn: document.getElementById('stop-btn'),
+        masterBtn: document.getElementById('master-btn'),
         output: document.getElementById('output'),
         vadLed: document.getElementById('vadLed'), volFill: document.getElementById('vol-fill'), vadFill: document.getElementById('vad-fill'), probVal: document.getElementById('probVal'),
         popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn'),
@@ -382,13 +387,21 @@
                 UI.stateText.innerText = "SYSTEM_READY_IN_VRAM"; UI.stateText.style.color = "var(--term-main)";
                 UI.progressContainer.style.display = 'none'; isCoreLoaded = true;
                 
-                UI.bootBtn.innerText = "UNLOAD_VRAM()"; UI.bootBtn.style.color = "var(--term-err)"; UI.bootBtn.style.borderColor = "var(--term-err)";
-                UI.bootBtn.disabled = false; UI.startBtn.disabled = false;
+                UI.masterBtn.disabled = false;
+                startListening(); // AUTOSTART SUCCESSIVO AL BOOT
             } else if (d.type === 'final' && isSessionActive) {
                 interimSpan.innerText = ""; const incomingText = d.text.trim();
                 if (lastFinalText.length > 15 && incomingText.length > 15 && (incomingText === lastFinalText || lastFinalText.endsWith(incomingText))) return;
                 lastFinalText = incomingText;
-                incomingText.split(/ +/).forEach(w => { const span = document.createElement('span'); span.className = 'word-node' + (d.isLowConf ? ' low-conf' : ''); span.innerText = " " + w; UI.output.insertBefore(span, interimSpan); });
+                
+                const frag = document.createDocumentFragment();
+                incomingText.split(/ +/).forEach(w => { 
+                    const span = document.createElement('span'); 
+                    span.className = 'word-node' + (d.isLowConf ? ' low-conf' : ''); 
+                    span.innerText = " " + w; 
+                    frag.appendChild(span); 
+                });
+                UI.output.insertBefore(frag, interimSpan);
                 UI.output.scrollTop = UI.output.scrollHeight;
             } else if (d.type === 'partial' && isSessionActive) { interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; }
             else if (d.type === 'FLUSH_COMPLETE') { UI.stateText.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); }
@@ -446,13 +459,24 @@
     }
 
     function rebuildTokens(text) {
-        UI.output.innerHTML = ""; const lines = text.split('\n'); let globalIdx = 0;
+        UI.output.innerHTML = ""; 
+        const frag = document.createDocumentFragment();
+        const lines = text.split('\n'); let globalIdx = 0;
+        
         lines.forEach((line, lineIdx) => {
-            if (line.trim() === "" && lineIdx > 0) { UI.output.appendChild(document.createElement('br')); return; }
-            line.trim().split(/ +/).forEach((w, wordIdx) => { if (!w) return; const span = document.createElement('span'); span.className = 'word-node'; span.dataset.hid = globalIdx++; span.innerText = (wordIdx === 0 ? "" : " ") + w; UI.output.appendChild(span); });
-            if (lineIdx < lines.length - 1) UI.output.appendChild(document.createElement('br'));
+            if (line.trim() === "" && lineIdx > 0) { frag.appendChild(document.createElement('br')); return; }
+            line.trim().split(/ +/).forEach((w, wordIdx) => { 
+                if (!w) return; 
+                const span = document.createElement('span'); 
+                span.className = 'word-node'; 
+                span.dataset.hid = globalIdx++; 
+                span.innerText = (wordIdx === 0 ? "" : " ") + w; 
+                frag.appendChild(span); 
+            });
+            if (lineIdx < lines.length - 1) frag.appendChild(document.createElement('br'));
         });
-        UI.output.appendChild(interimSpan);
+        frag.appendChild(interimSpan);
+        UI.output.appendChild(frag);
     }
 
     async function fetchZeitgeist() {
@@ -476,10 +500,13 @@
         } catch (error) { UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: [OFFLINE_MODE]`; }
     }
 
-    // --- AVVIO E STOP DEL MICROFONO (WARM BOOT) ---
+    // --- AVVIO E STOP DEL MICROFONO ---
     async function startListening() {
         isSessionActive = true; lastFinalText = "";
         UI.stateText.innerText = "ONLINE_AND_LISTENING"; UI.stateText.style.color = "var(--term-ok)";
+        UI.masterBtn.innerText = "⏹ STOP_SESSION";
+        UI.masterBtn.className = "running";
+        
         whisperWorker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
         
         audioCtx = new AudioContext({ sampleRate: 16000 });
@@ -501,37 +528,48 @@
         const audioChannel = new MessageChannel(); vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
         worklet.port.postMessage({ port: audioChannel.port2 }, [audioChannel.port2]); audioCtx.createMediaStreamSource(stream).connect(worklet);
         
-        UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block'; UI.output.appendChild(interimSpan);
+        UI.output.appendChild(interimSpan);
     }
 
     async function stopListening() { 
         isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); 
         if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); 
-        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; UI.startBtn.disabled = true; 
+        
+        UI.masterBtn.innerText = "▶ START_SESSION";
+        UI.masterBtn.className = "";
+        
         UI.stateText.innerText = "FLUSHING_AUDIO_QUEUE..."; UI.stateText.style.color = "var(--term-warn)"; 
         whisperWorker.postMessage({ type: 'request_flush' }); 
     }
 
-    // --- CARICAMENTO MODELLI NELLA VRAM (COLD BOOT) ---
-    UI.bootBtn.onclick = async () => { 
-        if (!isCoreLoaded) {
-            UI.bootBtn.disabled = true; UI.bootBtn.innerText = "BOOTING...";
-            await fetchZeitgeist();
-            UI.stateText.innerText = "BOOT_CORE_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
+    function unloadCore() {
+        if (isSessionActive) stopListening();
+        vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
+        isCoreLoaded = false; window.referenceDict.clear(); 
+        UI.stateText.innerText = "VRAM_FLUSHED"; UI.stateText.style.color = "var(--term-warn)";
+        UI.probVal.innerText = "PROB: 0.00"; UI.vadFill.style.width = "0%"; UI.volFill.style.width = "0%"; UI.vadLed.classList.remove('active');
+        initWorkers(); 
+    }
+
+    // --- TASTO MASTER UX ---
+    UI.masterBtn.onclick = async () => { 
+        if (isSessionActive) {
+            await stopListening();
         } else {
-            UI.bootBtn.disabled = true; UI.bootBtn.innerText = "HALTING_SYSTEM...";
-            if (isSessionActive) await stopListening();
-            
-            vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
-            isCoreLoaded = false; window.referenceDict.clear(); 
-            
-            UI.bootBtn.innerText = "BOOT_SYSTEM()"; UI.bootBtn.style.color = "var(--term-main)"; UI.bootBtn.style.borderColor = "var(--term-main)"; UI.bootBtn.disabled = false;
-            UI.startBtn.disabled = true; UI.startBtn.style.display = 'inline-block'; UI.stopBtn.style.display = 'none';
-            UI.stateText.innerText = "OFFLINE"; UI.stateText.style.color = "var(--term-warn)";
-            UI.probVal.innerText = "PROB: 0.00"; UI.vadFill.style.width = "0%"; UI.volFill.style.width = "0%"; UI.vadLed.classList.remove('active'); UI.zeitgeistLog.innerText = "";
-            initWorkers(); 
+            if (!isCoreLoaded) {
+                UI.masterBtn.disabled = true;
+                UI.masterBtn.className = "booting";
+                UI.masterBtn.innerText = "⚙ BOOTING_MODELS...";
+                await fetchZeitgeist();
+                UI.stateText.innerText = "BOOT_CORE_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
+            } else {
+                await startListening();
+            }
         }
     };
+
+    // Auto-Unload se cambi le impostazioni critiche del motore
+    UI.precisionSelect.onchange = () => { if (isCoreLoaded) unloadCore(); };
 
     // Gestione Popup Parole
     let activeToken = null;
@@ -546,9 +584,7 @@
         UI.popup.style.display = 'none'; 
     } };
 
-    // Events UI
-    UI.startBtn.onclick = startListening; 
-    UI.stopBtn.onclick = stopListening;
+    // Altri Eventi UI
     document.getElementById('toggle-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'block';
     document.getElementById('close-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'none';
     document.getElementById('clear-btn').onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
