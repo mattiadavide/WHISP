@@ -4,264 +4,307 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL V8.2</title>
+    <title>WHISP // CORE_OS</title>
     <style>
-        :root { --term-bg: #000; --term-main: #ffb000; --term-dim: #540; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; }
-        body.theme-green { --term-main: #0f0; --term-dim: #040; --term-accent: #0af; }
-        body.theme-cyan { --term-main: #0ff; --term-dim: #044; --term-accent: #0af; }
-        body.theme-white { --term-main: #fff; --term-dim: #333; --term-accent: #aaa; }
+        :root { 
+            --bg: #050505; --fg: #e0e0e0; --dim: #555; 
+            --accent: #00ff41; --err: #ff3e3e; --warn: #ffb86c; --info: #00bfff;
+            --font: 'Fira Code', 'Courier New', monospace;
+        }
+        * { box-sizing: border-box; }
+        body { 
+            background: var(--bg); color: var(--fg); font-family: var(--font);
+            margin: 0; height: 100vh; display: flex; flex-direction: column;
+            overflow: hidden; text-transform: uppercase; font-size: 13px;
+        }
 
-        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; transition: color 0.3s ease; }
-        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; }
-        .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
-        .settings-panel { display: flex; gap: 8px; flex-wrap: wrap; }
+        /* --- UI COMPONENTS --- */
+        #kernel-header { padding: 15px; border-bottom: 1px solid var(--dim); display: flex; justify-content: space-between; align-items: center; }
+        #terminal-ui { flex: 1; display: flex; flex-direction: column; padding: 20px; overflow: hidden; }
         
-        select, button { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
-        button:hover { background: var(--term-main); color: var(--term-bg); }
+        #output-stream { 
+            flex: 1; overflow-y: auto; white-space: pre-wrap; line-height: 1.6;
+            padding-right: 10px; scroll-behavior: smooth; border: 1px solid #111;
+            background: rgba(0,0,0,0.3); padding: 15px; margin-bottom: 15px;
+        }
+
+        .system-panel { background: #111; border: 1px solid var(--dim); padding: 10px; margin-bottom: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
         
-        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
-        #output { border: 1px solid rgba(255,255,255,0.1); padding: 15px; min-height: 400px; max-height: calc(100vh - 520px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
+        /* --- ELEMENTS --- */
+        select, button, input { background: transparent; color: var(--fg); border: 1px solid var(--dim); padding: 5px; font-family: inherit; cursor: pointer; }
+        button:hover { border-color: var(--accent); color: var(--accent); }
+        button:disabled { color: var(--dim); cursor: not-allowed; border-color: var(--dim); }
         
-        .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; white-space: nowrap; margin-bottom: 5px; }
-        .ascii-meter { font-weight: bold; color: var(--term-main); letter-spacing: -1px; }
-        .word-node.healed { color: var(--term-main); font-weight: bold; text-shadow: 0 0 8px var(--term-main); }
-        .interim-text { color: #666; font-style: italic; }
-        .blink { animation: blinker 1.5s linear infinite; }
-        @keyframes blinker { 50% { opacity: 0.2; } }
+        .stat-bar { font-size: 10px; display: flex; gap: 20px; color: var(--dim); margin-top: 5px; }
+        .stat-val { color: var(--fg); }
+        
+        .word-node { transition: all 0.2s; padding: 0 2px; position: relative; }
+        .word-node.low-conf { color: var(--warn); border-bottom: 1px dotted var(--warn); }
+        .word-node.healed { color: var(--accent); }
+        .word-node.shielded { color: #a3f; }
+        .interim { color: var(--dim); font-style: italic; }
+
+        #state-indicator { padding: 2px 8px; border-radius: 2px; font-weight: bold; background: var(--dim); color: #000; }
+        #state-indicator.BOOTING { background: var(--info); }
+        #state-indicator.ONLINE { background: var(--accent); }
+        #state-indicator.ERROR { background: var(--err); }
+
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: var(--dim); }
     </style>
 </head>
-<body class="theme-amber">
+<body>
 
-<div class="ascii-art">
- ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
- ██║    ██║██║  ██║██║██╔════╝██╔══██╗
- ██║ █╗ ██║███████║██║███████║██████╔╝
- ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
- ╚███╔███╔╝██║  ██║██║███████║██║     
-  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // CORE V8.2
-</div>
+<header id="kernel-header">
+    <div>WHISP // KERNEL_V5 [SYSTEM_READY]</div>
+    <div id="state-indicator">IDLE</div>
+</header>
 
-<div class="header">
-    <div class="settings-panel">
-        <select id="theme-select">
-            <option value="amber" selected>UI: AMBER_CRT</option>
-            <option value="green">UI: GREEN_MONO</option>
-            <option value="cyan">UI: NEON_CYAN</option>
-            <option value="white">UI: LAB_WHITE</option>
+<main id="terminal-ui">
+    <div class="system-panel">
+        <select id="model-cfg">
+            <option value="turbo">LARGE_TURBO (FP16)</option>
+            <option value="base">BASE (FP16)</option>
+            <option value="tiny">TINY (FP16)</option>
         </select>
-        <select id="domain-select">
-            <option value="general">DOM: GENERAL_NEWS</option>
-            <option value="tech">DOM: TECH_AI</option>
-            <option value="medical">DOM: MEDICAL</option>
-            <option value="finance">DOM: ECONOMY</option>
+        <select id="lang-cfg">
+            <option value="italian">ITA</option>
+            <option value="english">ENG</option>
         </select>
-        <select id="model-select">
-            <option value="turbo" selected>ENGINE: LARGE_V3_TURBO</option>
-            <option value="base">ENGINE: BASE_STABLE</option>
-            <option value="tiny">ENGINE: TINY_MOBILE</option>
+        <select id="domain-cfg">
+            <option value="general">DOM: GENERAL</option>
+            <option value="tech">DOM: TECH</option>
+            <option value="finance">DOM: FINANCE</option>
         </select>
-        <select id="audio-source">
-            <option value="mic">SRC: MICROPHONE</option>
-            <option value="system">SRC: SYSTEM_AUDIO</option>
-        </select>
-        <select id="lang-select">
-            <option value="italian" selected>LANG: ITA</option>
-            <option value="english">LANG: ENG</option>
-        </select>
-        <button id="boot-btn" style="flex-grow: 2; font-weight: bold;">BOOT_SYSTEM()</button>
+        <button id="master-switch">SYS_BOOT()</button>
     </div>
-</div>
 
-<div class="status-bar">
-    <div>STATE: <span id="state-text" class="blink">IDLE</span></div>
-    <div style="min-width: 320px;">
-        <div class="stat-row">SIG_RMS <span id="rms-meter" class="ascii-meter">[--------------------]</span></div>
-        <div class="stat-row">VAD_NET <span id="vad-meter" class="ascii-meter">[--------------------]</span></div>
+    <div id="output-stream" contenteditable="true"></div>
+
+    <div class="system-panel" style="margin-bottom: 0;">
+        <div class="telemetry">
+            <div class="stat-bar">SIG_RMS: <span id="tele-rms">[--------------------]</span></div>
+            <div class="stat-bar">VAD_PROB: <span id="tele-vad">[--------------------]</span></div>
+        </div>
+        <div style="display: flex; gap: 10px; justify-content: flex-end; align-items: center;">
+            <button id="clear-log">FLUSH</button>
+            <button id="export-log">EXPORT</button>
+        </div>
     </div>
-</div>
-
-<div id="output" contenteditable="true" spellcheck="false"></div>
+</main>
 
 <script type="module">
+    /**
+     * @class Trie
+     * Struttura dati per lookup ultra-veloce dei dizionari di riferimento.
+     */
+    class TrieNode {
+        constructor() { this.children = {}; this.isEnd = false; }
+    }
     class Trie {
-        constructor() { this.root = {}; }
+        constructor() { this.root = new TrieNode(); }
         insert(word) {
-            let n = this.root;
-            for (let c of word.toLowerCase()) { if(!n[c]) n[c] = {}; n = n[c]; }
-            n.isEnd = true;
+            let node = this.root;
+            for (let char of word.toLowerCase()) {
+                if (!node.children[char]) node.children[char] = new TrieNode();
+                node = node.children[char];
+            }
+            node.isEnd = true;
         }
-        has(word) {
-            let n = this.root;
-            for (let c of word.toLowerCase()) { if(!n[c]) return false; n = n[c]; }
-            return n.isEnd;
+        search(word) {
+            let node = this.root;
+            for (let char of word.toLowerCase()) {
+                if (!node.children[char]) return false;
+                node = node.children[char];
+            }
+            return node.isEnd;
         }
     }
 
-    const VAD_CODE = `
+    // --- WORKER KERNELS (Inline per monolite) ---
+    const VAD_KERNEL = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
-        let model, state, whisperPort, isSpeaking = false, silenceFrames = 0;
+        env.allowLocalModels = false;
+        let model, state, whisperPort, isSpeaking = false, silenceCount = 0;
+        const SR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
+        const AUDIO_LIMIT = 30 * 16000; // 30s max buffer
+
         self.onmessage = async (e) => {
             if (e.data.type === 'init') {
-                model = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' }, device: 'wasm', dtype: 'fp32' });
-                state = new Tensor('float32', new Float32Array(2*1*128), [2, 1, 128]);
-                self.postMessage({type: 'ready'});
-            }
+                model = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
+                state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
+                self.postMessage({ type: 'ready' });
+            } 
             if (e.data.type === 'port') whisperPort = e.data.port;
             if (e.data.type === 'audio') {
-                const out = await model({ input: new Tensor('float32', e.data.chunk, [1, 512]), sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
+                const input = new Tensor('float32', e.data.chunk, [1, 512]);
+                const out = await model({ input, sr: SR, state });
                 state = out.stateN || out.staten;
                 const prob = out.output.data[0];
-                if (prob > 0.40) {
-                    isSpeaking = true; silenceFrames = 0;
-                    if(whisperPort) whisperPort.postMessage({type: 'stream', data: e.data.chunk});
-                } else if (isSpeaking) {
-                    silenceFrames++;
-                    if(whisperPort) whisperPort.postMessage({type: 'stream', data: e.data.chunk});
-                    if (silenceFrames > 30) { isSpeaking = false; if(whisperPort) whisperPort.postMessage({type: 'commit'}); }
+                
+                if (prob > 0.5) {
+                    if (!isSpeaking) isSpeaking = true;
+                    silenceCount = 0;
+                    whisperPort.postMessage({ type: 'stream', data: e.data.chunk }, [e.data.chunk]);
+                } else {
+                    if (isSpeaking) {
+                        silenceCount++;
+                        whisperPort.postMessage({ type: 'stream', data: e.data.chunk }, [e.data.chunk]);
+                        if (silenceCount > 40) { // ~1.2s di silenzio
+                            isSpeaking = false;
+                            whisperPort.postMessage({ type: 'commit' });
+                        }
+                    }
                 }
-                self.postMessage({type: 'vad', prob});
+                self.postMessage({ type: 'telemetry', prob, isSpeaking });
             }
         };
     `;
 
-    const WHISPER_CODE = `
+    const WHISPER_KERNEL = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
-        let pipe, buffer = [], isBusy = false, currentLang = 'italian';
+        env.allowLocalModels = false;
+        let pipe, audioBuffer = [], isBusy = false;
+
         self.onmessage = async (e) => {
             if (e.data.type === 'init') {
-                const m = { 'turbo': 'onnx-community/whisper-large-v3-turbo', 'base': 'onnx-community/whisper-base', 'tiny': 'onnx-community/whisper-tiny' };
-                currentLang = e.data.lang;
-                pipe = await pipeline('automatic-speech-recognition', m[e.data.model], { device: 'webgpu', dtype: 'fp16' });
-                self.postMessage({type: 'ready'});
+                try {
+                    pipe = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-' + e.data.model, { 
+                        device: 'webgpu', dtype: 'fp16', progress_callback: (p) => self.postMessage({type: 'progress', p: p.progress}) 
+                    });
+                } catch(err) {
+                    pipe = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-' + e.data.model, { device: 'wasm', dtype: 'fp32' });
+                }
+                self.postMessage({ type: 'ready' });
             }
-            if (e.data.type === 'stream') buffer.push(...e.data.data);
-            if (e.data.type === 'commit' && !isBusy && buffer.length > 2000) {
+            if (e.data.type === 'stream') audioBuffer.push(...e.data.data);
+            if (e.data.type === 'commit' && !isBusy && audioBuffer.length > 8000) {
                 isBusy = true;
-                const res = await pipe(new Float32Array(buffer), { language: currentLang, task: 'transcribe' });
-                self.postMessage({type: 'text', text: res.text});
-                buffer = []; isBusy = false;
+                const float32 = new Float32Array(audioBuffer);
+                audioBuffer = [];
+                const res = await pipe(float32, { language: e.data.lang, task: 'transcribe', return_timestamps: 'word' });
+                self.postMessage({ type: 'final', text: res.text, chunks: res.chunks });
+                isBusy = false;
             }
         };
     `;
 
-    const Kernel = {
-        trie: new Trie(),
+    // --- MAIN SYSTEM CONTROLLER ---
+    const SystemKernel = {
         state: 'IDLE',
-        interimSpan: document.createElement('span'),
-        
+        workers: {},
+        trie: new Trie(),
+        dom: {
+            output: document.getElementById('output-stream'),
+            indicator: document.getElementById('state-indicator'),
+            masterBtn: document.getElementById('master-switch'),
+            teleRms: document.getElementById('tele-rms'),
+            teleVad: document.getElementById('tele-vad')
+        },
+
+        setState(s) {
+            this.state = s;
+            this.dom.indicator.innerText = s;
+            this.dom.indicator.className = s;
+        },
+
         async boot() {
-            this.updateState('STARTING_CORE_TASKS...');
-            document.getElementById('boot-btn').disabled = true;
-            this.interimSpan.className = 'interim-text';
+            this.setState('BOOTING');
+            this.dom.masterBtn.disabled = true;
 
-            // BOOT PARALLELO: Dizionario + Modelli AI insieme
-            this.syncZeitgeist(); // Senza await, parte in background
+            // Inizializza Dizionario (Zeitgeist)
+            await this.syncZeitgeist(document.getElementById('domain-cfg').value);
 
-            this.vad = new Worker(URL.createObjectURL(new Blob([VAD_CODE], {type: 'application/javascript'})), {type: 'module'});
-            this.whisper = new Worker(URL.createObjectURL(new Blob([WHISPER_CODE], {type: 'application/javascript'})), {type: 'module'});
+            // Inizializza Workers
+            this.workers.vad = this.createWorker(VAD_KERNEL);
+            this.workers.whisper = this.createWorker(WHISPER_KERNEL);
 
-            const chan = new MessageChannel();
-            this.vad.postMessage({type: 'port', port: chan.port1}, [chan.port1]);
-            this.whisper.postMessage({ 
-                type: 'init', 
-                model: document.getElementById('model-select').value, 
-                lang: document.getElementById('lang-select').value 
-            });
+            const channel = new MessageChannel();
+            this.workers.vad.postMessage({ type: 'port', port: channel.port1 }, [channel.port1]);
+            this.workers.whisper.postMessage({ type: 'init', model: document.getElementById('model-cfg').value }, [channel.port2]);
+            this.workers.vad.postMessage({ type: 'init' });
 
-            this.vad.postMessage({type: 'init'});
-            this.vad.onmessage = (e) => this.handleVad(e.data);
-            this.whisper.onmessage = (e) => this.handleWhisper(e.data);
-            chan.port2.onmessage = (e) => this.whisper.postMessage(e.data);
+            this.workers.vad.onmessage = (e) => this.handleVadMessage(e.data);
+            this.workers.whisper.onmessage = (e) => this.handleWhisperMessage(e.data);
+        },
+
+        createWorker(code) {
+            const blob = new Blob([code], { type: 'application/javascript' });
+            return new Worker(URL.createObjectURL(blob), { type: 'module' });
         },
 
         async startAudio() {
-            try {
-                const src = document.getElementById('audio-source').value;
-                const stream = (src === 'system') 
-                    ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-                    : await navigator.mediaDevices.getUserMedia({ audio: true });
-
-                const ctx = new AudioContext({sampleRate: 16000});
-                const sourceNode = ctx.createMediaStreamSource(stream);
-                
-                await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
-                    class P extends AudioWorkletProcessor {
-                        constructor() { super(); this.buf = new Float32Array(512); this.ptr = 0; }
-                        process(i) {
-                            const c = i[0][0]; if(!c) return true;
-                            for(let j=0; j<c.length; j++) {
-                                this.buf[this.ptr++] = c[j];
-                                if(this.ptr >= 512) {
-                                    this.port.postMessage({c: this.buf, r: Math.sqrt(this.buf.reduce((a,b)=>a+b*b,0)/512)});
-                                    this.buf = new Float32Array(512); this.ptr = 0;
-                                }
-                            }
-                            return true;
+            const ctx = new AudioContext({ sampleRate: 16000 });
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+                class P extends AudioWorkletProcessor {
+                    process(inputs) {
+                        const input = inputs[0][0];
+                        if (input) {
+                            let sum = 0; for(let i=0; i<input.length; i++) sum += input[i]*input[i];
+                            this.port.postMessage({ type: 'audio', chunk: input, rms: Math.sqrt(sum/input.length) });
                         }
+                        return true;
                     }
-                    registerProcessor('p', P);
-                `], {type:'text/javascript'})));
+                }
+                registerProcessor('audio-processor', P);
+            `], { type: 'text/javascript' })));
 
-                const workletNode = new AudioWorkletNode(ctx, 'p');
-                workletNode.port.onmessage = (e) => {
-                    this.updateMeter('rms-meter', e.data.r * 15);
-                    this.vad.postMessage({type: 'audio', chunk: e.data.c}, [e.data.c.buffer]);
-                };
-                sourceNode.connect(workletNode);
-                this.updateState('ONLINE_AND_LISTENING');
-                document.getElementById('output').appendChild(this.interimSpan);
-                document.getElementById('state-text').classList.remove('blink');
-            } catch (err) { this.updateState('ERROR_DENIED'); }
+            const source = ctx.createMediaStreamSource(stream);
+            const node = new AudioWorkletNode(ctx, 'audio-processor');
+            node.port.onmessage = (e) => {
+                this.updateMeter(this.dom.teleRms, e.data.rms * 10);
+                this.workers.vad.postMessage({ type: 'audio', chunk: e.data.chunk });
+            };
+            source.connect(node);
+            this.setState('ONLINE');
         },
 
-        handleVad(d) {
-            if(d.type === 'ready') this.updateState('AI_ENGINES_READY');
-            if(d.type === 'vad') {
-                this.updateMeter('vad-meter', d.prob);
-                if(d.prob > 0.45) this.interimSpan.innerText = '...ASCOLTO_IN_CORSO...';
-            }
-        },
-
-        handleWhisper(d) {
-            if(d.type === 'ready') this.startAudio();
-            if(d.type === 'text' && d.text.trim()) {
-                this.interimSpan.innerText = '';
-                d.text.trim().split(/\s+/).forEach(w => {
+        handleWhisperMessage(d) {
+            if (d.type === 'ready') this.startAudio();
+            if (d.type === 'final') {
+                const words = d.text.trim().split(' ');
+                words.forEach(w => {
                     const span = document.createElement('span');
                     span.className = 'word-node';
-                    const clean = w.toLowerCase().replace(/[^a-zà-ù]/g, '');
-                    if(this.trie.has(clean)) span.classList.add('healed');
+                    const cleaned = w.toLowerCase().replace(/[^a-zà-ù]/g, '');
+                    
+                    if (this.trie.search(cleaned)) {
+                        span.classList.add('healed');
+                    }
+                    
                     span.innerText = w + ' ';
-                    document.getElementById('output').insertBefore(span, this.interimSpan);
+                    this.dom.output.appendChild(span);
                 });
-                document.getElementById('output').scrollTop = document.getElementById('output').scrollHeight;
+                this.dom.output.scrollTop = this.dom.output.scrollHeight;
             }
         },
 
-        updateState(txt) { document.getElementById('state-text').innerText = txt; },
-        updateMeter(id, val) {
-            const b = Math.min(Math.floor(val * 20), 20);
-            document.getElementById(id).innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
+        handleVadMessage(d) {
+            if (d.type === 'telemetry') {
+                this.updateMeter(this.dom.teleVad, d.prob);
+            }
         },
 
-        async syncZeitgeist() {
-            const dom = document.getElementById('domain-select').value;
-            const feeds = { "general": "rss?hl=it&gl=IT&ceid=IT:it", "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", "finance": "rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it" };
+        updateMeter(el, val) {
+            const blocks = Math.min(Math.floor(val * 20), 20);
+            el.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
+        },
+
+        async syncZeitgeist(dom) {
             try {
-                const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://news.google.com/' + feeds[dom]));
+                const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent('https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it')}`;
+                const r = await fetch(proxy);
                 const j = await r.json();
-                const w = j.contents.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
-                w.forEach(word => this.trie.insert(word));
-                console.log("ZEITGEIST_LOADED:", words.length);
-            } catch(e) { /* Fallback silenzioso per non bloccare il boot */ }
+                const words = j.contents.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
+                words.forEach(w => this.trie.insert(w.toLowerCase()));
+                console.log("ZEITGEIST_SYNC: " + words.length + " TOKENS LOADED.");
+            } catch(e) { console.error("ZEITGEIST_OFFLINE"); }
         }
     };
 
-    document.getElementById('boot-btn').onclick = () => Kernel.boot();
-    document.getElementById('theme-select').onchange = (e) => {
-        document.body.className = 'theme-' + e.target.value;
-    };
+    document.getElementById('master-switch').onclick = () => SystemKernel.boot();
+    document.getElementById('clear-log').onclick = () => SystemKernel.dom.output.innerHTML = '';
 </script>
 </body>
 </html>
