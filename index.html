@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL</title>
+    <title>WHISP // TERMINAL 4.8</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -12,7 +12,6 @@
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
         .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; align-items: center; }
         select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
-        input[type="file"] { padding: 5px; font-size: 0.75em; }
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         
@@ -32,11 +31,11 @@
         .shielded { color: var(--term-shield) !important; text-decoration: none !important; }
         .interim-text { color: var(--term-dim); font-style: italic; }
         
-        .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.85em; font-family: 'Courier New', monospace; }
-        .ascii-meter { letter-spacing: 2px; font-weight: bold; }
-        .vad-indicator { width: 12px; height: 12px; border: 1px solid var(--term-dim); display: inline-block; vertical-align: middle; margin-left: 10px; }
+        .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.75em; }
+        .bar-bg { flex-grow: 1; height: 6px; background: #1a1a1a; border: 1px solid var(--term-dim); }
+        .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s; }
+        .vad-indicator { width: 12px; height: 12px; border: 1px solid var(--term-dim); }
         .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 10px var(--term-ok); border-color: var(--term-ok); }
-        
         .blink { animation: blinker 1.5s linear infinite; }
         @keyframes blinker { 50% { opacity: 0.3; } }
         #word-popup { position: fixed; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); }
@@ -72,8 +71,8 @@
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
         
-        <input type="file" id="dictFileInput" accept=".txt" style="flex-grow: 3;" title="LOCAL_DOMAIN_GLOSSARY (.txt)">
-        <button id="sysPowerBtn" style="font-weight: bold;">BOOT_SYSTEM()</button>
+        <input type="text" id="dictUrlInput" placeholder="URL GLOSSARIO (.txt)" style="flex-grow: 3;">
+        <button id="loadBtn">LOAD_CORE()</button>
     </div>
 </div>
 
@@ -84,13 +83,13 @@
             <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING_MODELS: 0%</div>
             <div id="ascii-bar">[--------------------]</div>
         </div>
-        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-accent); margin-top: 5px;"></div>
     </div>
     <div class="stats-panel">
-        <div class="stat-row"><span>SIG_RMS</span><span id="volAscii" class="ascii-meter">[--------------------]</span></div>
-        <div class="stat-row"><span>VAD_NET</span><span id="vadAscii" class="ascii-meter">[--------------------]</span></div>
-        <div style="text-align: right; margin-top: 5px; font-size: 0.75em;">
-            <span id="probVal">PROB: 0.00</span><div class="vad-indicator" id="vadLed"></div>
+        <div class="stat-row"><span>INPUT_RMS</span><div class="bar-bg"><div id="volFill" class="bar-fill" style="background: #444;"></div></div></div>
+        <div class="stat-row"><span>NEURAL_VAD</span><div class="bar-bg"><div id="vadFill" class="bar-fill" style="background: var(--term-main);"></div></div></div>
+        <div style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 5px;">
+            <span id="probVal" style="font-size: 0.75em;">VAD_PROB: 0.00</span>
+            <div class="vad-indicator" id="vadLed"></div>
         </div>
     </div>
 </div>
@@ -110,6 +109,8 @@
 </div>
 
 <div style="margin-bottom: 10px; display: flex; gap: 10px;">
+    <button id="startBtn" disabled>EXEC_START()</button>
+    <button id="stopBtn" style="display:none; color: var(--term-err); border-color: var(--term-err);">TERMINATE_SESSION()</button>
     <button id="toggleHarvestBtn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW_HARVEST</button>
     <button id="exportBtn" style="margin-left: auto;">EXPORT_TXT</button>
     <button id="copyBtn">COPY_ALL</button>
@@ -123,7 +124,14 @@
     const STORE_NAME = "experience";
     let currentInitialPrompt = "";
     window.experienceDict = new Set();
-    window.referenceDict = new Set(); 
+    window.referenceDict = new Set();
+    let sessionHarvested = new Set();
+
+    const DICTIONARY_URLS = {
+        "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/master/paroleitaliane/60000_parole_italiane.txt",
+        "english": "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt",
+        "spanish": "https://raw.githubusercontent.com/javierarce/palabras/master/listado-general.txt"
+    };
 
     async function openDB() {
         return new Promise((resolve, reject) => {
@@ -149,7 +157,7 @@
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
         const audioBuf = new Float32Array(1500 * 512);
-        const preRoll = new Float32Array(25 * 512); 
+        const preRoll = new Float32Array(15 * 512);
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
@@ -176,16 +184,15 @@
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 60 === 0) flush(true); } 
-                        else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 25; if (preRollCount < 25) preRollCount++; }
+                        else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15; if (preRollCount < 15) preRollCount++; }
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        
-                        if (prob > (isSpeaking ? 0.30 : 0.55)) { 
+                        if (prob > (isSpeaking ? 0.35 : 0.65)) { 
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
-                                    let idx = (preRollPtr - preRollCount + i + 25) % 25;
+                                    let idx = (preRollPtr - preRollCount + i + 15) % 15;
                                     audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
                                 }
                             }
@@ -220,17 +227,7 @@
                     temperature: 0.0, condition_on_previous_text: false 
                 });
                 if (res.text && res.text.trim().length > 0) {
-                    const textToCheck = res.text.trim();
-                    const isHallucination = /♪|\\[.*?\\]|\\*.*?\\*/.test(textToCheck);
-                    const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
-                    
-                    if (!isHallucination && avgConf > 0.40) {
-                        self.postMessage({ 
-                            type: item.isPartial ? 'partial' : 'final', 
-                            text: res.text, 
-                            isLowConf: avgConf < 0.65 
-                        });
-                    }
+                    self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf: res.chunks ? res.chunks.some(c => (c.confidence || 1) < 0.6) : false });
                 }
             } catch (e) { console.error(e); }
             isBusy = false; process();
@@ -288,17 +285,21 @@
                 let isCapitalized = /^[A-ZÀ-Ú]/.test(core);
                 let isStartOfSentence = false;
                 
-                if (index === 0) { isStartOfSentence = true; } 
-                else {
+                if (index === 0) {
+                    isStartOfSentence = true; 
+                } else {
                     const prevWord = wordsToCorrect[index - 1].original;
-                    if (/[.?!]["']?$/.test(prevWord)) isStartOfSentence = true;
+                    if (/[.?!]["']?$/.test(prevWord)) {
+                        isStartOfSentence = true;
+                    }
                 }
 
                 if (isCapitalized && !isStartOfSentence && core.length > 3) {
-                    corrections.push({ id: item.id, newText: item.original, isShielded: true }); return; 
+                    corrections.push({ id: item.id, newText: item.original, isShielded: true });
+                    return; 
                 }
 
-                if (lower.length < 4) return;
+                if (lower.length < 5) return;
 
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
@@ -320,35 +321,21 @@
             let text = e.data.text;
             text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1'); 
             text = text.replace(/ {2,}/g, ' '); 
-            
-            const semanticPatches = [
-                { rx: /\\bradiocronica\\b/gi, rep: 'radiocronaca' },
-                { rx: /\\bradioconista\\b/gi, rep: 'radiocronista' },
-                { rx: /vengon piazati/gi, rep: 'vengono piazzati' },
-                { rx: /\\bamicolo\\b/gi, rep: 'amico lo' },
-                { rx: /istituti dei cechi/gi, rep: 'istituti dei ciechi' },
-                { rx: /un amico ceco/gi, rep: 'un amico cieco' },
-                { rx: /\\b(lo|dello|allo|sullo|il|al|sul|del)\\s+port\\b/gi, rep: '$1 sport' },
-                { rx: /\\b(un)\\s+po\\b/gi, rep: '$1 po\\'' },
-                { rx: /\\bper\\s+che\\b/gi, rep: 'perché' },
-                { rx: /\\bci\\s+e\\b/gi, rep: 'c\\'è' },
-                { rx: /(?:^|\\.\\s+)\\bAll'ora\\b/gi, rep: 'Allora' }
-            ];
-
-            semanticPatches.forEach(patch => { text = text.replace(patch.rx, patch.rep); });
             self.postMessage({ type: 'REFINED', text });
         };
     `;
 
     // --- MAIN UI LOGIC ---
     const UI = {
-        status: document.getElementById('status'), progressText: document.getElementById('progress-text'), zeitgeistLog: document.getElementById('zeitgeist-log'),
+        status: document.getElementById('status'), progressText: document.getElementById('progress-text'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
         precisionSelect: document.getElementById('precisionSelect'), languageSelect: document.getElementById('languageSelect'),
-        audioSource: document.getElementById('audioSource'), dictFileInput: document.getElementById('dictFileInput'),
-        sysPowerBtn: document.getElementById('sysPowerBtn'), output: document.getElementById('output'),
-        vadLed: document.getElementById('vadLed'), volAscii: document.getElementById('volAscii'), vadAscii: document.getElementById('vadAscii'), 
-        probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
+        audioSource: document.getElementById('audioSource'), dictUrlInput: document.getElementById('dictUrlInput'),
+        loadBtn: document.getElementById('loadBtn'),
+        startBtn: document.getElementById('startBtn'), stopBtn: document.getElementById('stopBtn'), output: document.getElementById('output'),
+        vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'), 
+        volFill: document.getElementById('volFill'), probVal: document.getElementById('probVal'),
+        clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
         popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn'),
         harvestPanel: document.getElementById('harvest-panel'), harvestBody: document.getElementById('harvest-body'),
         toggleHarvestBtn: document.getElementById('toggleHarvestBtn'), closeHarvestBtn: document.getElementById('closeHarvestBtn')
@@ -358,6 +345,7 @@
     let audioCtx, stream, isSessionActive = false, lastFinalText = "", isCoreLoaded = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
+    // Inizializza o Re-inizializza i Web Worker
     function initWorkers() {
         vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
         whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
@@ -374,15 +362,16 @@
                 UI.progressContainer.style.display = 'block'; const p = Math.round(d.p || 0); UI.progressText.innerText = 'BOOTING_MODEL: ' + p + '%';
                 const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
             } else if (d.type === 'READY_TO_PROCESS') { 
+                UI.status.innerText = "ONLINE"; 
                 UI.progressContainer.style.display = 'none'; 
-                isCoreLoaded = true;
-                UI.sysPowerBtn.innerText = "SHUTDOWN_SYSTEM()";
-                UI.sysPowerBtn.style.color = "var(--term-err)";
-                UI.sysPowerBtn.style.borderColor = "var(--term-err)";
-                UI.sysPowerBtn.disabled = false;
                 
-                // AUTO-START LISTENING IMMEDIATELY AFTER BOOT
-                startListening();
+                // --- TOGGLE STATE: CORE ACCESO ---
+                isCoreLoaded = true;
+                UI.loadBtn.innerText = "UNLOAD_CORE()";
+                UI.loadBtn.style.color = "var(--term-err)";
+                UI.loadBtn.style.borderColor = "var(--term-err)";
+                UI.loadBtn.disabled = false;
+                UI.startBtn.disabled = false; 
                 
             } else if (d.type === 'final' && isSessionActive) {
                 interimSpan.innerText = ""; const incomingText = d.text.trim();
@@ -391,27 +380,14 @@
                 incomingText.split(/ +/).forEach(w => { const span = document.createElement('span'); span.className = 'word-token' + (d.isLowConf ? ' low-conf' : ''); span.innerText = " " + w; UI.output.insertBefore(span, interimSpan); });
                 UI.output.scrollTop = UI.output.scrollHeight;
             } else if (d.type === 'partial' && isSessionActive) { interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; }
-            else if (d.type === 'FLUSH_COMPLETE') { UI.status.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); }
+            else if (d.type === 'FLUSH_COMPLETE') { isSessionActive = false; UI.status.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); UI.startBtn.disabled = false; }
         };
 
         refiningWorker.onmessage = (e) => {
             if (e.data.type === 'REFINED') {
-                rebuildTokens(e.data.text); 
-                UI.status.innerText = "HEALING_ACTIVE...";
-                
-                const tokenElements = Array.from(UI.output.querySelectorAll('.word-token'));
-                const tokens = tokenElements.map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
-                
-                const sessionHarvest = new Set();
-                tokenElements.forEach(t => {
-                    if (!t.classList.contains('low-conf') && t.innerText.trim().length > 4) {
-                        const cleanWord = t.innerText.trim().toLowerCase().replace(/[^a-zà-ù]/g, '');
-                        if (cleanWord.length > 4) sessionHarvest.add(cleanWord);
-                    }
-                });
-
-                const dynamicPriorityPool = [...new Set([...window.experienceDict, ...sessionHarvest])];
-                healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: dynamicPriorityPool, referenceDict: Array.from(window.referenceDict) });
+                rebuildTokens(e.data.text); UI.status.innerText = "HEALING_ACTIVE...";
+                const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
+                healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: Array.from(window.experienceDict), referenceDict: Array.from(window.referenceDict) });
             }
         };
 
@@ -419,72 +395,43 @@
             e.data.corrections.forEach(c => { 
                 const el = UI.output.querySelector(`[data-hid="${c.id}"]`); 
                 if (el) { 
-                    if (c.isShielded) { el.classList.add('shielded'); el.title = "Protetta da regola"; } 
-                    else { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; }
+                    if (c.isShielded) {
+                        el.classList.add('shielded');
+                        el.title = "Protetta dalla regola Maiuscola";
+                    } else {
+                        el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; 
+                        el.classList.add('validated'); el.style.color = "var(--term-ok)"; 
+                    }
                 } 
             });
-            UI.status.innerText = isSessionActive ? "ONLINE_AND_LISTENING" : "SYSTEM_HALTED";
-            UI.status.style.color = isSessionActive ? "var(--term-ok)" : "var(--term-dim)";
+            harvestNewTerms();
+            UI.status.innerText = "READY"; UI.status.style.color = "var(--term-ok)";
         };
 
         vadWorker.onmessage = (e) => {
             if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
-            else if (e.data.type === 'vad_ui_update') { 
-                UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2); 
-                let blocks = Math.round(e.data.prob * 20);
-                UI.vadAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
-                UI.vadLed.classList.toggle('active', e.data.isSpeaking); 
-            }
+            else if (e.data.type === 'vad_ui_update') { UI.probVal.innerText = "VAD_PROB: " + e.data.prob.toFixed(2); UI.vadFill.style.width = (e.data.prob * 100) + "%"; UI.vadLed.classList.toggle('active', e.data.isSpeaking); }
         };
     }
 
-    // --- AUTO-RESTART LOGIC (SMART RELOAD) ---
-    UI.precisionSelect.onchange = async () => {
-        if (isCoreLoaded) { UI.sysPowerBtn.click(); setTimeout(() => UI.sysPowerBtn.click(), 500); } // Hard Reboot
-    };
-    UI.languageSelect.onchange = () => {
-        if (isCoreLoaded) whisperWorker.postMessage({ type: 'update_params', language: UI.languageSelect.value }); // Soft Reboot
-    };
-    UI.audioSource.onchange = async () => {
-        if (isSessionActive) { 
-            if(stream) stream.getTracks().forEach(t => t.stop()); 
-            if(audioCtx) audioCtx.close(); 
-            startListening(); // Re-init audio only
-        }
-    };
-
-    // --- ZEITGEIST ENGINE ---
-    async function fetchZeitgeist() {
-        UI.status.innerText = "FETCH_ZEITGEIST...";
-        try {
-            const rssUrl = encodeURIComponent('https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it');
-            const proxyUrl = `https://api.allorigins.win/get?url=${rssUrl}`;
-            
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3500); 
-            const response = await fetch(proxyUrl, { signal: controller.signal });
-            clearTimeout(timeoutId);
-            
-            if (!response.ok) throw new Error("Proxy response error");
-            const textContent = (await response.json()).contents; 
-            
-            const regex = /[A-ZÀ-Ú][a-zà-ù]+/g;
-            const matches = textContent.match(regex) || [];
-            
-            const snapshotHarvest = new Set();
-            matches.forEach(w => { if (w.length > 3) snapshotHarvest.add(w.toLowerCase()); });
-            snapshotHarvest.forEach(w => window.referenceDict.add(w));
-            
-            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK: [${snapshotHarvest.size} TOKENS]`;
-        } catch (error) {
-            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: [OFFLINE_MODE]`;
-        }
-    }
-
-    function updateHarvestUI(term, type = "MANUAL_VALIDATE") {
+    function updateHarvestUI(term, type = "AUTO_LEARN") {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">SAVED_IN_DB</td>`;
         UI.harvestBody.prepend(tr);
+    }
+
+    function harvestNewTerms() {
+        const text = UI.output.innerText;
+        const words = text.split(/\s+/);
+        words.forEach(w => {
+            const clean = w.toLowerCase().replace(/[^a-zÀ-ÿ]/g, '');
+            if (clean.length > 7 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
+                window.experienceDict.add(clean);
+                sessionHarvested.add(clean);
+                updateHarvestUI(clean, "AUTO_HARVEST");
+            }
+        });
+        saveExperience();
     }
 
     function rebuildTokens(text) {
@@ -498,9 +445,8 @@
         UI.output.appendChild(interimSpan);
     }
 
-    async function startListening() {
+    async function start() {
         isSessionActive = true; lastFinalText = "";
-        UI.status.innerText = "ONLINE_AND_LISTENING"; UI.status.style.color = "var(--term-ok)";
         const sessionDNA = Array.from(UI.output.querySelectorAll('.word-token')).filter(t => t.innerText.length > 5 && !t.classList.contains('low-conf')).map(t => t.innerText.trim().toLowerCase());
         currentInitialPrompt = [...new Set(sessionDNA)].slice(-50).join(" ");
         whisperWorker.postMessage({ type: 'update_params', language: UI.languageSelect.value, prompt: currentInitialPrompt });
@@ -517,41 +463,19 @@
             }
             registerProcessor('p', P);
         `], {type:'application/javascript'})));
-        const worklet = new AudioWorkletNode(audioCtx, 'p'); worklet.port.onmessage = (e) => { 
-            if (e.data.rms !== undefined) {
-                let blocks = Math.min(Math.floor(e.data.rms * 120), 20);
-                UI.volAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
-            } 
-        };
+        const worklet = new AudioWorkletNode(audioCtx, 'p'); worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%"; };
         const audioChannel = new MessageChannel(); vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
         worklet.port.postMessage({ port: audioChannel.port2 }, [audioChannel.port2]); audioCtx.createMediaStreamSource(stream).connect(worklet);
-        UI.output.appendChild(interimSpan);
+        UI.startBtn.style.display = 'none'; UI.stopBtn.style.display = 'inline-block'; UI.output.appendChild(interimSpan);
     }
 
-    async function stopListeningAndUnload() { 
-        isSessionActive = false;
+    async function stop() { 
         vadWorker.postMessage({ type: 'force_flush' }); 
         if(stream) stream.getTracks().forEach(t => t.stop()); 
         if(audioCtx) audioCtx.close(); 
-        
+        UI.stopBtn.style.display = 'none'; UI.startBtn.style.display = 'inline-block'; UI.startBtn.disabled = true; 
         UI.status.innerText = "FLUSHING_AUDIO_QUEUE..."; UI.status.style.color = "var(--term-warn)"; 
-        whisperWorker.postMessage({ type: 'request_flush' }); // Scatena il refining
-        
-        // Terminate Everything
-        vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
-        isCoreLoaded = false; window.referenceDict.clear(); 
-        
-        UI.sysPowerBtn.innerText = "BOOT_SYSTEM()";
-        UI.sysPowerBtn.style.color = "var(--term-main)";
-        UI.sysPowerBtn.style.borderColor = "var(--term-main)";
-        
-        UI.probVal.innerText = "PROB: 0.00";
-        UI.vadAscii.innerText = "[--------------------]";
-        UI.volAscii.innerText = "[--------------------]";
-        UI.vadLed.classList.remove('active');
-        UI.zeitgeistLog.innerText = "";
-        
-        initWorkers(); 
+        whisperWorker.postMessage({ type: 'request_flush' }); 
     }
 
     let activeToken = null;
@@ -560,47 +484,89 @@
         const newWord = UI.editInput.value.trim();
         activeToken.innerText = (activeToken.dataset.hid === "0" ? "" : " ") + newWord; 
         activeToken.classList.add('validated'); activeToken.classList.remove('low-conf'); 
-        
-        const cleanWord = newWord.toLowerCase();
-        if (!window.experienceDict.has(cleanWord)) {
-            window.experienceDict.add(cleanWord); updateHarvestUI(cleanWord, "MANUAL_VALIDATE"); await saveExperience(); 
-        }
-        UI.popup.style.display = 'none'; 
+        window.experienceDict.add(newWord.toLowerCase()); 
+        updateHarvestUI(newWord.toLowerCase(), "MANUAL_VALIDATE");
+        await saveExperience(); UI.popup.style.display = 'none'; 
     } };
 
-    UI.sysPowerBtn.onclick = async () => { 
-        if (!isCoreLoaded) {
-            UI.sysPowerBtn.disabled = true; UI.sysPowerBtn.innerText = "BOOTING...";
-            const file = UI.dictFileInput.files[0];
-            
-            const bootCore = async () => {
-                if (!file) await fetchZeitgeist();
-                UI.status.innerText = "BOOT_CORE_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
-            };
-
-            if (file) {
-                UI.status.innerText = "LOADING_LOCAL_GLOSSARY...";
-                const reader = new FileReader();
-                reader.onload = (e) => { window.referenceDict = new Set(e.target.result.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); bootCore(); };
-                reader.readAsText(file);
-            } else { await bootCore(); }
+    UI.languageSelect.onchange = (e) => {
+        const selectedLang = e.target.value;
+        if (DICTIONARY_URLS[selectedLang]) {
+            UI.dictUrlInput.value = DICTIONARY_URLS[selectedLang];
         } else {
-            UI.sysPowerBtn.disabled = true; UI.sysPowerBtn.innerText = "HALTING_SYSTEM...";
-            await stopListeningAndUnload();
+            UI.dictUrlInput.value = "";
+        }
+    };
+
+    // La nuova logica Toggle per il tasto LOAD_CORE
+    UI.loadBtn.onclick = async () => { 
+        if (!isCoreLoaded) {
+            UI.loadBtn.disabled = true; 
+            UI.loadBtn.innerText = "BOOTING...";
+            
+            const url = UI.dictUrlInput.value.trim(); 
+            if (url) {
+                UI.status.innerText = "FETCHING_KNOWLEDGE_BASE...";
+                try { 
+                    const res = await fetch(url); 
+                    if (res.ok) { 
+                        const text = await res.text(); 
+                        window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); 
+                    } 
+                } catch (e) { console.warn("Fetch Error", e); } 
+            }
+
+            UI.status.innerText = "BOOT_CORE..."; 
+            vadWorker.postMessage({ type: 'load' }); 
+        } else {
+            // --- TOGGLE STATE: SPEGNIMENTO DEL CORE ---
+            UI.loadBtn.disabled = true;
+            UI.loadBtn.innerText = "UNLOADING...";
+            
+            if (isSessionActive) await stop(); // Ferma il microfono se è ancora acceso
+            
+            // Uccidiamo brutalmente i thread per liberare RAM/VRAM
+            vadWorker.terminate();
+            whisperWorker.terminate();
+            healingWorker.terminate();
+            refiningWorker.terminate();
+            
+            isCoreLoaded = false;
+            
+            // Reset della UI
+            UI.status.innerText = "OFFLINE";
+            UI.status.style.color = "var(--term-dim)";
+            UI.startBtn.disabled = true;
+            UI.probVal.innerText = "VAD_PROB: 0.00";
+            UI.vadFill.style.width = "0%";
+            UI.volFill.style.width = "0%";
+            UI.vadLed.classList.remove('active');
+            
+            UI.loadBtn.innerText = "LOAD_CORE()";
+            UI.loadBtn.style.color = "var(--term-main)";
+            UI.loadBtn.style.borderColor = "var(--term-main)";
+            UI.loadBtn.disabled = false;
+            
+            // Prepariamo in silenzio i nuovi Worker vuoti per il prossimo giro
+            initWorkers(); 
         }
     };
 
     UI.toggleHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'block'; };
     UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
+    UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
     
     (async () => {
-        initWorkers(); 
+        initWorkers(); // Inizializza i worker al primo caricamento della pagina
+
         const db = await openDB(); const tx = db.transaction(STORE_NAME, "readonly"); const req = tx.objectStore(STORE_NAME).get("words");
         req.onsuccess = () => { if(req.result) window.experienceDict = new Set(req.result); };
         const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP" };
         for (const [c, n] of Object.entries(LANGUAGES)) { const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o); }
+        
+        UI.dictUrlInput.value = DICTIONARY_URLS["italian"];
     })();
 </script>
 </body>
