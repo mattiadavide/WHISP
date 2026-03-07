@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL - V4.2 PRO</title>
+    <title>WHISP // TERMINAL - V4.3 PRO</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -57,7 +57,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > VERSION 4.2 PRO | KNOWLEDGE_PRIMING: ENABLED
+ > VERSION 4.3 PRO | WATCHDOG: ACTIVE | PRIVACY: LOCAL_ONLY
 </div>
 
 <div class="header">
@@ -125,20 +125,19 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- DATABASE ---
     const DB_NAME = "whisp_v4_db";
     const STORE_NAME = "experience";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
 
     async function openDB() {
-        return new Promise((resolve) => {
-            const request = indexedDB.open(DB_NAME, 1);
-            request.onupgradeneeded = (e) => {
+        return new Promise((r) => {
+            const req = indexedDB.open(DB_NAME, 1);
+            req.onupgradeneeded = (e) => {
                 const db = e.target.result;
                 if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
             };
-            request.onsuccess = (e) => resolve(e.target.result);
+            req.onsuccess = (e) => r(e.target.result);
         });
     }
 
@@ -148,7 +147,7 @@
         tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words");
     }
 
-    // --- WORKER CODES ---
+    // --- WORKER DEFINITIONS ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
@@ -247,7 +246,7 @@
                 let att = 0;
                 const check = setInterval(() => { 
                     att++;
-                    if ((queue.length === 0 && !isBusy) || att > 50) { 
+                    if ((queue.length === 0 && !isBusy) || att > 30) { 
                         clearInterval(check); self.postMessage({ type: 'FLUSH_COMPLETE' }); 
                     } 
                 }, 200);
@@ -264,18 +263,16 @@
     const refiningWorkerCode = `
         self.onmessage = (e) => {
             let text = e.data.text;
-            // HARD SEMANTIC PATCHES
-            const semanticPatches = [
+            const patches = [
                 { rx: /\\bIRP\\b/gi, rep: 'ERP' },
                 { rx: /\\bdate perfetti\\b/gi, rep: 'dati perfetti' },
                 { rx: /\\bparedi\\b/gi, rep: 'pareti' },
                 { rx: /\\bPapedritti\\b/gi, rep: 'Foppapedretti' },
                 { rx: /\\bdando rita\\b/gi, rep: 'dando vita' },
                 { rx: /\\bradiocronica\\b/gi, rep: 'radiocronaca' },
-                { rx: /\\bper\\s+che\\b/gi, rep: 'perché' },
                 { rx: /\\bci\\s+e\\b/gi, rep: 'c\\'è' }
             ];
-            semanticPatches.forEach(p => { text = text.replace(p.rx, p.rep); });
+            patches.forEach(p => { text = text.replace(p.rx, p.rep); });
             text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1').replace(/ {2,}/g, ' '); 
             self.postMessage({ type: 'REFINED', text });
         };
@@ -292,7 +289,7 @@
         self.onmessage = (e) => {
             const { wordsToCorrect, priorityPool, referenceDict } = e.data; 
             const corrections = []; const active = [...new Set([...priorityPool, ...(referenceDict || [])])];
-            wordsToCorrect.forEach((item, index) => {
+            wordsToCorrect.forEach((item) => {
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
                 if (!match) return;
                 const [_, pre, core, suf] = match; const lower = core.toLowerCase();
@@ -311,7 +308,7 @@
         };
     `;
 
-    // --- MAIN LOGIC ---
+    // --- MAIN UI LOGIC ---
     const UI = {
         status: document.getElementById('status'),
         sysPowerBtn: document.getElementById('sysPowerBtn'),
@@ -319,8 +316,6 @@
         precisionSelect: document.getElementById('precisionSelect'),
         languageSelect: document.getElementById('languageSelect'),
         audioSource: document.getElementById('audioSource'),
-        domainSelect: document.getElementById('domainSelect'),
-        dictFileInput: document.getElementById('dictFileInput'),
         probVal: document.getElementById('probVal'),
         volAscii: document.getElementById('volAscii'),
         vadAscii: document.getElementById('vadAscii'),
@@ -331,9 +326,33 @@
         confirmBtn: document.getElementById('confirm-word-btn')
     };
 
-    let vadWorker, whisperWorker, healingWorker, refiningWorker, audioCtx, stream, activeToken;
+    let vadWorker, whisperWorker, healingWorker, refiningWorker, audioCtx, stream, activeToken, watchdog;
     let isSessionActive = false, isCoreLoaded = false, lastFinalText = "";
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
+
+    function resetVisualDashboard() {
+        UI.probVal.innerText = "PROB: 0.00";
+        UI.vadAscii.innerText = "[--------------------]";
+        UI.volAscii.innerText = "[--------------------]";
+        UI.vadLed.classList.remove('active');
+        UI.sysPowerBtn.innerText = "BOOT_SYSTEM()";
+        UI.sysPowerBtn.style.color = "var(--term-main)";
+        UI.sysPowerBtn.style.borderColor = "var(--term-main)";
+        UI.sysPowerBtn.disabled = false;
+        UI.status.innerText = "SYSTEM_HALTED";
+        UI.status.style.color = "var(--term-dim)";
+    }
+
+    function finalizeShutdown() {
+        if (watchdog) clearTimeout(watchdog);
+        if (vadWorker) vadWorker.terminate();
+        if (whisperWorker) whisperWorker.terminate();
+        if (refiningWorker) refiningWorker.terminate();
+        if (healingWorker) healingWorker.terminate();
+        isCoreLoaded = false;
+        resetVisualDashboard();
+        initWorkers();
+    }
 
     function initWorkers() {
         vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
@@ -349,7 +368,7 @@
             if (e.data.type === 'progress') {
                 const p = Math.round(e.data.p);
                 document.getElementById('progress-container').style.display = 'block';
-                document.getElementById('progress-text').innerText = `BOOT_VRAM: ${p}%`;
+                document.getElementById('progress-text').innerText = `LOAD_VRAM: ${p}%`;
                 document.getElementById('ascii-bar').innerText = `[${'#'.repeat(Math.floor(p/5))}${'-'.repeat(20 - Math.floor(p/5))}]`;
             } else if (e.data.type === 'READY_TO_PROCESS') {
                 document.getElementById('progress-container').style.display = 'none';
@@ -373,7 +392,6 @@
             } else if (e.data.type === 'partial' && isSessionActive) {
                 interimSpan.innerText = " " + e.data.text.trim() + "...";
             } else if (e.data.type === 'FLUSH_COMPLETE') {
-                UI.status.innerText = "REFINING_SEMANTICS...";
                 refiningWorker.postMessage({ text: UI.output.innerText });
             }
         };
@@ -383,18 +401,14 @@
                 UI.output.innerHTML = "";
                 e.data.text.split(' ').forEach((w, i) => {
                     const span = document.createElement('span'); span.className = 'word-token';
-                    span.dataset.hid = "ref_" + Date.now() + "_" + i;
+                    span.dataset.hid = "ref_" + i + "_" + Date.now();
                     span.innerText = (i === 0 ? "" : " ") + w; UI.output.appendChild(span);
                 });
                 UI.output.appendChild(interimSpan);
-                
                 const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
-                const sessionHarvest = new Set();
-                tokens.forEach(t => { if (t.original.length > 5) sessionHarvest.add(t.original.toLowerCase()); });
-                
                 healingWorker.postMessage({ 
                     wordsToCorrect: tokens, 
-                    priorityPool: [...new Set([...window.experienceDict, ...sessionHarvest])], 
+                    priorityPool: [...window.experienceDict], 
                     referenceDict: Array.from(window.referenceDict) 
                 });
             }
@@ -405,19 +419,8 @@
                 const el = UI.output.querySelector(`[data-hid="${c.id}"]`);
                 if (el) { el.innerText = (el.previousSibling ? " " : "") + c.newText; el.classList.add('validated'); }
             });
-            
-            if (!isSessionActive) {
-                // SHUTDOWN DEFINITIVO
-                vadWorker.terminate(); whisperWorker.terminate(); refiningWorker.terminate(); healingWorker.terminate();
-                isCoreLoaded = false;
-                UI.status.innerText = "SYSTEM_HALTED"; UI.status.style.color = "var(--term-dim)";
-                UI.sysPowerBtn.innerText = "BOOT_SYSTEM()"; UI.sysPowerBtn.style.color = "var(--term-main)";
-                UI.sysPowerBtn.disabled = false;
-                initWorkers();
-            } else {
-                UI.status.innerText = "ONLINE_AND_LISTENING";
-                UI.status.style.color = "var(--term-ok)";
-            }
+            if (!isSessionActive) finalizeShutdown();
+            else { UI.status.innerText = "ONLINE_AND_LISTENING"; UI.status.style.color = "var(--term-ok)"; }
         };
 
         vadWorker.onmessage = (e) => {
@@ -433,14 +436,11 @@
 
     async function startListening() {
         isSessionActive = true;
-        
-        // --- KNOWLEDGE PRIMING LOGIC ---
         const history = Array.from(window.experienceDict).filter(w => w.length > 5).slice(-30);
         const screen = Array.from(UI.output.querySelectorAll('.word-token')).slice(-20).map(t => t.innerText.trim());
         const superPrompt = [...new Set([...history, ...screen])].join(" ");
         
         whisperWorker.postMessage({ type: 'update_params', language: UI.languageSelect.value, prompt: superPrompt });
-        
         audioCtx = new AudioContext({ sampleRate: 16000 });
         try {
             stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
@@ -462,12 +462,12 @@
                     UI.volAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
                 }
             };
-            const chan = new MessageChannel();
-            vadWorker.postMessage({ type: 'init_worklet_port', port: chan.port1 }, [chan.port1]);
-            worklet.port.postMessage({ port: chan.port2 }, [chan.port2]);
+            const ch = new MessageChannel();
+            vadWorker.postMessage({ type: 'init_worklet_port', port: ch.port1 }, [ch.port1]);
+            worklet.port.postMessage({ port: ch.port2 }, [ch.port2]);
             audioCtx.createMediaStreamSource(stream).connect(worklet);
             UI.output.appendChild(interimSpan);
-        } catch (e) { UI.status.innerText = "MEDIA_ERR"; isSessionActive = false; }
+        } catch (e) { UI.status.innerText = "MEDIA_ERR"; isSessionActive = false; resetVisualDashboard(); }
     }
 
     UI.sysPowerBtn.onclick = async () => {
@@ -477,10 +477,25 @@
         } else {
             UI.sysPowerBtn.disabled = true; UI.sysPowerBtn.innerText = "HALTING...";
             isSessionActive = false;
+            
+            // Watchdog: Forza spegnimento dopo 4 secondi
+            watchdog = setTimeout(() => {
+                console.warn("WATCHDOG_TRIGGERED: FORCING_SHUTDOWN");
+                finalizeShutdown();
+            }, 4000);
+
             vadWorker.postMessage({ type: 'force_flush' });
             if (stream) stream.getTracks().forEach(t => t.stop());
-            if (audioCtx) audioCtx.close();
+            if (audioCtx && audioCtx.state !== 'closed') audioCtx.close();
             whisperWorker.postMessage({ type: 'request_flush' });
+            
+            // Pulisci subito i meter grafici
+            UI.probVal.innerText = "PROB: 0.00";
+            UI.vadAscii.innerText = "[--------------------]";
+            UI.volAscii.innerText = "[--------------------]";
+            UI.vadLed.classList.remove('active');
+            UI.status.innerText = "FLUSHING_AUDIO...";
+            UI.status.style.color = "var(--term-warn)";
         }
     };
 
