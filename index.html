@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL</title>
+    <title>WHISP // TERMINAL v4.2 STABLE</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -50,7 +50,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO
+ > DESIGN BY MATTIA DAVIDE AMICO // OPTIMIZED v4.2
 </div>
 <div class="header">
     <div class="settings-panel">
@@ -148,23 +148,32 @@
                 port.onmessage = async (we) => {
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
+                        
+                        let sumSq = 0;
+                        for(let i=0; i<chunk.length; i++) sumSq += chunk[i]*chunk[i];
+                        const rms = Math.sqrt(sumSq / chunk.length);
+
                         if (isSpeaking) { 
                             audioChunks.push(chunk); 
                             if (audioChunks.length % 90 === 0) flush(true); 
                         } else { 
                             preRoll.push(chunk); if (preRoll.length > 25) preRoll.shift(); 
                         }
+                        
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        if (prob > (isSpeaking ? 0.30 : 0.55)) { 
+                        
+                        if (prob > (isSpeaking ? 0.40 : 0.60)) { 
                             if (!isSpeaking) { isSpeaking = true; audioChunks = [...preRoll]; }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 45) { isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
+                            if (silenceFrames > 35) { 
+                                isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
+                            }
                         }
-                        self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
+                        self.postMessage({ type: 'vad_ui_update', prob, isSpeaking, rms });
                     }
                 };
             }
@@ -185,6 +194,8 @@
                 if (res.text && res.text.trim().length > 0) {
                     const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
                     self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf: avgConf < 0.60 });
+                } else if (!item.isPartial) {
+                    self.postMessage({ type: 'final', text: "", isLowConf: false });
                 }
             } catch (e) {}
             isBusy = false; process();
@@ -321,8 +332,13 @@
                 UI.progressContainer.style.display = 'none'; isCoreLoaded = true; UI.sysPowerBtn.innerText = "SHUTDOWN_SYSTEM()"; UI.sysPowerBtn.style.color = "var(--term-err)"; UI.sysPowerBtn.disabled = false;
                 UI.status.innerText = "ONLINE"; UI.status.style.color = "var(--term-ok)";
             } else if (d.type === 'final') {
+                const txt = d.text.trim();
+                if (!txt) {
+                    interimSpan.innerText = "";
+                    return;
+                }
                 const batchId = Date.now().toString();
-                pendingTokens[batchId] = d.text.trim().split(/ +/).map((w, i) => ({ id: `${batchId}_${i}`, original: w, isLowConf: d.isLowConf, healed: false }));
+                pendingTokens[batchId] = txt.split(/ +/).map((w, i) => ({ id: `${batchId}_${i}`, original: w, isLowConf: d.isLowConf, healed: false }));
                 workerStore.healing.worker.postMessage({
                     batchId,
                     wordsToCorrect: pendingTokens[batchId],
@@ -340,12 +356,16 @@
                 UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2);
                 let b = Math.round(e.data.prob * 20); UI.vadAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
                 UI.vadLed.classList.toggle('active', e.data.isSpeaking);
+                
+                let volLevel = Math.min(20, Math.floor(e.data.rms * 150));
+                UI.volAscii.innerText = '[' + '#'.repeat(volLevel) + '-'.repeat(20 - volLevel) + ']';
             }
         };
     }
 
     async function fetchZeitgeist(domain) {
         if (domain === 'custom') return;
+        UI.zeitgeistLog.innerText = `> SYNCING_ZEITGEIST...`;
         const FEEDS = { "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it" };
         try {
             const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(FEEDS[domain] || FEEDS.general)}&count=50`;
