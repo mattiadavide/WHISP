@@ -4,39 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL V8</title>
+    <title>WHISP // TERMINAL V8.1</title>
     <style>
         :root { 
             --term-bg: #000; --term-main: #ffb000; --term-dim: #540; 
             --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; 
         }
-        /* TEMI DINAMICI */
         body.theme-green { --term-main: #0f0; --term-dim: #040; --term-accent: #0af; }
         body.theme-cyan { --term-main: #0ff; --term-dim: #044; --term-accent: #0af; }
         body.theme-white { --term-main: #fff; --term-dim: #333; --term-accent: #aaa; }
 
-        body { 
-            background: var(--term-bg); color: var(--term-main); 
-            font-family: 'Courier New', Courier, monospace; 
-            max-width: 1100px; margin: 10px auto; padding: 20px; 
-            text-transform: uppercase; overflow-x: hidden; 
-        }
+        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; transition: color 0.3s ease; }
         .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; }
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
         .settings-panel { display: flex; gap: 8px; flex-wrap: wrap; }
         
-        select, button { 
-            background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); 
-            padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em;
-        }
+        select, button { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
         button:hover { background: var(--term-main); color: var(--term-bg); }
         
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
-        #output { 
-            border: 1px solid rgba(255,255,255,0.1); padding: 15px; min-height: 400px; 
-            max-height: calc(100vh - 520px); overflow-y: auto; line-height: 1.8; 
-            color: #eee; text-transform: none; margin-bottom: 20px; outline: none; white-space: pre-wrap; 
-        }
+        #output { border: 1px solid rgba(255,255,255,0.1); padding: 15px; min-height: 400px; max-height: calc(100vh - 520px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
         
         .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; white-space: nowrap; margin-bottom: 5px; }
         .ascii-meter { font-weight: bold; color: var(--term-main); letter-spacing: -1px; }
@@ -46,14 +33,16 @@
         @keyframes blinker { 50% { opacity: 0.2; } }
     </style>
 </head>
-<body class="theme-amber"> <div class="ascii-art">
+<body class="theme-amber">
+
+<div class="ascii-art">
  ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
  ██║    ██║██║  ██║██║██╔════╝██╔══██╗
  ██║ █╗ ██║███████║██║███████║██████╔╝
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // CORE V8
+ > DESIGN BY MATTIA DAVIDE AMICO // CORE V8.1
 </div>
 
 <div class="header">
@@ -80,10 +69,10 @@
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
         <select id="lang-select">
-            <option value="italian">LANG: ITA</option>
+            <option value="italian" selected>LANG: ITA</option>
             <option value="english">LANG: ENG</option>
         </select>
-        <button id="boot-btn" style="font-weight: bold;">BOOT_SYSTEM()</button>
+        <button id="boot-btn">BOOT_SYSTEM()</button>
     </div>
 </div>
 
@@ -149,14 +138,7 @@
                 pipe = await pipeline('automatic-speech-recognition', m[e.data.model], { device: 'webgpu', dtype: 'fp16' });
                 self.postMessage({type: 'ready'});
             }
-            if (e.data.type === 'stream') {
-                buffer.push(...e.data.data);
-                if (!isBusy && buffer.length % 3200 === 0) { // Anteprima ogni ~200ms di audio accumulato
-                    // Nota: Per semplicità di monolite, l'anteprima reale richiederebbe pipeline dedicata.
-                    // Emettiamo un segnale di 'processing' per la UI.
-                    self.postMessage({type: 'partial_hint'});
-                }
-            }
+            if (e.data.type === 'stream') buffer.push(...e.data.data);
             if (e.data.type === 'commit' && !isBusy && buffer.length > 3200) {
                 isBusy = true;
                 const res = await pipe(new Float32Array(buffer), { language: currentLang, task: 'transcribe' });
@@ -230,16 +212,15 @@
         },
 
         handleVad(d) {
-            if(d.type === 'ready') this.updateState('MODELS_READY');
+            if(d.type === 'ready') this.updateState('READY_FOR_INPUT');
             if(d.type === 'vad') {
                 this.updateMeter('vad-meter', d.prob);
-                if(d.prob > 0.45) this.interimSpan.innerText = '...ASCALTA_IN_CORSO...';
+                if(d.prob > 0.45) this.interimSpan.innerText = '...ASCOLTO_IN_CORSO...';
             }
         },
 
         handleWhisper(d) {
             if(d.type === 'ready') this.startAudio();
-            if(d.type === 'partial_hint') { this.interimSpan.innerText = '...ELABORAZIONE_AI...'; }
             if(d.type === 'text' && d.text.trim()) {
                 this.interimSpan.innerText = '';
                 d.text.trim().split(/\s+/).forEach(w => {
@@ -268,7 +249,7 @@
                 const j = await r.json();
                 const w = j.contents.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
                 w.forEach(word => this.trie.insert(word));
-            } catch(e) { console.warn("ZEITGEIST_OFFLINE"); }
+            } catch(e) { console.warn("ZEITGEIST_SYNC_BYPASSED"); }
         }
     };
 
