@@ -4,113 +4,98 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // PURE TERMINAL OS [ZERO LAG]</title>
+    <title>WHISP // ASCII MAINFRAME</title>
     <style>
         /* === COLOR THEMES === */
         :root { 
-            --term-bg: #050505; --term-main: #ffb000; --term-dim: #540; 
-            --term-err: #f00; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; --term-shield: #a3f;
+            --term-bg: #000; --term-main: #ffb000; --term-dim: #650; 
+            --term-err: #f00; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80;
         }
         body.theme-green { --term-main: #0f0; --term-dim: #040; --term-accent: #0af; }
         body.theme-cyan { --term-main: #0ff; --term-dim: #044; --term-accent: #0af; }
-        body.theme-white { --term-main: #e0e0e0; --term-dim: #444; --term-accent: #aaa; }
+        body.theme-white { --term-main: #ccc; --term-dim: #444; --term-accent: #fff; }
 
         /* === GLOBAL RESET & TYPOGRAPHY === */
         * { 
             box-sizing: border-box; 
-            border-radius: 0 !important; /* STRICTLY NO ROUNDED CORNERS */
             font-family: 'Courier New', Courier, monospace;
+            border-radius: 0 !important;
+            box-shadow: none !important;
         }
         
         ::selection { background: var(--term-main); color: var(--term-bg); }
 
         body { 
             background: var(--term-bg); color: var(--term-main); 
-            max-width: 1200px; margin: 0 auto; padding: 20px; 
+            max-width: 1000px; margin: 0 auto; padding: 20px; 
             text-transform: uppercase; overflow-x: hidden; 
-            transition: color 0.1s, background 0.1s;
+            line-height: 1.4; font-size: 14px;
         }
 
         /* === SCROLLBAR TERMINAL STYLE === */
-        ::-webkit-scrollbar { width: 14px; }
-        ::-webkit-scrollbar-track { background: var(--term-bg); border-left: 1px solid var(--term-dim); }
-        ::-webkit-scrollbar-thumb { background: var(--term-main); border: 1px solid var(--term-bg); }
-        ::-webkit-scrollbar-thumb:hover { background: var(--term-accent); }
+        ::-webkit-scrollbar { width: 12px; }
+        ::-webkit-scrollbar-track { background: var(--term-bg); }
+        ::-webkit-scrollbar-thumb { background: var(--term-dim); border: 1px solid var(--term-bg); }
+        ::-webkit-scrollbar-thumb:hover { background: var(--term-main); }
 
-        /* === UI CONTAINERS === */
-        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 20px; font-weight: bold; }
+        /* === ASCII CONTAINERS === */
+        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 10px); font-weight: bold; margin-bottom: 20px; }
         
-        .header, .status-bar, #harvest-panel { 
-            border: 1px solid var(--term-main); 
-            padding: 15px; 
-            margin-bottom: 15px; 
-            background: transparent;
-        }
-
-        /* === FORM ELEMENTS (STRICT TUI LOOK) === */
-        .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .ascii-panel { margin-bottom: 20px; }
+        .ascii-line { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; margin: 5px 0; }
+        .ascii-border { color: var(--term-dim); user-select: none; }
         
+        /* === NATIVE ELEMENTS OVERRIDE (PURE TEXT LOOK) === */
         select, button, input { 
-            appearance: none; -webkit-appearance: none; /* KILL OS STYLING */
-            background: var(--term-bg); color: var(--term-main); 
-            border: 1px solid var(--term-main); 
-            padding: 8px 12px; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em;
+            appearance: none; -webkit-appearance: none; 
+            background: transparent; color: var(--term-main); 
+            border: none; padding: 0; margin: 0;
+            cursor: pointer; outline: none; font-size: 1em;
             text-transform: uppercase; font-weight: bold;
         }
         
-        select { padding-right: 25px; }
-        input[type="text"], input[type="file"] { cursor: text; border: 1px dashed var(--term-dim); font-weight: normal; }
-        input[type="text"]:focus { border: 1px solid var(--term-main); background: rgba(255,255,255,0.05); }
+        select { text-decoration: underline; padding-right: 5px; }
+        input[type="text"] { border-bottom: 1px dashed var(--term-main); text-transform: lowercase; }
 
-        button:hover, select:hover { background: var(--term-main); color: var(--term-bg); }
-        button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; background: transparent !important; }
+        /* INVERT COLORS ON HOVER (CLASSIC DOS STYLE) */
+        button:hover, select:hover { background: var(--term-main); color: var(--term-bg); text-decoration: none; }
+        button:disabled { color: var(--term-dim); cursor: not-allowed; background: transparent !important; }
 
-        /* === MASTER BUTTON CLI STYLE === */
-        #master-btn { background: var(--term-bg); color: var(--term-ok); border: 1px solid var(--term-ok); }
-        #master-btn:hover { background: var(--term-ok); color: var(--term-bg); }
-        #master-btn.running { color: var(--term-err); border-color: var(--term-err); }
-        #master-btn.running:hover { background: var(--term-err); color: var(--term-bg); }
-        #master-btn.booting { color: var(--term-warn); border-color: var(--term-warn); cursor: wait; }
-        #master-btn.booting:hover { background: var(--term-warn); color: var(--term-bg); }
+        /* === MASTER BUTTON === */
+        #master-btn { color: var(--term-ok); }
+        #master-btn.running { color: var(--term-err); }
+        #master-btn.booting { color: var(--term-warn); animation: blinker 1s infinite; }
 
-        /* === STATUS BAR & METERS === */
-        .status-bar { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
-        .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 15px; font-size: 0.85em; white-space: nowrap; margin-bottom: 8px; }
-        .bar-bg { flex-grow: 1; height: 12px; background: var(--term-bg); border: 1px solid var(--term-dim); min-width: 180px; position: relative; }
-        .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s linear; }
-        .vad-indicator { width: 12px; height: 12px; border: 1px solid var(--term-dim); display: inline-block; }
-        .vad-indicator.active { background: var(--term-ok); border-color: var(--term-ok); }
-
+        /* === STATUS & METERS === */
+        .meter { font-weight: bold; letter-spacing: 1px; color: var(--term-main); }
+        
         /* === OUTPUT TERMINAL === */
         #output { 
-            border: 1px solid var(--term-dim); background: transparent; 
-            padding: 15px; min-height: 450px; max-height: calc(100vh - 550px); 
-            overflow-y: auto; line-height: 1.6; color: var(--term-main); 
-            text-transform: none; margin-bottom: 15px; outline: none; 
-            white-space: pre-wrap; scroll-behavior: auto; 
+            min-height: 400px; max-height: calc(100vh - 550px); 
+            overflow-y: auto; white-space: pre-wrap; 
+            padding: 10px 0; outline: none; text-transform: none;
         }
 
         /* TEXT TOKENS */
-        .word-node { cursor: pointer; padding: 0; }
+        .word-node { cursor: pointer; transition: background 0.1s; }
         .word-node:hover { background: var(--term-main); color: var(--term-bg); }
-        .word-node.healed { font-weight: bold; text-decoration: underline; color: var(--term-accent); }
-        .word-node.low-conf { color: var(--term-warn); background: rgba(255, 255, 0, 0.1); }
+        .word-node.healed { color: var(--term-accent); font-weight: bold; text-decoration: underline; }
+        .word-node.low-conf { color: var(--term-warn); background: rgba(255,255,0,0.15); }
         .word-node.shielded { color: var(--term-dim); }
         .interim-text { color: var(--term-dim); }
 
-        /* === DATA TABLES === */
-        table { width: 100%; border-collapse: collapse; font-size: 0.85em; margin-top: 10px; border: 1px solid var(--term-dim); }
-        th, td { border: 1px solid var(--term-dim); padding: 8px; text-align: left; }
-        th { background: var(--term-dim); color: var(--term-bg); }
+        /* === HARVEST TABLE === */
+        #harvest-panel { display: none; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 4px 10px; text-align: left; }
+        th { color: var(--term-dim); border-bottom: 1px dashed var(--term-dim); }
 
-        /* === POPUP (TUI MODAL) === */
+        /* === POPUP (ASCII MODAL) === */
         #word-popup { 
             position: fixed; background: var(--term-bg); 
-            border: 2px solid var(--term-main); padding: 15px; display: none; z-index: 1000; 
-            box-shadow: 10px 10px 0px rgba(0, 0, 0, 0.8); 
-            border-right: 4px solid var(--term-main); border-bottom: 4px solid var(--term-main);
+            border: 2px solid var(--term-main); padding: 10px; display: none; z-index: 1000; 
+            box-shadow: 8px 8px 0px var(--term-dim);
         }
-        #edit-word-input { width: 150px; margin-bottom: 10px; text-transform: lowercase; }
 
         .blink { animation: blinker 1s steps(2, start) infinite; }
         @keyframes blinker { to { visibility: hidden; } }
@@ -119,9 +104,9 @@
 <body class="theme-amber">
 
 <div id="word-popup">
-    <div style="font-size: 0.75em; margin-bottom: 8px; color: var(--term-dim);">[OVERRIDE_TOKEN]</div>
-    <input type="text" id="edit-word-input"><br>
-    <button id="confirm-word-btn" style="width: 100%;">[ INJECT_DATA ]</button>
+    <div style="color: var(--term-dim); margin-bottom: 5px;">> OVERRIDE_TOKEN:</div>
+    > <input type="text" id="edit-word-input" style="width:120px;"><br><br>
+    <button id="confirm-word-btn">[ EXECUTE_INJECT ]</button>
 </div>
 
 <div class="ascii-art">
@@ -131,77 +116,82 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > KERNEL V9 // PURE CLI EDITION // INCREMENTAL ENGINE
+ > TERMINAL_OS_V9 // PURE_ASCII // ZERO_LATENCY
 </div>
 
-<div class="header">
-    <div class="settings-panel">
-        <select id="theme-select">
-            <option value="amber" selected>[ T: AMBER_PHOSPHOR ]</option>
-            <option value="green">[ T: GREEN_MONO ]</option>
-            <option value="cyan">[ T: NEON_CYAN ]</option>
-            <option value="white">[ T: INVERT_WHITE ]</option>
-        </select>
-        <select id="domain-select">
-            <option value="general">[ D: GENERAL_NEWS ]</option>
-            <option value="tech">[ D: TECH_AI ]</option>
-            <option value="medical">[ D: MEDICAL ]</option>
-            <option value="finance">[ D: ECONOMY ]</option>
-        </select>
-        <select id="model-select">
-            <option value="turbo" selected>[ M: V3_TURBO_FP16 ]</option>
-            <option value="base">[ M: STABLE_BASE_FP16 ]</option>
-            <option value="tiny">[ M: MOBILE_TINY_FP16 ]</option>
-        </select>
-        <select id="audio-source">
-            <option value="mic">[ S: HW_MICROPHONE ]</option>
-            <option value="system">[ S: OS_SYSTEM_AUDIO ]</option>
-        </select>
-        <button id="master-btn" style="flex-grow: 2;">[ INIT_BOOT_SEQUENCE ]</button>
+<div class="ascii-panel">
+    <div class="ascii-border">+--[ SYSTEM_CONFIG ]----------------------------------------------------------+</div>
+    <div class="ascii-line">
+        <span>> THEME:  [ <select id="theme-select">
+            <option value="amber" selected>AMBER_PHOSPHOR</option>
+            <option value="green">GREEN_MONO</option>
+            <option value="cyan">NEON_CYAN</option>
+            <option value="white">INVERT_WHITE</option>
+        </select> ]</span>
+        <span>> DOMAIN: [ <select id="domain-select">
+            <option value="general">GENERAL_NEWS</option>
+            <option value="tech">TECH_AI</option>
+            <option value="medical">MEDICAL</option>
+            <option value="finance">ECONOMY</option>
+        </select> ]</span>
     </div>
-</div>
-
-<div class="status-bar">
-    <div>
-        SYS_STATE: <span id="state-text" style="color: var(--term-dim);">OFFLINE</span>
-        <div id="progress-container" style="display:none; margin-top:10px;">
-            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">ALLOCATING_VRAM...</div>
-            <div class="bar-bg" style="width: 250px;"><div id="boot-fill" class="bar-fill" style="background: var(--term-accent);"></div></div>
-        </div>
-        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-dim); margin-top: 5px;"></div>
+    <div class="ascii-line">
+        <span>> ENGINE: [ <select id="model-select">
+            <option value="turbo" selected>LARGE_V3_TURBO</option>
+            <option value="base">STABLE_BASE</option>
+            <option value="tiny">MOBILE_TINY</option>
+        </select> ]</span>
+        <span>> SOURCE: [ <select id="audio-source">
+            <option value="mic">HW_MICROPHONE</option>
+            <option value="system">OS_SYSTEM_AUDIO</option>
+        </select> ]</span>
+        <span>> LANG: [ <select id="lang-select">
+            <option value="italian" selected>ITA</option>
+            <option value="english">ENG</option>
+        </select> ]</span>
     </div>
-    <div style="min-width: 350px;">
-        <div class="stat-row">SIG_RMS <div class="bar-bg"><div id="vol-fill" class="bar-fill" style="background: var(--term-dim);"></div></div></div>
-        <div class="stat-row">VAD_NET <div class="bar-bg"><div id="vad-fill" class="bar-fill" style="background: var(--term-main);"></div></div></div>
-        <div style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 5px;">
-            <span id="probVal" style="font-size: 0.75em; color: var(--term-dim);">PROB: 0.00</span>
-            <div class="vad-indicator" id="vadLed"></div>
-        </div>
+    <div class="ascii-border">+-----------------------------------------------------------------------------+</div>
+    <div class="ascii-line" style="margin-top: 10px;">
+        <button id="master-btn">[ INIT_BOOT_SEQUENCE ]</button>
     </div>
 </div>
 
-<div id="harvest-panel">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <span style="font-weight: bold;">[ SESSION_KNOWLEDGE_DB ]</span>
-        <button id="close-harvest-btn" style="flex-grow:0; padding: 2px 10px; border: none;">[X] CLOSE</button>
+<div class="ascii-panel">
+    <div class="ascii-border">+--[ TELEMETRY ]--------------------------------------------------------------+</div>
+    <div class="ascii-line">
+        <span style="width: 250px;">> STATE:   <span id="state-text" style="color: var(--term-dim);">OFFLINE</span></span>
+        <span>> VAD_PROB: <span id="probVal" style="color: var(--term-dim);">0.00</span></span>
     </div>
+    <div class="ascii-line">
+        <span style="width: 250px;">> SIG_RMS: <span id="vol-meter" class="meter">[--------------------]</span></span>
+        <span>> VAD_NET:  <span id="vad-meter" class="meter" style="color: var(--term-ok);">[--------------------]</span></span>
+    </div>
+    <div class="ascii-border">+-----------------------------------------------------------------------------+</div>
+</div>
+
+<div id="harvest-panel" class="ascii-panel">
+    <div class="ascii-border">+--[ DB_REGISTRY ]------------------------------------------------------------+</div>
+    <div style="text-align: right;"><button id="close-harvest-btn">[X] CLOSE</button></div>
     <table>
-        <thead><tr><th>TOKEN</th><th>METHOD</th><th>REGISTRY_STATUS</th></tr></thead>
+        <thead><tr><th>TOKEN</th><th>METHOD</th><th>STATUS</th></tr></thead>
         <tbody id="harvest-body"></tbody>
     </table>
+    <div class="ascii-border">+-----------------------------------------------------------------------------+</div>
 </div>
 
-<div style="margin-bottom: 10px; display: flex; gap: 10px;">
-    <button id="toggle-harvest-btn">[ VIEW_DB ]</button>
-    <button id="export-btn" style="margin-left: auto;">[ DUMP_TXT ]</button>
-    <button id="copy-btn">[ COPY_BUFFER ]</button>
-    <button id="clear-btn">[ FLUSH_SCREEN ]</button>
+<div class="ascii-line" style="margin-bottom: 20px;">
+    <button id="toggle-harvest-btn">> [ VIEW_DB ]</button>
+    <button id="export-btn">> [ DUMP_TXT ]</button>
+    <button id="copy-btn">> [ COPY_BUFFER ]</button>
+    <button id="clear-btn">> [ FLUSH_SCREEN ]</button>
 </div>
 
+<div class="ascii-border">=================================[ TTY_OUTPUT ]================================</div>
 <div id="output" contenteditable="true" spellcheck="false"><span class="blink">_</span></div>
+<div class="ascii-border">======================================[ EOF ]==================================</div>
 
 <script type="module">
-    const DB_NAME = "whisp_pure_cli_db";
+    const DB_NAME = "whisp_ascii_db";
     const STORE_NAME = "experience";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
@@ -256,8 +246,11 @@
                 port.onmessage = async (we) => {
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
-                        if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 60 === 0) flush(true); } 
+                        
+                        // IL TRUCCO PER ZERO LATENZA E' QUI: % 15 invece di 60
+                        if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 15 === 0) flush(true); } 
                         else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15; if (preRollCount < 15) preRollCount++; }
+                        
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
@@ -310,7 +303,7 @@
         }
 
         self.onmessage = async (e) => {
-            const { type, port, precision } = e.data;
+            const { type, port, precision, language } = e.data;
             if (type === 'load') {
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
                 let pipeOptions = { device: 'webgpu', dtype: 'fp16', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) };
@@ -320,6 +313,10 @@
                 catch (err) { pipeOptions.device = 'wasm'; pipeOptions.dtype = 'fp32'; transcriber = await pipeline('automatic-speech-recognition', modelName, pipeOptions); }
                 self.postMessage({ type: 'READY_TO_PROCESS' });
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
+            } else if (type === 'update_params') {
+                if (language) currentLanguage = language;
+            } else if (type === 'request_flush') {
+                const check = setInterval(() => { if (queue.length === 0 && !isBusy) { clearInterval(check); self.postMessage({ type: 'FLUSH_COMPLETE' }); } }, 200);
             } else if (type === 'init_vad_port') {
                 vadPort = port; vadPort.onmessage = (ev) => { 
                     if (ev.data.type === 'transcribe') { 
@@ -334,7 +331,6 @@
         };
     `;
 
-    // Questo Worker fonde Refining e Healing per il calcolo INCREMENTALE (Zero Lag)
     const postProcessingWorkerCode = `
         function levenshtein(a, b) {
             const m = []; for (let i = 0; i <= b.length; i++) m[i] = [i]; for (let j = 0; j <= a.length; j++) m[0][j] = j;
@@ -348,7 +344,6 @@
             if(e.data.type === 'PROCESS_CHUNK') {
                 let { text, isLowConf, priorityPool, referenceDict } = e.data;
 
-                // 1. Refine (Regex)
                 text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1').replace(/ {2,}/g, ' ');
                 const semanticPatches = [
                     { rx: /\\bradiocronica\\b/gi, rep: 'radiocronaca' },
@@ -359,7 +354,6 @@
                 ];
                 semanticPatches.forEach(patch => { text = text.replace(patch.rx, patch.rep); });
 
-                // 2. Heal (Levenshtein Incrementale)
                 const active = [...priorityPool, ...(referenceDict || [])];
                 const words = text.trim().split(/ +/);
                 const results = [];
@@ -376,7 +370,6 @@
                     if (isCapitalized && !isStartOfSentence && core.length > 3) {
                         results.push({ text: w, isHealed: false, isShielded: true }); return;
                     }
-
                     if (lower.length < 5) {
                         results.push({ text: w, isHealed: false, isShielded: false }); return;
                     }
@@ -401,14 +394,14 @@
         };
     `;
 
-    // --- LOGICA UI PRINCIPALE ---
+    // --- UI LOGIC ---
     const UI = {
         themeSelect: document.getElementById('theme-select'),
-        stateText: document.getElementById('state-text'), progressText: document.getElementById('progress-text'), zeitgeistLog: document.getElementById('zeitgeist-log'),
-        progressContainer: document.getElementById('progress-container'), bootFill: document.getElementById('boot-fill'),
-        precisionSelect: document.getElementById('model-select'), audioSource: document.getElementById('audio-source'), domainSelect: document.getElementById('domain-select'),
+        stateText: document.getElementById('state-text'), 
+        precisionSelect: document.getElementById('model-select'), languageSelect: document.getElementById('lang-select'),
+        audioSource: document.getElementById('audio-source'), domainSelect: document.getElementById('domain-select'),
         masterBtn: document.getElementById('master-btn'), output: document.getElementById('output'),
-        vadLed: document.getElementById('vadLed'), volFill: document.getElementById('vol-fill'), vadFill: document.getElementById('vad-fill'), probVal: document.getElementById('probVal'),
+        volMeter: document.getElementById('vol-meter'), vadMeter: document.getElementById('vad-meter'), probVal: document.getElementById('probVal'),
         popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn'), harvestBody: document.getElementById('harvest-body')
     };
 
@@ -418,9 +411,14 @@
     let audioCtx, stream, isSessionActive = false, lastFinalText = "", isCoreLoaded = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
+    function updateAsciiMeter(id, val) {
+        const blocks = Math.min(Math.floor(val * 20), 20);
+        document.getElementById(id).innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
+    }
+
     function updateHarvestUI(term, type = "MANUAL") {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">OK</td>`;
+        tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">[OK]</td>`;
         UI.harvestBody.prepend(tr);
     }
 
@@ -436,32 +434,25 @@
         whisperWorker.onmessage = (e) => {
             const d = e.data;
             if (d.type === 'progress') {
-                UI.progressContainer.style.display = 'block'; const p = Math.round(d.p || 0); 
-                UI.progressText.innerText = 'ALLOCATING_VRAM: ' + p + '%'; UI.bootFill.style.width = p + "%";
+                const p = Math.round(d.p || 0); 
+                UI.stateText.innerText = `ALLOCATING_VRAM [${p}%]`; UI.stateText.style.color = "var(--term-warn)";
             } else if (d.type === 'READY_TO_PROCESS') { 
-                UI.stateText.innerText = "SYSTEM_READY_IN_VRAM"; UI.stateText.style.color = "var(--term-main)";
-                UI.progressContainer.style.display = 'none'; isCoreLoaded = true;
-                
-                UI.masterBtn.disabled = false;
-                startListening(); // AUTOSTART SUCCESSIVO AL BOOT
+                UI.stateText.innerText = "VRAM_MOUNTED"; UI.stateText.style.color = "var(--term-main)";
+                isCoreLoaded = true; UI.masterBtn.disabled = false;
+                startListening();
             } else if (d.type === 'final' && isSessionActive) {
                 interimSpan.innerText = ""; const incomingText = d.text.trim();
                 if (lastFinalText.length > 15 && incomingText.length > 15 && (incomingText === lastFinalText || lastFinalText.endsWith(incomingText))) return;
                 lastFinalText = incomingText;
                 
-                // INVIA IL BLOCCO AL WORKER DI POST-PROCESSING (Evita il ricalcolo globale)
                 ppWorker.postMessage({
                     type: 'PROCESS_CHUNK',
-                    text: incomingText,
-                    isLowConf: d.isLowConf,
-                    priorityPool: Array.from(window.experienceDict),
-                    referenceDict: Array.from(window.referenceDict)
+                    text: incomingText, isLowConf: d.isLowConf,
+                    priorityPool: Array.from(window.experienceDict), referenceDict: Array.from(window.referenceDict)
                 });
-
             } else if (d.type === 'partial' && isSessionActive) { interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; }
         };
 
-        // RICEVE IL BLOCCO GIA' CORRETTO E LO INIETTA CON ZERO LAG
         ppWorker.onmessage = (e) => {
             if (e.data.type === 'CHUNK_PROCESSED') {
                 const frag = document.createDocumentFragment();
@@ -471,14 +462,12 @@
                     if (e.data.isLowConf) span.classList.add('low-conf');
                     if (item.isHealed) span.classList.add('healed');
                     if (item.isShielded) span.classList.add('shielded');
-                    
                     span.innerText = (idx === 0 ? " " : " ") + item.text; 
                     frag.appendChild(span); 
                     
-                    // Auto-Harvest Silenzioso
                     const clean = item.text.toLowerCase().replace(/[^a-zÀ-ÿ]/g, '');
                     if (clean.length > 7 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
-                        window.experienceDict.add(clean); updateHarvestUI(clean, "AUTO_HVST"); saveExperience();
+                        window.experienceDict.add(clean); updateHarvestUI(clean, "AUTO_IDX"); saveExperience();
                     }
                 });
                 
@@ -491,15 +480,14 @@
             if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
             else if (e.data.type === 'vad_ui_update') { 
                 UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2); 
-                UI.vadFill.style.width = (e.data.prob * 100) + "%"; 
-                UI.vadLed.classList.toggle('active', e.data.isSpeaking); 
+                updateAsciiMeter('vad-meter', e.data.prob);
             }
         };
     }
 
     async function fetchZeitgeist() {
         const dom = UI.domainSelect.value;
-        UI.stateText.innerText = "FETCH_KNOWLEDGE_BASE...";
+        UI.stateText.innerText = "FETCH_KNOWLEDGE...";
         const feeds = { "general": "rss?hl=it&gl=IT&ceid=IT:it", "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", "finance": "rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it" };
         try {
             const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent('https://news.google.com/' + feeds[dom])}`;
@@ -509,15 +497,11 @@
             const textContent = (await response.json()).contents; 
             const matches = textContent.match(/[A-ZÀ-Ú][a-zà-ù]+/g) || [];
             
-            const snapshotHarvest = new Set();
-            matches.forEach(w => { if (w.length > 3) snapshotHarvest.add(w.toLowerCase()); });
-            snapshotHarvest.forEach(w => window.referenceDict.add(w));
-            
-            UI.zeitgeistLog.innerText = `> DICT_SYNC_OK [DOM: ${dom.toUpperCase()}]: [${snapshotHarvest.size} TOKENS]`;
-        } catch (error) { UI.zeitgeistLog.innerText = `> DICT_SYNC_FAIL: [LOCAL_MODE_ONLY]`; }
+            matches.forEach(w => { if (w.length > 3) window.referenceDict.add(w.toLowerCase()); });
+        } catch (error) { console.warn("DICT_OFFLINE"); }
     }
 
-    // --- AVVIO E STOP DEL MICROFONO ---
+    // --- AVVIO E STOP ---
     async function startListening() {
         isSessionActive = true; lastFinalText = "";
         UI.stateText.innerText = "LISTENING_PORT_OPEN"; UI.stateText.style.color = "var(--term-ok)";
@@ -526,7 +510,7 @@
         audioCtx = new AudioContext({ sampleRate: 16000 });
         stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
         
-        if (UI.output.innerText.trim() === "_") UI.output.innerHTML = ""; // Rimuove il finto cursore
+        if (UI.output.innerText.trim() === "_") UI.output.innerHTML = "";
 
         await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
             class P extends AudioWorkletProcessor {
@@ -541,7 +525,7 @@
         `], {type:'application/javascript'})));
         
         const worklet = new AudioWorkletNode(audioCtx, 'p'); 
-        worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) UI.volFill.style.width = Math.min(e.data.rms * 500, 100) + "%"; };
+        worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) updateAsciiMeter('vol-meter', e.data.rms * 5); };
         const audioChannel = new MessageChannel(); vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
         worklet.port.postMessage({ port: audioChannel.port2 }, [audioChannel.port2]); audioCtx.createMediaStreamSource(stream).connect(worklet);
         
@@ -551,9 +535,8 @@
     async function stopListening() { 
         isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); 
         if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); 
-        
         UI.masterBtn.innerText = "[ RESUME_SESSION ]"; UI.masterBtn.className = "";
-        UI.stateText.innerText = "STANDBY_READY"; UI.stateText.style.color = "var(--term-main)"; 
+        UI.stateText.innerText = "STANDBY_MODE"; UI.stateText.style.color = "var(--term-main)"; 
     }
 
     function unloadCore() {
@@ -562,25 +545,24 @@
         isCoreLoaded = false; window.referenceDict.clear(); 
         UI.masterBtn.innerText = "[ INIT_BOOT_SEQUENCE ]";
         UI.stateText.innerText = "VRAM_FLUSHED"; UI.stateText.style.color = "var(--term-dim)";
-        UI.probVal.innerText = "PROB: 0.00"; UI.vadFill.style.width = "0%"; UI.volFill.style.width = "0%"; UI.vadLed.classList.remove('active');
+        updateAsciiMeter('vol-meter', 0); updateAsciiMeter('vad-meter', 0); UI.probVal.innerText = "PROB: 0.00";
         initWorkers(); 
     }
 
-    // --- TASTO MASTER UX ---
     UI.masterBtn.onclick = async () => { 
         if (isSessionActive) { await stopListening(); } 
         else {
             if (!isCoreLoaded) {
                 UI.masterBtn.disabled = true; UI.masterBtn.className = "booting"; UI.masterBtn.innerText = "[ ALLOCATING... ]";
                 await fetchZeitgeist();
-                UI.stateText.innerText = "BOOT_CORE_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
+                UI.stateText.innerText = "MOUNTING_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
             } else { await startListening(); }
         }
     };
 
     UI.precisionSelect.onchange = () => { if (isCoreLoaded) unloadCore(); };
 
-    // Gestione Popup Parole (TUI Modale) - Niente più ID globali!
+    // Modale ASCII
     let activeToken = null;
     UI.output.onclick = (e) => { 
         if (e.target.classList.contains('word-node')) { 
@@ -592,7 +574,7 @@
     UI.confirmBtn.onclick = async () => { 
         if (activeToken) { 
             const newWord = UI.editInput.value.trim();
-            activeToken.innerText = " " + newWord; // Direct DOM update, no global refresh
+            activeToken.innerText = " " + newWord; 
             activeToken.classList.add('healed'); activeToken.classList.remove('low-conf'); 
             
             const cleanWord = newWord.toLowerCase();
@@ -602,13 +584,13 @@
     };
     UI.editInput.addEventListener("keypress", function(event) { if (event.key === "Enter") { event.preventDefault(); UI.confirmBtn.click(); } });
 
-    // Altri Eventi UI
+    // Header Bottoni
     document.getElementById('toggle-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'block';
     document.getElementById('close-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'none';
     document.getElementById('clear-btn').onclick = () => { UI.output.innerHTML = "<span class='blink'>_</span>"; };
     document.getElementById('copy-btn').onclick = () => navigator.clipboard.writeText(UI.output.innerText.replace('_',''));
     document.getElementById('export-btn').onclick = () => {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([UI.output.innerText.replace('_','')], { type: 'text/plain' })); a.download = `DUMP_${Date.now()}.txt`; a.click();
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([UI.output.innerText.replace('_','')], { type: 'text/plain' })); a.download = `TTY_DUMP_${Date.now()}.txt`; a.click();
     };
     
     (async () => {
