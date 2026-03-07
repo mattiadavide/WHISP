@@ -156,7 +156,7 @@
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
         const audioBuf = new Float32Array(1500 * 512);
-        const preRoll = new Float32Array(25 * 512); // MODIFICA: Aumentato a 25 frame (800ms)
+        const preRoll = new Float32Array(25 * 512); 
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
@@ -187,7 +187,7 @@
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        // MODIFICA: Abbassata la soglia di attivazione per catturare meglio le "s" (0.55 invece di 0.65)
+                        
                         if (prob > (isSpeaking ? 0.30 : 0.55)) { 
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
@@ -227,7 +227,6 @@
                     temperature: 0.0, condition_on_previous_text: false 
                 });
                 if (res.text && res.text.trim().length > 0) {
-                    // MODIFICA: Filtro per allucinazioni e frammenti a bassa confidence (musica/jingle)
                     const textToCheck = res.text.trim();
                     const isHallucination = /♪|\\[.*?\\]|\\*.*?\\*/.test(textToCheck);
                     const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
@@ -310,7 +309,6 @@
                     return; 
                 }
 
-                // MODIFICA: Abbassata la tolleranza per consentire correzioni su parole di 4 lettere (es. "port" -> "sport")
                 if (lower.length < 4) return;
 
                 let best = null, minDist = Infinity;
@@ -395,9 +393,31 @@
 
         refiningWorker.onmessage = (e) => {
             if (e.data.type === 'REFINED') {
-                rebuildTokens(e.data.text); UI.status.innerText = "HEALING_ACTIVE...";
-                const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
-                healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: Array.from(window.experienceDict), referenceDict: Array.from(window.referenceDict) });
+                rebuildTokens(e.data.text); 
+                UI.status.innerText = "HEALING_ACTIVE...";
+                
+                const tokenElements = Array.from(UI.output.querySelectorAll('.word-token'));
+                const tokens = tokenElements.map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
+                
+                // Raccogliamo i token affidabili per creare un contesto dinamico di sessione
+                const sessionHarvest = new Set();
+                tokenElements.forEach(t => {
+                    if (!t.classList.contains('low-conf') && t.innerText.trim().length > 4) {
+                        const cleanWord = t.innerText.trim().toLowerCase().replace(/[^a-zà-ù]/g, '');
+                        if (cleanWord.length > 4) {
+                            sessionHarvest.add(cleanWord);
+                        }
+                    }
+                });
+
+                // Uniamo il dizionario permanente con quello dinamico appena raccolto
+                const dynamicPriorityPool = [...new Set([...window.experienceDict, ...sessionHarvest])];
+
+                healingWorker.postMessage({ 
+                    wordsToCorrect: tokens, 
+                    priorityPool: dynamicPriorityPool, 
+                    referenceDict: Array.from(window.referenceDict) 
+                });
             }
         };
 
