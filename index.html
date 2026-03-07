@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL V9 [SANITIZED CORE]</title>
+    <title>WHISP // TERMINAL V9 [LIGHTNING ENGINE RESTORED]</title>
     <style>
         /* === COLOR THEMES === */
         :root { 
@@ -68,7 +68,7 @@
             padding: 15px; min-height: 400px; max-height: calc(100vh - 600px); 
             overflow-y: auto; line-height: 1.8; color: #eee; 
             text-transform: none; margin-bottom: 20px; outline: none; 
-            white-space: pre-wrap; scroll-behavior: auto; 
+            white-space: pre-wrap; scroll-behavior: smooth; 
         }
 
         .word-token { cursor: pointer; transition: background 0.2s; padding: 2px 1px; border-radius: 2px; display: inline-block; }
@@ -109,7 +109,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // TERMINAL V9 [SANITIZED CORE]
+ > DESIGN BY MATTIA DAVIDE AMICO // TERMINAL V9 [LIGHTNING CORE]
 </div>
 
 <div class="header">
@@ -133,14 +133,12 @@
             <option value="mic">SRC: MICROPHONE</option>
             <option value="system">SRC: SYSTEM AUDIO</option>
         </select>
-        
         <select id="domainSelect" style="flex-grow: 2;">
             <option value="general">DOMAIN: GENERAL NEWS</option>
             <option value="tech">DOMAIN: TECH & AI</option>
             <option value="medical">DOMAIN: MEDICAL</option>
             <option value="finance">DOMAIN: ECONOMY & FINANCE</option>
         </select>
-        
         <button id="master-btn" style="flex-grow: 2;">[ BOOT_SYSTEM ]</button>
     </div>
 </div>
@@ -198,9 +196,8 @@
     let currentInitialPrompt = "";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
-    let sessionHarvested = new Set();
 
-    // MEMORY LEAK FIX: Generiamo il BlobURL una sola volta all'avvio, non ad ogni click di Start
+    // MEMORY LEAK FIX PER AUDIO WORKLET
     const audioProcessorCode = `
         class P extends AudioWorkletProcessor {
             constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; this.s=0; this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; }; }
@@ -237,13 +234,14 @@
         document.getElementById(id).innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
     }
 
-    // --- WORKERS ---
+    // --- WORKERS DEFINITION ---
+    // VAD WORKER: Ripristinata l'attesa al millimetro per non fondere la GPU
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
         const audioBuf = new Float32Array(1500 * 512);
-        const preRoll = new Float32Array(15 * 512);
+        const preRoll = new Float32Array(25 * 512); 
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
@@ -269,17 +267,20 @@
                 port.onmessage = async (we) => {
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
-                        if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 15 === 0) flush(true); } 
-                        else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15; if (preRollCount < 15) preRollCount++; }
+                        
+                        // RESTORED LIGHTNING LOGIC: % 60 per far respirare il modello AI
+                        if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 60 === 0) flush(true); } 
+                        else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 25; if (preRollCount < 25) preRollCount++; }
+                        
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
                         
-                        if (prob > (isSpeaking ? 0.35 : 0.65)) { 
+                        if (prob > (isSpeaking ? 0.30 : 0.55)) { 
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
-                                    let idx = (preRollPtr - preRollCount + i + 15) % 15;
+                                    let idx = (preRollPtr - preRollCount + i + 25) % 25;
                                     audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
                                 }
                             }
@@ -369,7 +370,6 @@
             } } return m[b.length][a.length];
         }
         
-        // REDUNDANCY FIX: Il dizionario di riferimento (RSS) viene salvato localmente nel Worker.
         let cachedReferenceDict = [];
 
         self.onmessage = (e) => {
@@ -400,7 +400,7 @@
                     corrections.push({ id: item.id, newText: item.original, isShielded: true }); return; 
                 }
 
-                if (lower.length < 5) return;
+                if (lower.length < 4) return;
 
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
@@ -425,10 +425,16 @@
             
             const semanticPatches = [
                 { rx: /\\bradiocronica\\b/gi, rep: 'radiocronaca' },
+                { rx: /\\bradioconista\\b/gi, rep: 'radiocronista' },
                 { rx: /vengon piazati/gi, rep: 'vengono piazzati' },
+                { rx: /\\bamicolo\\b/gi, rep: 'amico lo' },
+                { rx: /istituti dei cechi/gi, rep: 'istituti dei ciechi' },
+                { rx: /un amico ceco/gi, rep: 'un amico cieco' },
                 { rx: /\\b(lo|dello|allo|sullo|il|al|sul|del)\\s+port\\b/gi, rep: '$1 sport' },
+                { rx: /\\b(un)\\s+po\\b/gi, rep: '$1 po\\'' },
                 { rx: /\\bper\\s+che\\b/gi, rep: 'perché' },
-                { rx: /\\bci\\s+e\\b/gi, rep: 'c\\'è' }
+                { rx: /\\bci\\s+e\\b/gi, rep: 'c\\'è' },
+                { rx: /(?:^|\\.\\s+)\\bAll'ora\\b/gi, rep: 'Allora' }
             ];
 
             semanticPatches.forEach(patch => { text = text.replace(patch.rx, patch.rep); });
@@ -479,6 +485,7 @@
                 UI.masterBtn.disabled = false;
                 startListening();
             } else if (d.type === 'final' && isSessionActive) {
+                // LOGICA VELOCE: Stampa diretta a schermo
                 interimSpan.innerText = ""; const incomingText = d.text.trim();
                 if (lastFinalText.length > 15 && incomingText.length > 15) { if (incomingText === lastFinalText || lastFinalText.endsWith(incomingText)) return; }
                 lastFinalText = incomingText;
@@ -488,6 +495,7 @@
                 interimSpan.innerText = " " + d.text.trim() + "..."; 
                 UI.output.scrollTop = UI.output.scrollHeight; 
             } else if (d.type === 'FLUSH_COMPLETE') { 
+                // LE CURE AVVENGONO SOLO ALLA FINE (IL SEGRETO DELLA VELOCITÀ)
                 UI.status.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); 
                 UI.masterBtn.disabled = false; 
             }
@@ -497,8 +505,6 @@
             if (e.data.type === 'REFINED') {
                 rebuildTokens(e.data.text); UI.status.innerText = "HEALING_ACTIVE...";
                 const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
-                
-                // PERFORMANCE FIX: Inviamo solo la Priority Pool (che cambia), il referenceDict è stato inviato al boot.
                 healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: Array.from(window.experienceDict) });
             }
         };
@@ -507,8 +513,12 @@
             e.data.corrections.forEach(c => { 
                 const el = UI.output.querySelector(`[data-hid="${c.id}"]`); 
                 if (el) { 
-                    if (c.isShielded) { el.classList.add('shielded'); } 
-                    else { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; }
+                    if (c.isShielded) {
+                        el.classList.add('shielded'); el.title = "Protetta da regola Maiuscola";
+                    } else {
+                        el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; 
+                        el.classList.add('validated'); el.style.color = "var(--term-ok)"; 
+                    }
                 } 
             });
             harvestNewTerms();
@@ -533,23 +543,39 @@
 
     function harvestNewTerms() {
         const text = UI.output.innerText;
-        text.split(/\s+/).forEach(w => {
+        const words = text.split(/\s+/);
+        words.forEach(w => {
             const clean = w.toLowerCase().replace(/[^a-zÀ-ÿ]/g, '');
             if (clean.length > 7 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
-                window.experienceDict.add(clean); sessionHarvested.add(clean); updateHarvestUI(clean, "AUTO_HARVEST");
+                window.experienceDict.add(clean);
+                sessionHarvested.add(clean);
+                updateHarvestUI(clean, "AUTO_HARVEST");
             }
         });
         saveExperience();
     }
 
+    // DOM FRAGMENT FIX: Evita il ricalcolo scattoso dello schermo alla fine
     function rebuildTokens(text) {
-        UI.output.innerHTML = ""; const lines = text.split('\n'); let globalIdx = 0;
+        UI.output.innerHTML = ""; 
+        const frag = document.createDocumentFragment();
+        const lines = text.split('\n'); let globalIdx = 0;
+        
         lines.forEach((line, lineIdx) => {
-            if (line.trim() === "" && lineIdx > 0) { UI.output.appendChild(document.createElement('br')); return; }
-            line.trim().split(/ +/).forEach((w, wordIdx) => { if (!w) return; const span = document.createElement('span'); span.className = 'word-token'; span.dataset.hid = globalIdx++; span.innerText = (wordIdx === 0 ? "" : " ") + w; UI.output.appendChild(span); });
-            if (lineIdx < lines.length - 1) UI.output.appendChild(document.createElement('br'));
+            if (line.trim() === "" && lineIdx > 0) { frag.appendChild(document.createElement('br')); return; }
+            const words = line.trim().split(/ +/);
+            words.forEach((w, wordIdx) => { 
+                if (!w) return; 
+                const span = document.createElement('span'); 
+                span.className = 'word-token'; 
+                span.dataset.hid = globalIdx++; 
+                span.innerText = (wordIdx === 0 ? "" : " ") + w; 
+                frag.appendChild(span); 
+            });
+            if (lineIdx < lines.length - 1) frag.appendChild(document.createElement('br'));
         });
-        UI.output.appendChild(interimSpan);
+        frag.appendChild(interimSpan);
+        UI.output.appendChild(frag);
     }
 
     // --- TEMI TRAMITE RSS (ZEITGEIST) ---
@@ -563,7 +589,7 @@
             const controller = new AbortController(); const timeoutId = setTimeout(() => controller.abort(), 3500); 
             const response = await fetch(proxyUrl, { signal: controller.signal }); clearTimeout(timeoutId);
             
-            if (!response.ok) throw new Error("Proxy response error");
+            if (!response.ok) throw new Error("Proxy error");
             const textContent = (await response.json()).contents; 
             const matches = textContent.match(/[A-ZÀ-Ú][a-zà-ù]+/g) || [];
             
@@ -571,9 +597,7 @@
             matches.forEach(w => { if (w.length > 3) snapshotHarvest.add(w.toLowerCase()); });
             snapshotHarvest.forEach(w => window.referenceDict.add(w));
             
-            // PERFORMANCE FIX: Inviamo il dizionario statico al worker una volta sola!
             healingWorker.postMessage({ type: 'set_dictionary', referenceDict: Array.from(window.referenceDict) });
-
             document.getElementById('zeitgeist-log').innerText = `> KNOWLEDGE_SYNC_OK [${dom.toUpperCase()}]: [${snapshotHarvest.size} TOKENS]`;
         } catch (error) { document.getElementById('zeitgeist-log').innerText = `> KNOWLEDGE_SYNC_FAIL: [OFFLINE_MODE]`; }
     }
@@ -591,7 +615,6 @@
         audioCtx = new AudioContext({ sampleRate: 16000 });
         stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
         
-        // MEMORY LEAK FIX: Usiamo l'URL globale invece di crearlo ogni volta
         await audioCtx.audioWorklet.addModule(audioWorkletURL);
         
         const worklet = new AudioWorkletNode(audioCtx, 'p'); 
@@ -605,16 +628,14 @@
     async function stopListening() { 
         isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); 
         if(stream) stream.getTracks().forEach(t => t.stop()); 
-        
-        // MEMORY LEAK FIX: Sospendiamo e chiudiamo correttamente il contesto audio
         if(audioCtx) { await audioCtx.suspend(); audioCtx.close(); }
         
         UI.masterBtn.innerText = "▶ START_SESSION"; UI.masterBtn.className = "ready"; UI.masterBtn.disabled = true; 
         UI.status.innerText = "FLUSHING_AUDIO_QUEUE..."; UI.status.style.color = "var(--term-warn)"; 
+        
         whisperWorker.postMessage({ type: 'request_flush' }); 
     }
 
-    // LOGIC FIX: Funzione per forzare lo scaricamento della VRAM se si cambiano opzioni critiche
     function unloadCore() {
         if (isSessionActive) stopListening();
         vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
@@ -626,7 +647,6 @@
         initWorkers(); 
     }
 
-    // Se l'utente cambia motore o microfono, la VRAM deve essere svuotata
     UI.precisionSelect.onchange = () => { if (isCoreLoaded) unloadCore(); };
     UI.audioSource.onchange = () => { if (isCoreLoaded) unloadCore(); };
 
@@ -666,6 +686,9 @@
         initWorkers(); 
         const db = await openDB(); const tx = db.transaction(STORE_NAME, "readonly"); const req = tx.objectStore(STORE_NAME).get("words");
         req.onsuccess = () => { if(req.result) window.experienceDict = new Set(req.result); };
+        
+        const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP" };
+        for (const [c, n] of Object.entries(LANGUAGES)) { const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o); }
     })();
 </script>
 </body>
