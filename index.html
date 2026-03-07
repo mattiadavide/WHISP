@@ -4,70 +4,45 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // CORE_OS V5</title>
+    <title>WHISP // TERMINAL V5</title>
     <style>
-        :root { 
-            --bg: #000; --fg: #0f0; --dim: #050; 
-            --accent: #0f0; --err: #f00; --warn: #ff0;
-            --font: 'Courier New', monospace;
-        }
-        body { 
-            background: var(--bg); color: var(--fg); font-family: var(--font);
-            margin: 0; height: 100vh; display: flex; flex-direction: column;
-            text-transform: uppercase; font-size: 12px; overflow: hidden;
-        }
-        #terminal { flex: 1; padding: 20px; display: flex; flex-direction: column; overflow: hidden; }
+        :root { --term-bg: #000; --term-main: #fff; --term-dim: #444; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
+        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
+        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; color: var(--term-main); }
+        .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
+        .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; align-items: center; }
+        select, button { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
+        button:hover { background: var(--term-main); color: var(--term-bg); }
         
-        /* HEADER & CONTROLS */
-        .header { margin-bottom: 20px; border-bottom: 1px solid var(--dim); padding-bottom: 10px; }
-        .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 15px; }
+        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
+        #output { border: 1px solid rgba(255,255,255,0.1); padding: 15px; min-height: 400px; max-height: calc(100vh - 500px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
         
-        select, button { 
-            background: #000; color: var(--fg); border: 1px solid var(--fg); 
-            padding: 10px; cursor: pointer; font-family: inherit; font-size: 11px;
-        }
-        button:hover { background: var(--fg); color: #000; }
-        button:disabled { border-color: var(--dim); color: var(--dim); cursor: not-allowed; }
-
-        /* OUTPUT AREA */
-        #output { 
-            flex: 1; overflow-y: auto; border: 1px solid var(--dim); 
-            padding: 20px; margin-bottom: 15px; background: rgba(0,15,0,0.05);
-            white-space: pre-wrap; line-height: 1.8; font-size: 14px;
-            scroll-behavior: smooth; outline: none;
-        }
-
-        /* TELEMETRY */
-        .telemetry { display: grid; grid-template-columns: 1fr 1fr auto; gap: 20px; font-size: 10px; color: var(--dim); }
-        .meter-label { margin-bottom: 4px; display: block; }
-        .meter-bar { color: var(--fg); font-weight: bold; }
-        
-        /* TOKEN STYLES */
-        .word-node { transition: color 0.3s; padding: 0 1px; }
-        .word-node.healed { color: #fff; font-weight: bold; text-shadow: 0 0 5px rgba(255,255,255,0.3); }
-        .word-node.low-conf { color: var(--warn); border-bottom: 1px dotted var(--warn); }
-        .interim { color: var(--dim); font-style: italic; }
-
-        #status-led { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #222; margin-right: 5px; }
-        #status-led.active { background: var(--fg); box-shadow: 0 0 8px var(--fg); }
-        
-        /* SCROLLBAR */
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-thumb { background: var(--dim); }
+        .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; white-space: nowrap; margin-bottom: 5px; }
+        .ascii-meter { font-weight: bold; color: var(--term-main); }
+        .word-node.healed { color: var(--term-ok); font-weight: bold; }
+        .word-node.low-conf { color: var(--term-warn); text-decoration: underline dotted; }
+        .blink { animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0.3; } }
     </style>
 </head>
 <body>
 
-<div id="terminal">
-    <div class="header">
-        [ WHISP_CORE_OS_V5 ] >> STATE: <span id="state-text" style="color:#fff">IDLE</span>
-    </div>
+<div class="ascii-art">
+ ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
+ ██║    ██║██║  ██║██║██╔════╝██╔══██╗
+ ██║ █╗ ██║███████║██║███████║██████╔╝
+ ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
+ ╚███╔███╔╝██║  ██║██║███████║██║     
+  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
+ > DESIGN BY MATTIA DAVIDE AMICO // KERNEL V5
+</div>
 
-    <div class="controls">
+<div class="header">
+    <div class="settings-panel">
         <select id="model-select">
-            <option value="turbo">LARGE_V3_TURBO (1.6GB)</option>
-            <option value="base">BASE_STABLE (150MB)</option>
-            <option value="tiny">TINY_MOBILE (80MB)</option>
+            <option value="turbo">ENG: LARGE_TURBO (FP16)</option>
+            <option value="base">ENG: BASE_STABLE</option>
+            <option value="tiny">ENG: TINY_MOBILE</option>
         </select>
         <select id="audio-source">
             <option value="mic">SRC: MICROPHONE</option>
@@ -77,31 +52,26 @@
             <option value="italian">LANG: ITA</option>
             <option value="english">LANG: ENG</option>
         </select>
+        <select id="domain-select">
+            <option value="general">DOM: GENERAL (NEWS)</option>
+            <option value="tech">DOM: TECH & IT</option>
+            <option value="medical">DOM: MEDICAL</option>
+        </select>
         <button id="boot-btn">BOOT_SYSTEM()</button>
-    </div>
-
-    <div id="output" contenteditable="false" spellcheck="false"></div>
-
-    <div class="telemetry">
-        <div>
-            <span class="meter-label">VAD_PROBABILITY</span>
-            <span id="vad-meter" class="meter-bar">[----------]</span>
-        </div>
-        <div>
-            <span class="meter-label">SIGNAL_RMS</span>
-            <span id="rms-meter" class="meter-bar">[----------]</span>
-        </div>
-        <div style="align-self: flex-end;">
-            <span id="status-led"></span> <span id="source-display">OFFLINE</span>
-        </div>
     </div>
 </div>
 
+<div class="status-bar">
+    <div>STATUS: <span id="state-text" class="blink">IDLE</span></div>
+    <div>
+        <div class="stat-row">SIG_RMS <span id="rms-meter" class="ascii-meter">[--------------------]</span></div>
+        <div class="stat-row">VAD_NET <span id="vad-meter" class="ascii-meter">[--------------------]</span></div>
+    </div>
+</div>
+
+<div id="output" contenteditable="true"></div>
+
 <script type="module">
-    /**
-     * @section Data_Structures
-     * Albero Trie per validazione instantanea O(L)
-     */
     class Trie {
         constructor() { this.root = {}; }
         insert(word) {
@@ -116,32 +86,20 @@
         }
     }
 
-    /**
-     * @section Worker_Kernels
-     */
     const VAD_CODE = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         let model, state, whisperPort, isSpeaking = false, silenceFrames = 0;
-        
         self.onmessage = async (e) => {
             if (e.data.type === 'init') {
-                model = await AutoModel.from_pretrained('onnx-community/silero-vad', { 
-                    config: { model_type: 'custom' },
-                    device: 'wasm', dtype: 'fp32' 
-                });
+                model = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' }, device: 'wasm', dtype: 'fp32' });
                 state = new Tensor('float32', new Float32Array(2*1*128), [2, 1, 128]);
                 self.postMessage({type: 'ready'});
             }
             if (e.data.type === 'port') whisperPort = e.data.port;
             if (e.data.type === 'audio') {
-                const out = await model({ 
-                    input: new Tensor('float32', e.data.chunk, [1, 512]), 
-                    sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), 
-                    state 
-                });
+                const out = await model({ input: new Tensor('float32', e.data.chunk, [1, 512]), sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
                 state = out.stateN || out.staten;
                 const prob = out.output.data[0];
-                
                 if (prob > 0.45) {
                     isSpeaking = true; silenceFrames = 0;
                     whisperPort.postMessage({type: 'stream', data: e.data.chunk});
@@ -158,14 +116,9 @@
     const WHISPER_CODE = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         let pipe, buffer = [], isBusy = false;
-        
         self.onmessage = async (e) => {
             if (e.data.type === 'init') {
-                const m = { 
-                    'turbo': 'onnx-community/whisper-large-v3-turbo', 
-                    'base': 'onnx-community/whisper-base', 
-                    'tiny': 'onnx-community/whisper-tiny' 
-                };
+                const m = { 'turbo': 'onnx-community/whisper-large-v3-turbo', 'base': 'onnx-community/whisper-base', 'tiny': 'onnx-community/whisper-tiny' };
                 try {
                     pipe = await pipeline('automatic-speech-recognition', m[e.data.model], { device: 'webgpu', dtype: 'fp16' });
                 } catch {
@@ -176,44 +129,28 @@
             if (e.data.type === 'stream') buffer.push(...e.data.data);
             if (e.data.type === 'commit' && !isBusy && buffer.length > 4000) {
                 isBusy = true;
-                const res = await pipe(new Float32Array(buffer), { 
-                    language: e.data.lang, task: 'transcribe', return_timestamps: 'word' 
-                });
-                self.postMessage({type: 'text', text: res.text, chunks: res.chunks});
+                const res = await pipe(new Float32Array(buffer), { language: e.data.lang, task: 'transcribe' });
+                self.postMessage({type: 'text', text: res.text});
                 buffer = []; isBusy = false;
             }
         };
     `;
 
-    /**
-     * @section Main_Kernel
-     */
     const Kernel = {
         trie: new Trie(),
         state: 'IDLE',
-        activeStream: null,
-        audioCtx: null,
         
         async boot() {
-            if(this.state !== 'IDLE') return;
-            this.updateState('BOOTING_KERNELS...');
+            this.updateState('BOOTING...');
             document.getElementById('boot-btn').disabled = true;
-
             await this.syncZeitgeist();
 
-            // Init Workers
-            const vBlob = new Blob([VAD_CODE], {type: 'application/javascript'});
-            const wBlob = new Blob([WHISPER_CODE], {type: 'application/javascript'});
-            this.vad = new Worker(URL.createObjectURL(vBlob), {type: 'module'});
-            this.whisper = new Worker(URL.createObjectURL(wBlob), {type: 'module'});
+            this.vad = new Worker(URL.createObjectURL(new Blob([VAD_CODE], {type: 'application/javascript'})), {type: 'module'});
+            this.whisper = new Worker(URL.createObjectURL(new Blob([WHISPER_CODE], {type: 'application/javascript'})), {type: 'module'});
 
             const chan = new MessageChannel();
             this.vad.postMessage({type: 'port', port: chan.port1}, [chan.port1]);
-            this.whisper.postMessage({
-                type: 'init', 
-                model: document.getElementById('model-select').value,
-                lang: document.getElementById('lang-select').value
-            }, [chan.port2]);
+            this.whisper.postMessage({ type: 'init', model: document.getElementById('model-select').value, lang: document.getElementById('lang-select').value }, [chan.port2]);
 
             this.vad.postMessage({type: 'init'});
             this.vad.onmessage = (e) => this.handleVad(e.data);
@@ -223,20 +160,26 @@
         async startAudio() {
             const src = document.getElementById('audio-source').value;
             try {
-                this.activeStream = (src === 'system') 
+                const stream = (src === 'system') 
                     ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
                     : await navigator.mediaDevices.getUserMedia({ audio: true });
 
-                this.audioCtx = new AudioContext({sampleRate: 16000});
-                const sourceNode = this.audioCtx.createMediaStreamSource(this.activeStream);
+                const ctx = new AudioContext({sampleRate: 16000});
+                const sourceNode = ctx.createMediaStreamSource(stream);
                 
-                await this.audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+                await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
                     class P extends AudioWorkletProcessor {
+                        constructor() { super(); this.buffer = new Float32Array(512); this.ptr = 0; }
                         process(i) {
                             const c = i[0][0];
-                            if(c) {
-                                let s=0; for(let v of c) s+=v*v;
-                                this.port.postMessage({type:'audio', chunk:c, rms: Math.sqrt(s/c.length)});
+                            if(!c) return true;
+                            for(let j=0; j<c.length; j++) {
+                                this.buffer[this.ptr++] = c[j];
+                                if(this.ptr >= 512) {
+                                    let s=0; for(let v of this.buffer) s+=v*v;
+                                    this.port.postMessage({type:'audio', chunk:this.buffer, rms: Math.sqrt(s/512)});
+                                    this.buffer = new Float32Array(512); this.ptr = 0;
+                                }
                             }
                             return true;
                         }
@@ -244,20 +187,15 @@
                     registerProcessor('p', P);
                 `], {type:'text/javascript'})));
 
-                const workletNode = new AudioWorkletNode(this.audioCtx, 'p');
+                const workletNode = new AudioWorkletNode(ctx, 'p');
                 workletNode.port.onmessage = (e) => {
                     this.updateMeter('rms-meter', e.data.rms * 10);
-                    this.vad.postMessage({type: 'audio', chunk: e.data.chunk});
+                    this.vad.postMessage({type: 'audio', chunk: e.data.chunk}, [e.data.chunk.buffer]);
                 };
 
                 sourceNode.connect(workletNode);
-                document.getElementById('status-led').classList.add('active');
-                document.getElementById('source-display').innerText = src.toUpperCase();
-                this.updateState('ONLINE_AND_LISTENING');
-            } catch (err) {
-                this.updateState('ERROR: CAPTURE_DENIED');
-                console.error(err);
-            }
+                this.updateState('ONLINE');
+            } catch (err) { this.updateState('ERROR_DENIED'); }
         },
 
         handleVad(d) {
@@ -267,8 +205,7 @@
 
         handleWhisper(d) {
             if(d.type === 'text') {
-                const words = d.text.trim().split(/\s+/);
-                words.forEach(w => {
+                d.text.trim().split(/\s+/).forEach(w => {
                     const span = document.createElement('span');
                     span.className = 'word-node';
                     const clean = w.toLowerCase().replace(/[^a-zà-ù]/g, '');
@@ -281,21 +218,20 @@
         },
 
         updateState(txt) { document.getElementById('state-text').innerText = txt; },
-        
         updateMeter(id, val) {
-            const b = Math.min(Math.floor(val * 10), 10);
-            document.getElementById(id).innerText = '[' + '#'.repeat(b) + '-'.repeat(10-b) + ']';
+            const b = Math.min(Math.floor(val * 20), 20);
+            document.getElementById(id).innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
         },
 
         async syncZeitgeist() {
-            this.updateState('SYNCING_ZEITGEIST...');
+            const dom = document.getElementById('domain-select').value;
+            const FEEDS = { "general": "rss?hl=it&gl=IT&ceid=IT:it", "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it" };
             try {
-                const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it'));
+                const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://news.google.com/' + FEEDS[dom]));
                 const j = await r.json();
                 const w = j.contents.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
                 w.forEach(word => this.trie.insert(word));
-                console.log("ZEITGEIST_LOADED:", w.length);
-            } catch(e) { console.warn("ZEITGEIST_OFFLINE"); }
+            } catch(e) { console.warn("OFFLINE_ZEITGEIST"); }
         }
     };
 
