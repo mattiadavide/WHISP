@@ -4,68 +4,132 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL V9 [MASTER BUTTON EDITION]</title>
+    <title>WHISP // PURE TERMINAL OS</title>
     <style>
+        /* === COLOR THEMES === */
         :root { 
-            --term-bg: #000; --term-main: #ffb000; --term-dim: #540; 
-            --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; --term-shield: #a3f;
+            --term-bg: #050505; --term-main: #ffb000; --term-dim: #540; 
+            --term-err: #f00; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; --term-shield: #a3f;
         }
         body.theme-green { --term-main: #0f0; --term-dim: #040; --term-accent: #0af; }
         body.theme-cyan { --term-main: #0ff; --term-dim: #044; --term-accent: #0af; }
-        body.theme-white { --term-main: #fff; --term-dim: #333; --term-accent: #aaa; }
+        body.theme-white { --term-main: #e0e0e0; --term-dim: #444; --term-accent: #aaa; }
 
-        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; transition: color 0.3s ease; }
-        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; }
-        .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
-        .settings-panel { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        /* === GLOBAL RESET & TYPOGRAPHY === */
+        * { 
+            box-sizing: border-box; 
+            border-radius: 0 !important; /* STRICTLY NO ROUNDED CORNERS */
+            font-family: 'Courier New', Courier, monospace;
+        }
         
-        select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
-        button:hover { background: var(--term-main); color: var(--term-bg); }
-        button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
-        
-        /* Master Button Styles */
-        #master-btn { background: var(--term-ok); color: #000; font-weight: bold; border-color: var(--term-ok); transition: all 0.2s; }
-        #master-btn:hover { background: transparent; color: var(--term-ok); }
-        #master-btn.running { background: var(--term-err); border-color: var(--term-err); color: #000; }
-        #master-btn.running:hover { background: transparent; color: var(--term-err); }
-        #master-btn.booting { background: var(--term-warn); border-color: var(--term-warn); color: #000; cursor: wait; }
+        ::selection { background: var(--term-main); color: var(--term-bg); }
 
-        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
-        #output { border: 1px solid rgba(255,255,255,0.1); padding: 15px; min-height: 400px; max-height: calc(100vh - 600px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; margin-bottom: 20px; outline: none; white-space: pre-wrap; scroll-behavior: smooth; }
-        
-        /* HARVEST PANEL */
-        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(255, 128, 0, 0.05); }
-        table { width: 100%; border-collapse: collapse; font-size: 0.8em; margin-top: 10px; }
-        th { text-align: left; border-bottom: 1px solid var(--term-accent); padding: 5px; color: var(--term-accent); }
-        td { padding: 5px; border-bottom: 1px solid #222; }
+        body { 
+            background: var(--term-bg); color: var(--term-main); 
+            max-width: 1200px; margin: 0 auto; padding: 20px; 
+            text-transform: uppercase; overflow-x: hidden; 
+            transition: color 0.1s, background 0.1s;
+        }
 
-        /* LOOKUP STYLES */
-        .word-node { cursor: pointer; padding: 0 1px; transition: background 0.2s; border-radius: 2px; }
-        .word-node:hover { background: rgba(255,255,255,0.1); }
-        .word-node.healed { color: var(--term-main); font-weight: bold; text-shadow: 0 0 8px var(--term-main); }
-        .word-node.low-conf { color: var(--term-warn); text-decoration: underline dotted; }
-        .word-node.shielded { color: var(--term-shield) !important; text-decoration: none !important; }
-        .interim-text { color: #666; font-style: italic; }
+        /* === SCROLLBAR TERMINAL STYLE === */
+        ::-webkit-scrollbar { width: 14px; }
+        ::-webkit-scrollbar-track { background: var(--term-bg); border-left: 1px solid var(--term-dim); }
+        ::-webkit-scrollbar-thumb { background: var(--term-main); border: 1px solid var(--term-bg); }
+        ::-webkit-scrollbar-thumb:hover { background: var(--term-accent); }
+
+        /* === UI CONTAINERS === */
+        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 20px; font-weight: bold; }
         
-        /* METERS */
+        .header, .status-bar, #harvest-panel { 
+            border: 1px solid var(--term-main); 
+            padding: 15px; 
+            margin-bottom: 15px; 
+            background: transparent;
+        }
+
+        /* === FORM ELEMENTS (STRICT TUI LOOK) === */
+        .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        
+        select, button, input { 
+            appearance: none; -webkit-appearance: none; /* KILL OS STYLING */
+            background: var(--term-bg); 
+            color: var(--term-main); 
+            border: 1px solid var(--term-main); 
+            padding: 8px 12px; 
+            cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em;
+            text-transform: uppercase;
+            font-weight: bold;
+        }
+        
+        select { padding-right: 25px; /* Spazio per la freccia custom finta */ }
+        
+        input[type="text"], input[type="file"] { cursor: text; border: 1px dashed var(--term-dim); font-weight: normal; }
+        input[type="text"]:focus { border: 1px solid var(--term-main); background: rgba(255,255,255,0.05); }
+
+        /* TERMINAL HOVER (INVERT COLORS) */
+        button:hover, select:hover { background: var(--term-main); color: var(--term-bg); }
+        button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; background: transparent !important; }
+
+        /* === MASTER BUTTON CLI STYLE === */
+        #master-btn { background: var(--term-bg); color: var(--term-ok); border: 1px solid var(--term-ok); }
+        #master-btn:hover { background: var(--term-ok); color: var(--term-bg); }
+        #master-btn.running { color: var(--term-err); border-color: var(--term-err); }
+        #master-btn.running:hover { background: var(--term-err); color: var(--term-bg); }
+        #master-btn.booting { color: var(--term-warn); border-color: var(--term-warn); cursor: wait; }
+        #master-btn.booting:hover { background: var(--term-warn); color: var(--term-bg); }
+
+        /* === STATUS BAR & METERS === */
+        .status-bar { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
+        
         .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 15px; font-size: 0.85em; white-space: nowrap; margin-bottom: 8px; }
-        .bar-bg { flex-grow: 1; height: 10px; background: #111; border: 1px solid var(--term-dim); min-width: 150px; }
+        .bar-bg { flex-grow: 1; height: 12px; background: var(--term-bg); border: 1px solid var(--term-dim); min-width: 180px; position: relative; }
         .bar-fill { height: 100%; width: 0%; background: var(--term-main); transition: width 0.1s linear; }
         
-        .vad-indicator { width: 12px; height: 12px; border: 1px solid var(--term-dim); border-radius: 50%; }
-        .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 10px var(--term-ok); border-color: var(--term-ok); }
+        .vad-indicator { width: 12px; height: 12px; border: 1px solid var(--term-dim); display: inline-block; }
+        .vad-indicator.active { background: var(--term-ok); border-color: var(--term-ok); }
 
-        .blink { animation: blinker 1.5s linear infinite; }
-        @keyframes blinker { 50% { opacity: 0.2; } }
-        
-        #word-popup { position: fixed; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); }
+        /* === OUTPUT TERMINAL === */
+        #output { 
+            border: 1px solid var(--term-dim); 
+            background: transparent; 
+            padding: 15px; min-height: 450px; max-height: calc(100vh - 550px); 
+            overflow-y: auto; line-height: 1.6; color: var(--term-main); 
+            text-transform: none; margin-bottom: 15px; outline: none; 
+            white-space: pre-wrap; scroll-behavior: auto; 
+        }
+
+        /* TEXT TOKENS */
+        .word-node { cursor: pointer; padding: 0; }
+        .word-node:hover { background: var(--term-main); color: var(--term-bg); }
+        .word-node.healed { font-weight: bold; text-decoration: underline; color: var(--term-accent); }
+        .word-node.low-conf { color: var(--term-warn); background: rgba(255, 255, 0, 0.1); }
+        .word-node.shielded { color: var(--term-dim); }
+        .interim-text { color: var(--term-dim); }
+
+        /* === DATA TABLES === */
+        table { width: 100%; border-collapse: collapse; font-size: 0.85em; margin-top: 10px; border: 1px solid var(--term-dim); }
+        th, td { border: 1px solid var(--term-dim); padding: 8px; text-align: left; }
+        th { background: var(--term-dim); color: var(--term-bg); }
+
+        /* === POPUP (TUI MODAL) === */
+        #word-popup { 
+            position: fixed; background: var(--term-bg); 
+            border: 2px solid var(--term-main); padding: 15px; display: none; z-index: 1000; 
+            box-shadow: 10px 10px 0px rgba(0, 0, 0, 0.8); /* BLOCKY HARD SHADOW */
+            border-right: 4px solid var(--term-main); border-bottom: 4px solid var(--term-main);
+        }
+        #edit-word-input { width: 150px; margin-bottom: 10px; text-transform: lowercase; }
+
+        .blink { animation: blinker 1s steps(2, start) infinite; }
+        @keyframes blinker { to { visibility: hidden; } }
     </style>
 </head>
 <body class="theme-amber">
 
 <div id="word-popup">
-    <input type="text" id="edit-word-input" style="width:120px; margin-bottom:5px;"><br>
-    <button id="confirm-word-btn">VALIDATE_WORD</button>
+    <div style="font-size: 0.75em; margin-bottom: 8px; color: var(--term-dim);">[OVERRIDE_TOKEN]</div>
+    <input type="text" id="edit-word-input"><br>
+    <button id="confirm-word-btn" style="width: 100%;">[ INJECT_DATA ]</button>
 </div>
 
 <div class="ascii-art">
@@ -75,54 +139,55 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // NEXUS V9 [SINGLE BUTTON UX]
+ > KERNEL V9 // PURE CLI EDITION // ZERO LAG
 </div>
 
 <div class="header">
     <div class="settings-panel">
         <select id="theme-select">
-            <option value="amber" selected>UI: AMBER_CRT</option>
-            <option value="green">UI: GREEN_MONO</option>
-            <option value="cyan">UI: NEON_CYAN</option>
-            <option value="white">UI: LAB_WHITE</option>
+            <option value="amber" selected>[ T: AMBER_PHOSPHOR ]</option>
+            <option value="green">[ T: GREEN_MONO ]</option>
+            <option value="cyan">[ T: NEON_CYAN ]</option>
+            <option value="white">[ T: INVERT_WHITE ]</option>
         </select>
         <select id="domain-select">
-            <option value="general">DOM: GENERAL_NEWS</option>
-            <option value="tech">DOM: TECH_AI</option>
-            <option value="medical">DOM: MEDICAL</option>
-            <option value="finance">DOM: ECONOMY</option>
+            <option value="general">[ D: GENERAL_NEWS ]</option>
+            <option value="tech">[ D: TECH_AI ]</option>
+            <option value="medical">[ D: MEDICAL ]</option>
+            <option value="finance">[ D: ECONOMY ]</option>
         </select>
         <select id="model-select">
-            <option value="turbo" selected>ENGINE: LARGE_V3_TURBO</option>
-            <option value="base">ENGINE: BASE_STABLE</option>
-            <option value="tiny">ENGINE: TINY_MOBILE</option>
+            <option value="turbo" selected>[ M: V3_TURBO_FP16 ]</option>
+            <option value="base">[ M: STABLE_BASE_FP16 ]</option>
+            <option value="tiny">[ M: MOBILE_TINY_FP16 ]</option>
         </select>
         <select id="audio-source">
-            <option value="mic">SRC: MICROPHONE</option>
-            <option value="system">SRC: SYSTEM_AUDIO</option>
+            <option value="mic">[ S: HW_MICROPHONE ]</option>
+            <option value="system">[ S: OS_SYSTEM_AUDIO ]</option>
         </select>
         <select id="lang-select">
-            <option value="italian" selected>LANG: ITA</option>
-            <option value="english">LANG: ENG</option>
+            <option value="italian" selected>[ L: ITALIAN ]</option>
+            <option value="english">[ L: ENGLISH ]</option>
         </select>
-        <button id="master-btn" style="flex-grow: 2;">▶ START_SESSION</button>
+        
+        <button id="master-btn" style="flex-grow: 2;">[ INIT_BOOT_SEQUENCE ]</button>
     </div>
 </div>
 
 <div class="status-bar">
     <div>
-        STATE: <span id="state-text" class="blink" style="color: var(--term-warn);">IDLE</span>
+        SYS_STATE: <span id="state-text" style="color: var(--term-dim);">OFFLINE</span>
         <div id="progress-container" style="display:none; margin-top:10px;">
-            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING_MODELS: 0%</div>
-            <div class="bar-bg" style="width: 200px;"><div id="boot-fill" class="bar-fill" style="background: var(--term-accent);"></div></div>
+            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">ALLOCATING_VRAM...</div>
+            <div class="bar-bg" style="width: 250px;"><div id="boot-fill" class="bar-fill" style="background: var(--term-accent);"></div></div>
         </div>
-        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-accent); margin-top: 5px;"></div>
+        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-dim); margin-top: 5px;"></div>
     </div>
-    <div style="min-width: 320px;">
-        <div class="stat-row">SIG_RMS <div class="bar-bg"><div id="vol-fill" class="bar-fill" style="background: #666;"></div></div></div>
+    <div style="min-width: 350px;">
+        <div class="stat-row">SIG_RMS <div class="bar-bg"><div id="vol-fill" class="bar-fill" style="background: var(--term-dim);"></div></div></div>
         <div class="stat-row">VAD_NET <div class="bar-bg"><div id="vad-fill" class="bar-fill" style="background: var(--term-main);"></div></div></div>
         <div style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 5px;">
-            <span id="probVal" style="font-size: 0.75em;">PROB: 0.00</span>
+            <span id="probVal" style="font-size: 0.75em; color: var(--term-dim);">PROB: 0.00</span>
             <div class="vad-indicator" id="vadLed"></div>
         </div>
     </div>
@@ -130,31 +195,30 @@
 
 <div id="harvest-panel">
     <div style="display: flex; justify-content: space-between; align-items: center;">
-        <span style="color: var(--term-accent); font-weight: bold;">[ SESSION_KNOWLEDGE_HARVEST ]</span>
-        <button id="close-harvest-btn" style="flex-grow:0; padding: 2px 10px;">CLOSE</button>
+        <span style="font-weight: bold;">[ SESSION_KNOWLEDGE_DB ]</span>
+        <button id="close-harvest-btn" style="flex-grow:0; padding: 2px 10px; border: none;">[X] CLOSE</button>
     </div>
     <table>
-        <thead><tr><th>LEMMA</th><th>TYPE</th><th>STATUS</th></tr></thead>
+        <thead><tr><th>TOKEN</th><th>METHOD</th><th>REGISTRY_STATUS</th></tr></thead>
         <tbody id="harvest-body"></tbody>
     </table>
 </div>
 
 <div style="margin-bottom: 10px; display: flex; gap: 10px;">
-    <button id="toggle-harvest-btn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW_HARVEST</button>
-    <button id="export-btn" style="margin-left: auto;">EXPORT_TXT</button>
-    <button id="copy-btn">COPY_ALL</button>
-    <button id="clear-btn">FLUSH_OUTPUT</button>
+    <button id="toggle-harvest-btn">[ VIEW_DB ]</button>
+    <button id="export-btn" style="margin-left: auto;">[ DUMP_TXT ]</button>
+    <button id="copy-btn">[ COPY_BUFFER ]</button>
+    <button id="clear-btn">[ FLUSH_SCREEN ]</button>
 </div>
 
-<div id="output" contenteditable="true" spellcheck="false"></div>
+<div id="output" contenteditable="true" spellcheck="false"><span class="blink">_</span></div>
 
 <script type="module">
-    const DB_NAME = "whisp_nexus_db";
+    const DB_NAME = "whisp_pure_cli_db";
     const STORE_NAME = "experience";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
     let sessionHarvested = new Set();
-    let currentInitialPrompt = "";
 
     async function openDB() {
         return new Promise((resolve, reject) => {
@@ -382,7 +446,7 @@
             const d = e.data;
             if (d.type === 'progress') {
                 UI.progressContainer.style.display = 'block'; const p = Math.round(d.p || 0); 
-                UI.progressText.innerText = 'BOOTING_MODEL: ' + p + '%'; UI.bootFill.style.width = p + "%";
+                UI.progressText.innerText = 'ALLOCATING_VRAM: ' + p + '%'; UI.bootFill.style.width = p + "%";
             } else if (d.type === 'READY_TO_PROCESS') { 
                 UI.stateText.innerText = "SYSTEM_READY_IN_VRAM"; UI.stateText.style.color = "var(--term-main)";
                 UI.progressContainer.style.display = 'none'; isCoreLoaded = true;
@@ -394,6 +458,7 @@
                 if (lastFinalText.length > 15 && incomingText.length > 15 && (incomingText === lastFinalText || lastFinalText.endsWith(incomingText))) return;
                 lastFinalText = incomingText;
                 
+                // Zero-Lag Fragment Injection
                 const frag = document.createDocumentFragment();
                 incomingText.split(/ +/).forEach(w => { 
                     const span = document.createElement('span'); 
@@ -404,7 +469,7 @@
                 UI.output.insertBefore(frag, interimSpan);
                 UI.output.scrollTop = UI.output.scrollHeight;
             } else if (d.type === 'partial' && isSessionActive) { interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; }
-            else if (d.type === 'FLUSH_COMPLETE') { UI.stateText.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); }
+            else if (d.type === 'FLUSH_COMPLETE') { UI.stateText.innerText = "REFINING_DATA..."; refiningWorker.postMessage({ text: UI.output.innerText }); }
         };
 
         refiningWorker.onmessage = (e) => {
@@ -422,12 +487,12 @@
             e.data.corrections.forEach(c => { 
                 const el = UI.output.querySelector(`[data-hid="${c.id}"]`); 
                 if (el) { 
-                    if (c.isShielded) { el.classList.add('shielded'); el.title = "Protetta da regola"; } 
+                    if (c.isShielded) { el.classList.add('shielded'); } 
                     else { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('healed'); }
                 } 
             });
             harvestNewTerms();
-            UI.stateText.innerText = isSessionActive ? "ONLINE_AND_LISTENING" : "SYSTEM_READY_IN_VRAM";
+            UI.stateText.innerText = isSessionActive ? "LISTENING_PORT_OPEN" : "STANDBY_READY";
             UI.stateText.style.color = isSessionActive ? "var(--term-ok)" : "var(--term-main)";
         };
 
@@ -443,7 +508,7 @@
 
     function updateHarvestUI(term, type = "MANUAL_VALIDATE") {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">SAVED_IN_DB</td>`;
+        tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">CACHED</td>`;
         UI.harvestBody.prepend(tr);
     }
 
@@ -481,7 +546,7 @@
 
     async function fetchZeitgeist() {
         const dom = UI.domainSelect.value;
-        UI.stateText.innerText = "FETCH_ZEITGEIST...";
+        UI.stateText.innerText = "FETCH_KNOWLEDGE_BASE...";
         const feeds = { "general": "rss?hl=it&gl=IT&ceid=IT:it", "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", "finance": "rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it" };
         try {
             const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent('https://news.google.com/' + feeds[dom])}`;
@@ -496,21 +561,25 @@
             matches.forEach(w => { if (w.length > 3) snapshotHarvest.add(w.toLowerCase()); });
             snapshotHarvest.forEach(w => window.referenceDict.add(w));
             
-            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK [DOM: ${dom.toUpperCase()}]: [${snapshotHarvest.size} TOKENS]`;
-        } catch (error) { UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: [OFFLINE_MODE]`; }
+            UI.zeitgeistLog.innerText = `> DICT_SYNC_OK [DOM: ${dom.toUpperCase()}]: [${snapshotHarvest.size} TOKENS]`;
+        } catch (error) { UI.zeitgeistLog.innerText = `> DICT_SYNC_FAIL: [LOCAL_MODE_ONLY]`; }
     }
 
     // --- AVVIO E STOP DEL MICROFONO ---
     async function startListening() {
         isSessionActive = true; lastFinalText = "";
-        UI.stateText.innerText = "ONLINE_AND_LISTENING"; UI.stateText.style.color = "var(--term-ok)";
-        UI.masterBtn.innerText = "⏹ STOP_SESSION";
+        UI.stateText.innerText = "LISTENING_PORT_OPEN"; UI.stateText.style.color = "var(--term-ok)";
+        UI.masterBtn.innerText = "[ TERMINATE_SESSION ]";
         UI.masterBtn.className = "running";
         
         whisperWorker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
         
         audioCtx = new AudioContext({ sampleRate: 16000 });
         stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
+        
+        // Pulizia schermata per il cursore finto
+        if (UI.output.innerText.trim() === "_") UI.output.innerHTML = "";
+
         await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
             class P extends AudioWorkletProcessor {
                 constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; this.s=0; this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; }; }
@@ -535,10 +604,10 @@
         isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); 
         if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); 
         
-        UI.masterBtn.innerText = "▶ START_SESSION";
+        UI.masterBtn.innerText = "[ RESUME_SESSION ]";
         UI.masterBtn.className = "";
         
-        UI.stateText.innerText = "FLUSHING_AUDIO_QUEUE..."; UI.stateText.style.color = "var(--term-warn)"; 
+        UI.stateText.innerText = "FLUSHING_AUDIO_BUFFER..."; UI.stateText.style.color = "var(--term-warn)"; 
         whisperWorker.postMessage({ type: 'request_flush' }); 
     }
 
@@ -546,7 +615,8 @@
         if (isSessionActive) stopListening();
         vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
         isCoreLoaded = false; window.referenceDict.clear(); 
-        UI.stateText.innerText = "VRAM_FLUSHED"; UI.stateText.style.color = "var(--term-warn)";
+        UI.masterBtn.innerText = "[ INIT_BOOT_SEQUENCE ]";
+        UI.stateText.innerText = "VRAM_FLUSHED"; UI.stateText.style.color = "var(--term-dim)";
         UI.probVal.innerText = "PROB: 0.00"; UI.vadFill.style.width = "0%"; UI.volFill.style.width = "0%"; UI.vadLed.classList.remove('active');
         initWorkers(); 
     }
@@ -559,7 +629,7 @@
             if (!isCoreLoaded) {
                 UI.masterBtn.disabled = true;
                 UI.masterBtn.className = "booting";
-                UI.masterBtn.innerText = "⚙ BOOTING_MODELS...";
+                UI.masterBtn.innerText = "[ ALLOCATING... ]";
                 await fetchZeitgeist();
                 UI.stateText.innerText = "BOOT_CORE_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
             } else {
@@ -568,12 +638,11 @@
         }
     };
 
-    // Auto-Unload se cambi le impostazioni critiche del motore
     UI.precisionSelect.onchange = () => { if (isCoreLoaded) unloadCore(); };
 
-    // Gestione Popup Parole
+    // Gestione Popup Parole (TUI Modale)
     let activeToken = null;
-    UI.output.onclick = (e) => { if (e.target.classList.contains('word-node')) { activeToken = e.target; UI.editInput.value = activeToken.innerText.trim(); UI.popup.style.display = 'block'; UI.popup.style.top = (e.clientY + 10) + 'px'; UI.popup.style.left = (e.clientX) + 'px'; } else { UI.popup.style.display = 'none'; } };
+    UI.output.onclick = (e) => { if (e.target.classList.contains('word-node')) { activeToken = e.target; UI.editInput.value = activeToken.innerText.trim(); UI.popup.style.display = 'block'; UI.popup.style.top = (e.clientY + 10) + 'px'; UI.popup.style.left = (e.clientX) + 'px'; UI.editInput.focus(); } else { UI.popup.style.display = 'none'; } };
     UI.confirmBtn.onclick = async () => { if (activeToken) { 
         const newWord = UI.editInput.value.trim();
         activeToken.innerText = (activeToken.dataset.hid === "0" ? "" : " ") + newWord; 
@@ -583,14 +652,15 @@
         if (!window.experienceDict.has(cleanWord)) { window.experienceDict.add(cleanWord); updateHarvestUI(cleanWord, "MANUAL_VALIDATE"); await saveExperience(); }
         UI.popup.style.display = 'none'; 
     } };
+    UI.editInput.addEventListener("keypress", function(event) { if (event.key === "Enter") { event.preventDefault(); UI.confirmBtn.click(); } });
 
     // Altri Eventi UI
     document.getElementById('toggle-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'block';
     document.getElementById('close-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'none';
-    document.getElementById('clear-btn').onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
-    document.getElementById('copy-btn').onclick = () => navigator.clipboard.writeText(UI.output.innerText);
+    document.getElementById('clear-btn').onclick = () => { UI.output.innerHTML = "<span class='blink'>_</span>"; };
+    document.getElementById('copy-btn').onclick = () => navigator.clipboard.writeText(UI.output.innerText.replace('_',''));
     document.getElementById('export-btn').onclick = () => {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([UI.output.innerText], { type: 'text/plain' })); a.download = `WHISP_TRANSCRIPT_${Date.now()}.txt`; a.click();
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([UI.output.innerText.replace('_','')], { type: 'text/plain' })); a.download = `DUMP_${Date.now()}.txt`; a.click();
     };
     
     (async () => {
