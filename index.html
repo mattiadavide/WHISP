@@ -1,1 +1,339 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="coi-serviceworker.js"></script>
+    <title>WHISP // TERMINAL V9</title>
+    <style>
+        :root { 
+            --term-bg: #000; --term-main: #ffb000; --term-dim: #540; 
+            --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; --term-shield: #a3f;
+        }
+        body.theme-green { --term-main: #0f0; --term-dim: #040; --term-accent: #0af; }
+        body.theme-cyan { --term-main: #0ff; --term-dim: #044; --term-accent: #0af; }
+        body.theme-white { --term-main: #fff; --term-dim: #333; --term-accent: #aaa; }
 
+        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; transition: color 0.3s ease; }
+        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; }
+        .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
+        .settings-panel { display: flex; gap: 8px; flex-wrap: wrap; }
+        
+        select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
+        button:hover { background: var(--term-main); color: var(--term-bg); }
+        
+        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
+        #output { border: 1px solid rgba(255,255,255,0.1); padding: 15px; min-height: 400px; max-height: calc(100vh - 600px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; margin-bottom: 20px; outline: none; white-space: pre-wrap; scroll-behavior: smooth; }
+        
+        /* HARVEST PANEL */
+        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(255, 128, 0, 0.05); }
+        table { width: 100%; border-collapse: collapse; font-size: 0.8em; margin-top: 10px; }
+        th { text-align: left; border-bottom: 1px solid var(--term-accent); padding: 5px; color: var(--term-accent); }
+        td { padding: 5px; border-bottom: 1px solid #222; }
+
+        /* LOOKUP STYLES */
+        .word-node { cursor: pointer; padding: 0 1px; transition: background 0.2s; }
+        .word-node:hover { background: rgba(255,255,255,0.1); }
+        .word-node.healed { color: var(--term-main); font-weight: bold; text-shadow: 0 0 8px var(--term-main); }
+        .word-node.low-conf { color: var(--term-warn); text-decoration: underline dotted; }
+        .interim-text { color: #666; font-style: italic; }
+        
+        .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; white-space: nowrap; margin-bottom: 5px; }
+        .ascii-meter { font-weight: bold; color: var(--term-main); letter-spacing: -1px; }
+        .blink { animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0.2; } }
+        
+        #word-popup { position: fixed; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); }
+    </style>
+</head>
+<body class="theme-amber">
+
+<div id="word-popup">
+    <input type="text" id="edit-word-input" style="width:120px; margin-bottom:5px;"><br>
+    <button id="confirm-word-btn">VALIDATE_WORD</button>
+</div>
+
+<div class="ascii-art">
+ ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
+ ██║    ██║██║  ██║██║██╔════╝██╔══██╗
+ ██║ █╗ ██║███████║██║███████║██████╔╝
+ ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
+ ╚███╔███╔╝██║  ██║██║███████║██║     
+  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
+ > DESIGN BY MATTIA DAVIDE AMICO // NEXUS V9
+</div>
+
+<div class="header">
+    <div class="settings-panel">
+        <select id="theme-select">
+            <option value="amber" selected>UI: AMBER_CRT</option>
+            <option value="green">UI: GREEN_MONO</option>
+            <option value="cyan">UI: NEON_CYAN</option>
+            <option value="white">UI: LAB_WHITE</option>
+        </select>
+        <select id="domain-select">
+            <option value="general">DOM: GENERAL_NEWS</option>
+            <option value="tech">DOM: TECH_AI</option>
+            <option value="medical">DOM: MEDICAL</option>
+            <option value="finance">DOM: ECONOMY</option>
+        </select>
+        <select id="model-select">
+            <option value="turbo" selected>ENGINE: LARGE_V3_TURBO</option>
+            <option value="base">ENGINE: BASE_STABLE</option>
+            <option value="tiny">ENGINE: TINY_MOBILE</option>
+        </select>
+        <select id="audio-source">
+            <option value="mic">SRC: MICROPHONE</option>
+            <option value="system">SRC: SYSTEM_AUDIO</option>
+        </select>
+        <select id="lang-select">
+            <option value="italian" selected>LANG: ITA</option>
+            <option value="english">LANG: ENG</option>
+        </select>
+        <button id="boot-btn" style="flex-grow: 2; font-weight: bold;">BOOT_SYSTEM()</button>
+    </div>
+</div>
+
+<div id="harvest-panel">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="color: var(--term-accent); font-weight: bold;">[ SESSION_KNOWLEDGE_HARVEST ]</span>
+        <button id="close-harvest-btn" style="flex-grow:0; padding: 2px 10px;">CLOSE</button>
+    </div>
+    <table>
+        <thead><tr><th>LEMMA</th><th>TYPE</th><th>STATUS</th></tr></thead>
+        <tbody id="harvest-body"></tbody>
+    </table>
+</div>
+
+<div class="status-bar">
+    <div>STATE: <span id="state-text" class="blink">IDLE</span></div>
+    <div style="min-width: 320px;">
+        <div class="stat-row">SIG_RMS <span id="rms-meter" class="ascii-meter">[--------------------]</span></div>
+        <div class="stat-row">VAD_NET <span id="vad-meter" class="ascii-meter">[--------------------]</span></div>
+    </div>
+</div>
+
+<div style="margin-bottom: 10px; display: flex; gap: 10px;">
+    <button id="toggle-harvest-btn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW_HARVEST</button>
+    <button id="export-btn" style="margin-left: auto;">EXPORT_TXT</button>
+    <button id="copy-btn">COPY_ALL</button>
+    <button id="clear-btn">FLUSH_OUTPUT</button>
+</div>
+
+<div id="output" contenteditable="true" spellcheck="false"></div>
+
+<script type="module">
+    class Trie {
+        constructor() { this.root = {}; }
+        insert(word) {
+            let n = this.root;
+            for (let c of word.toLowerCase()) { if(!n[c]) n[c] = {}; n = n[c]; }
+            n.isEnd = true;
+        }
+        has(word) {
+            let n = this.root;
+            for (let c of word.toLowerCase()) { if(!n[c]) return false; n = n[c]; }
+            return n.isEnd;
+        }
+    }
+
+    const VAD_CODE = `
+        import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
+        let model, state, whisperPort, isSpeaking = false, silenceFrames = 0;
+        self.onmessage = async (e) => {
+            if (e.data.type === 'init') {
+                model = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' }, device: 'wasm', dtype: 'fp32' });
+                state = new Tensor('float32', new Float32Array(2*1*128), [2, 1, 128]);
+                self.postMessage({type: 'ready'});
+            }
+            if (e.data.type === 'port') whisperPort = e.data.port;
+            if (e.data.type === 'audio') {
+                const out = await model({ input: new Tensor('float32', e.data.chunk, [1, 512]), sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
+                state = out.stateN || out.staten;
+                const prob = out.output.data[0];
+                if (prob > 0.40) {
+                    isSpeaking = true; silenceFrames = 0;
+                    if(whisperPort) whisperPort.postMessage({type: 'stream', data: e.data.chunk});
+                } else if (isSpeaking) {
+                    silenceFrames++;
+                    if(whisperPort) whisperPort.postMessage({type: 'stream', data: e.data.chunk});
+                    if (silenceFrames > 30) { isSpeaking = false; if(whisperPort) whisperPort.postMessage({type: 'commit'}); }
+                }
+                self.postMessage({type: 'vad', prob});
+            }
+        };
+    `;
+
+    const WHISPER_CODE = `
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
+        let pipe, buffer = [], isBusy = false, currentLang = 'italian';
+        self.onmessage = async (e) => {
+            if (e.data.type === 'init') {
+                const m = { 'turbo': 'onnx-community/whisper-large-v3-turbo', 'base': 'onnx-community/whisper-base', 'tiny': 'onnx-community/whisper-tiny' };
+                currentLang = e.data.lang;
+                pipe = await pipeline('automatic-speech-recognition', m[e.data.model], { device: 'webgpu', dtype: 'fp16' });
+                self.postMessage({type: 'ready'});
+            }
+            if (e.data.type === 'stream') buffer.push(...e.data.data);
+            if (e.data.type === 'commit' && !isBusy && buffer.length > 2500) {
+                isBusy = true;
+                const res = await pipe(new Float32Array(buffer), { language: currentLang, task: 'transcribe' });
+                self.postMessage({type: 'text', text: res.text});
+                buffer = []; isBusy = false;
+            }
+        };
+    `;
+
+    const Kernel = {
+        trie: new Trie(),
+        state: 'IDLE',
+        interimSpan: document.createElement('span'),
+        activeToken: null,
+        
+        async boot() {
+            this.updateState('STARTING_SYSTEM...');
+            document.getElementById('boot-btn').disabled = true;
+            this.interimSpan.className = 'interim-text';
+            this.syncZeitgeist();
+
+            this.vad = new Worker(URL.createObjectURL(new Blob([VAD_CODE], {type: 'application/javascript'})), {type: 'module'});
+            this.whisper = new Worker(URL.createObjectURL(new Blob([WHISPER_CODE], {type: 'application/javascript'})), {type: 'module'});
+
+            const chan = new MessageChannel();
+            this.vad.postMessage({type: 'port', port: chan.port1}, [chan.port1]);
+            this.whisper.postMessage({ type: 'init', model: document.getElementById('model-select').value, lang: document.getElementById('lang-select').value });
+
+            this.vad.postMessage({type: 'init'});
+            this.vad.onmessage = (e) => this.handleVad(e.data);
+            this.whisper.onmessage = (e) => this.handleWhisper(e.data);
+            chan.port2.onmessage = (e) => this.whisper.postMessage(e.data);
+        },
+
+        async startAudio() {
+            try {
+                const src = document.getElementById('audio-source').value;
+                const stream = (src === 'system') 
+                    ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+                    : await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                const ctx = new AudioContext({sampleRate: 16000});
+                const sourceNode = ctx.createMediaStreamSource(stream);
+                
+                await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+                    class P extends AudioWorkletProcessor {
+                        constructor() { super(); this.buf = new Float32Array(512); this.ptr = 0; }
+                        process(i) {
+                            const c = i[0][0]; if(!c) return true;
+                            for(let j=0; j<c.length; j++) {
+                                this.buf[this.ptr++] = c[j];
+                                if(this.ptr >= 512) {
+                                    this.port.postMessage({c: this.buf, r: Math.sqrt(this.buf.reduce((a,b)=>a+b*b,0)/512)});
+                                    this.buf = new Float32Array(512); this.ptr = 0;
+                                }
+                            }
+                            return true;
+                        }
+                    }
+                    registerProcessor('p', P);
+                `], {type:'text/javascript'})));
+
+                const workletNode = new AudioWorkletNode(ctx, 'p');
+                workletNode.port.onmessage = (e) => {
+                    this.updateMeter('rms-meter', e.data.r * 15);
+                    this.vad.postMessage({type: 'audio', chunk: e.data.c}, [e.data.c.buffer]);
+                };
+                sourceNode.connect(workletNode);
+                this.updateState('ONLINE');
+                document.getElementById('output').appendChild(this.interimSpan);
+            } catch (err) { this.updateState('ERROR_DENIED'); }
+        },
+
+        handleVad(d) {
+            if(d.type === 'ready') this.updateState('AI_ENGINES_READY');
+            if(d.type === 'vad') {
+                this.updateMeter('vad-meter', d.prob);
+                if(d.prob > 0.45) this.interimSpan.innerText = '...ASCOLTO_IN_CORSO...';
+            }
+        },
+
+        handleWhisper(d) {
+            if(d.type === 'ready') this.startAudio();
+            if(d.type === 'text' && d.text.trim()) {
+                this.interimSpan.innerText = '';
+                d.text.trim().split(/\s+/).forEach(w => {
+                    const span = document.createElement('span');
+                    span.className = 'word-node';
+                    const clean = w.toLowerCase().replace(/[^a-zà-ù]/g, '');
+                    if(this.trie.has(clean)) span.classList.add('healed');
+                    span.innerText = w + ' ';
+                    document.getElementById('output').insertBefore(span, this.interimSpan);
+                });
+                document.getElementById('output').scrollTop = document.getElementById('output').scrollHeight;
+            }
+        },
+
+        updateState(txt) { document.getElementById('state-text').innerText = txt; },
+        updateMeter(id, val) {
+            const b = Math.min(Math.floor(val * 20), 20);
+            document.getElementById(id).innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
+        },
+
+        async syncZeitgeist() {
+            const dom = document.getElementById('domain-select').value;
+            const feeds = { "general": "rss?hl=it&gl=IT&ceid=IT:it", "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", "finance": "rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it" };
+            try {
+                const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://news.google.com/' + feeds[dom]));
+                const j = await r.json();
+                const w = j.contents.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
+                w.forEach(word => this.trie.insert(word));
+                console.log("ZEITGEIST_SYNC_OK:", w.length);
+            } catch(e) { console.warn("ZEITGEIST_OFFLINE"); }
+        }
+    };
+
+    // UI Events & Features
+    document.getElementById('boot-btn').onclick = () => Kernel.boot();
+    document.getElementById('theme-select').onchange = (e) => {
+        document.body.className = (e.target.value === 'default') ? '' : 'theme-' + e.target.value;
+    };
+    
+    document.getElementById('output').onclick = (e) => {
+        if (e.target.classList.contains('word-node')) {
+            Kernel.activeToken = e.target;
+            const popup = document.getElementById('word-popup');
+            const input = document.getElementById('edit-word-input');
+            input.value = Kernel.activeToken.innerText.trim();
+            popup.style.display = 'block';
+            popup.style.top = (e.clientY + 10) + 'px';
+            popup.style.left = (e.clientX) + 'px';
+        } else {
+            document.getElementById('word-popup').style.display = 'none';
+        }
+    };
+
+    document.getElementById('confirm-word-btn').onclick = () => {
+        if (Kernel.activeToken) {
+            const newW = document.getElementById('edit-word-input').value.trim();
+            Kernel.activeToken.innerText = newW + ' ';
+            Kernel.activeToken.classList.add('healed');
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${newW}</td><td>MANUAL</td><td style="color:var(--term-ok)">VALIDATED</td>`;
+            document.getElementById('harvest-body').prepend(tr);
+            document.getElementById('word-popup').style.display = 'none';
+        }
+    };
+
+    document.getElementById('toggle-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'block';
+    document.getElementById('close-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'none';
+    document.getElementById('clear-btn').onclick = () => document.getElementById('output').innerHTML = '';
+    document.getElementById('copy-btn').onclick = () => navigator.clipboard.writeText(document.getElementById('output').innerText);
+    document.getElementById('export-btn').onclick = () => {
+        const blob = new Blob([document.getElementById('output').innerText], {type: 'text/plain'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `whisp_session_${Date.now()}.txt`;
+        a.click();
+    };
+</script>
+</body>
+</html>
