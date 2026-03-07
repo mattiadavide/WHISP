@@ -438,7 +438,7 @@
                 UI.sysPowerBtn.style.borderColor = "var(--term-err)";
                 UI.sysPowerBtn.disabled = false;
                 startListening();
-            } else if (d.type === 'final' && isSessionActive) {
+            } else if (d.type === 'final' && (isSessionActive || isShuttingDown)) {
                 interimSpan.innerText = ""; 
                 const incomingText = d.text.trim();
                 if (lastFinalText.length > 15 && incomingText.length > 15 && (incomingText === lastFinalText || lastFinalText.endsWith(incomingText))) return;
@@ -451,7 +451,7 @@
                     UI.output.insertBefore(span, interimSpan); 
                 });
                 scrollOutput();
-            } else if (d.type === 'partial' && isSessionActive) { 
+            } else if (d.type === 'partial' && (isSessionActive || isShuttingDown)) { 
                 interimSpan.innerText = " " + d.text.trim() + "..."; 
                 scrollOutput(); 
             } else if (d.type === 'FLUSH_COMPLETE') { 
