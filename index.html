@@ -4,28 +4,54 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL - V4.5</title>
+    <title>WHISP // TERMINAL V9</title>
     <style>
-        :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
-        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
-        .ascii-art { white-space: pre; font-size: clamp(4px, 0.7vw, 7px); line-height: 1.1; margin-bottom: 20px; font-weight: bold; color: var(--term-main); }
+        :root { 
+            --term-bg: #000; --term-main: #ffb000; --term-dim: #540; 
+            --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; --term-shield: #a3f;
+        }
+        body.theme-green { --term-main: #0f0; --term-dim: #040; --term-accent: #0af; }
+        body.theme-cyan { --term-main: #0ff; --term-dim: #044; --term-accent: #0af; }
+        body.theme-white { --term-main: #fff; --term-dim: #333; --term-accent: #aaa; }
+
+        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; transition: color 0.3s ease; }
+        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; }
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
-        .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+        .settings-panel { display: flex; gap: 8px; flex-wrap: wrap; }
+        
         select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
         button:hover { background: var(--term-main); color: var(--term-bg); }
-        button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; opacity: 0.5; }
+        
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
-        #output { border: 1px solid rgba(255,255,255,0.1); background: transparent; padding: 15px; min-height: 400px; max-height: calc(100vh - 550px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
-        .word-token { cursor: pointer; padding: 2px 1px; border-radius: 2px; display: inline-block; }
-        .interim-text { color: var(--term-dim); font-style: italic; }
-        .stats-panel { min-width: 320px; }
-        .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; height: 1.4em; }
-        .ascii-meter { display: inline-block; width: 23ch; font-weight: bold; color: var(--term-main); }
-        .vad-indicator { width: 10px; height: 10px; border: 1px solid var(--term-dim); display: inline-block; vertical-align: middle; margin-left: 5px; }
-        .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 8px var(--term-ok); }
+        #output { border: 1px solid rgba(255,255,255,0.1); padding: 15px; min-height: 400px; max-height: calc(100vh - 600px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; margin-bottom: 20px; outline: none; white-space: pre-wrap; scroll-behavior: smooth; }
+        
+        /* HARVEST PANEL */
+        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(255, 128, 0, 0.05); }
+        table { width: 100%; border-collapse: collapse; font-size: 0.8em; margin-top: 10px; }
+        th { text-align: left; border-bottom: 1px solid var(--term-accent); padding: 5px; color: var(--term-accent); }
+        td { padding: 5px; border-bottom: 1px solid #222; }
+
+        /* LOOKUP STYLES */
+        .word-node { cursor: pointer; padding: 0 1px; transition: background 0.2s; }
+        .word-node:hover { background: rgba(255,255,255,0.1); }
+        .word-node.healed { color: var(--term-main); font-weight: bold; text-shadow: 0 0 8px var(--term-main); }
+        .word-node.low-conf { color: var(--term-warn); text-decoration: underline dotted; }
+        .interim-text { color: #666; font-style: italic; }
+        
+        .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; white-space: nowrap; margin-bottom: 5px; }
+        .ascii-meter { font-weight: bold; color: var(--term-main); letter-spacing: -1px; }
+        .blink { animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0.2; } }
+        
+        #word-popup { position: fixed; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); }
     </style>
 </head>
-<body>
+<body class="theme-amber">
+
+<div id="word-popup">
+    <input type="text" id="edit-word-input" style="width:120px; margin-bottom:5px;"><br>
+    <button id="confirm-word-btn">VALIDATE_WORD</button>
+</div>
 
 <div class="ascii-art">
  ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
@@ -34,240 +60,280 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > V4.5 STABLE | FIX: SILERO_CONFIG | MEMORY_GUARD: ENABLED
+ > DESIGN BY MATTIA DAVIDE AMICO // NEXUS V9
 </div>
 
 <div class="header">
     <div class="settings-panel">
-        <select id="precisionSelect">
-            <option value="turbo" selected>LARGE_TURBO (FP16_GPU)</option>
-            <option value="base">STANDARD_BASE (FP16_GPU)</option>
+        <select id="theme-select">
+            <option value="amber" selected>UI: AMBER_CRT</option>
+            <option value="green">UI: GREEN_MONO</option>
+            <option value="cyan">UI: NEON_CYAN</option>
+            <option value="white">UI: LAB_WHITE</option>
         </select>
-        <select id="languageSelect"></select>
-        <select id="audioSource">
+        <select id="domain-select">
+            <option value="general">DOM: GENERAL_NEWS</option>
+            <option value="tech">DOM: TECH_AI</option>
+            <option value="medical">DOM: MEDICAL</option>
+            <option value="finance">DOM: ECONOMY</option>
+        </select>
+        <select id="model-select">
+            <option value="turbo" selected>ENGINE: LARGE_V3_TURBO</option>
+            <option value="base">ENGINE: BASE_STABLE</option>
+            <option value="tiny">ENGINE: TINY_MOBILE</option>
+        </select>
+        <select id="audio-source">
             <option value="mic">SRC: MICROPHONE</option>
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
-        <button id="sysPowerBtn">BOOT_SYSTEM()</button>
+        <select id="lang-select">
+            <option value="italian" selected>LANG: ITA</option>
+            <option value="english">LANG: ENG</option>
+        </select>
+        <button id="boot-btn" style="flex-grow: 2; font-weight: bold;">BOOT_SYSTEM()</button>
     </div>
 </div>
 
-<div class="status-bar">
-    <div>STATUS: <span id="status">IDLE</span></div>
-    <div class="stats-panel">
-        <div class="stat-row"><span>SIG_RMS</span><span id="volAscii" class="ascii-meter">[--------------------]</span></div>
-        <div class="stat-row"><span>VAD_NET</span><span id="vadAscii" class="ascii-meter">[--------------------]</span></div>
-        <div class="stat-row" style="margin-top: 5px; font-size: 0.75em;">
-            <span id="probVal">PROB: 0.00</span><div class="vad-indicator" id="vadLed"></div>
-        </div>
+<div id="harvest-panel">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="color: var(--term-accent); font-weight: bold;">[ SESSION_KNOWLEDGE_HARVEST ]</span>
+        <button id="close-harvest-btn" style="flex-grow:0; padding: 2px 10px;">CLOSE</button>
     </div>
+    <table>
+        <thead><tr><th>LEMMA</th><th>TYPE</th><th>STATUS</th></tr></thead>
+        <tbody id="harvest-body"></tbody>
+    </table>
+</div>
+
+<div class="status-bar">
+    <div>STATE: <span id="state-text" class="blink">IDLE</span></div>
+    <div style="min-width: 320px;">
+        <div class="stat-row">SIG_RMS <span id="rms-meter" class="ascii-meter">[--------------------]</span></div>
+        <div class="stat-row">VAD_NET <span id="vad-meter" class="ascii-meter">[--------------------]</span></div>
+    </div>
+</div>
+
+<div style="margin-bottom: 10px; display: flex; gap: 10px;">
+    <button id="toggle-harvest-btn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW_HARVEST</button>
+    <button id="export-btn" style="margin-left: auto;">EXPORT_TXT</button>
+    <button id="copy-btn">COPY_ALL</button>
+    <button id="clear-btn">FLUSH_OUTPUT</button>
 </div>
 
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- WORKERS ---
-    const vadWorkerCode = `
-        import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
-        env.allowLocalModels = false;
-        let vadModel, state, whisperPort, isSpeaking = false, silenceFrames = 0, isOnline = false;
-        
-        const MAX_BUF_SIZE = 1000 * 512; // ~32 secondi massimi
-        let audioBuf = new Float32Array(MAX_BUF_SIZE);
-        let audioBufPtr = 0;
-        const preRoll = new Float32Array(25 * 512);
-        let preRollPtr = 0, preRollCount = 0;
-
-        function flush(isPartial = false) {
-            if (!isOnline || audioBufPtr <= 0) return;
-            const chunk = new Float32Array(audioBufPtr * 512);
-            chunk.set(audioBuf.subarray(0, audioBufPtr * 512));
-            whisperPort.postMessage({ type: 'transcribe', audioBuffer: chunk.buffer, isPartial }, [chunk.buffer]);
-            if (!isPartial) audioBufPtr = 0;
+    class Trie {
+        constructor() { this.root = {}; }
+        insert(word) {
+            let n = this.root;
+            for (let c of word.toLowerCase()) { if(!n[c]) n[c] = {}; n = n[c]; }
+            n.isEnd = true;
         }
+        has(word) {
+            let n = this.root;
+            for (let c of word.toLowerCase()) { if(!n[c]) return false; n = n[c]; }
+            return n.isEnd;
+        }
+    }
 
+    const VAD_CODE = `
+        import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
+        let model, state, whisperPort, isSpeaking = false, silenceFrames = 0;
         self.onmessage = async (e) => {
-            const { type, port } = e.data;
-            if (type === 'load') {
-                // FIX: Caricamento esplicito del repository ONNX per evitare bug config.json
-                vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
-                state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
-                self.postMessage({ type: 'ready' });
-            } else if (type === 'init_whisper_port') {
-                whisperPort = port;
-                whisperPort.onmessage = (ev) => { if (ev.data.type === 'WHISPER_ONLINE') isOnline = true; };
-            } else if (type === 'init_worklet_port') {
-                port.onmessage = async (we) => {
-                    if (we.data.type === 'vad' && vadModel) {
-                        const chunk = new Float32Array(we.data.data);
-                        if (isSpeaking) {
-                            // MEMORY_GUARD: Impedisce l'overflow e le allucinazioni lunghe
-                            if (audioBufPtr < 800) { // ~25 secondi
-                                audioBuf.set(chunk, audioBufPtr * 512);
-                                audioBufPtr++;
-                                if (audioBufPtr % 60 === 0) flush(true);
-                            } else {
-                                flush(false);
-                            }
-                        } else {
-                            preRoll.set(chunk, preRollPtr * 512);
-                            preRollPtr = (preRollPtr + 1) % 25;
-                            if (preRollCount < 25) preRollCount++;
-                        }
+            if (e.data.type === 'init') {
+                model = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' }, device: 'wasm', dtype: 'fp32' });
+                state = new Tensor('float32', new Float32Array(2*1*128), [2, 1, 128]);
+                self.postMessage({type: 'ready'});
+            }
+            if (e.data.type === 'port') whisperPort = e.data.port;
+            if (e.data.type === 'audio') {
+                const out = await model({ input: new Tensor('float32', e.data.chunk, [1, 512]), sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
+                state = out.stateN || out.staten;
+                const prob = out.output.data[0];
+                if (prob > 0.40) {
+                    isSpeaking = true; silenceFrames = 0;
+                    if(whisperPort) whisperPort.postMessage({type: 'stream', data: e.data.chunk});
+                } else if (isSpeaking) {
+                    silenceFrames++;
+                    if(whisperPort) whisperPort.postMessage({type: 'stream', data: e.data.chunk});
+                    if (silenceFrames > 30) { isSpeaking = false; if(whisperPort) whisperPort.postMessage({type: 'commit'}); }
+                }
+                self.postMessage({type: 'vad', prob});
+            }
+        };
+    `;
 
-                        const out = await vadModel({ 
-                            input: new Tensor('float32', chunk, [1, 512]), 
-                            sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), 
-                            state 
-                        });
-                        state = out.stateN || out.staten || state;
-                        const prob = out.output.data[0];
+    const WHISPER_CODE = `
+        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
+        let pipe, buffer = [], isBusy = false, currentLang = 'italian';
+        self.onmessage = async (e) => {
+            if (e.data.type === 'init') {
+                const m = { 'turbo': 'onnx-community/whisper-large-v3-turbo', 'base': 'onnx-community/whisper-base', 'tiny': 'onnx-community/whisper-tiny' };
+                currentLang = e.data.lang;
+                pipe = await pipeline('automatic-speech-recognition', m[e.data.model], { device: 'webgpu', dtype: 'fp16' });
+                self.postMessage({type: 'ready'});
+            }
+            if (e.data.type === 'stream') buffer.push(...e.data.data);
+            if (e.data.type === 'commit' && !isBusy && buffer.length > 2500) {
+                isBusy = true;
+                const res = await pipe(new Float32Array(buffer), { language: currentLang, task: 'transcribe' });
+                self.postMessage({type: 'text', text: res.text});
+                buffer = []; isBusy = false;
+            }
+        };
+    `;
 
-                        if (prob > (isSpeaking ? 0.35 : 0.65)) {
-                            if (!isSpeaking) {
-                                isSpeaking = true; audioBufPtr = 0;
-                                for (let i = 0; i < preRollCount; i++) {
-                                    let idx = (preRollPtr - preRollCount + i + 25) % 25;
-                                    audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512);
-                                    audioBufPtr++;
+    const Kernel = {
+        trie: new Trie(),
+        state: 'IDLE',
+        interimSpan: document.createElement('span'),
+        activeToken: null,
+        
+        async boot() {
+            this.updateState('STARTING_SYSTEM...');
+            document.getElementById('boot-btn').disabled = true;
+            this.interimSpan.className = 'interim-text';
+            this.syncZeitgeist();
+
+            this.vad = new Worker(URL.createObjectURL(new Blob([VAD_CODE], {type: 'application/javascript'})), {type: 'module'});
+            this.whisper = new Worker(URL.createObjectURL(new Blob([WHISPER_CODE], {type: 'application/javascript'})), {type: 'module'});
+
+            const chan = new MessageChannel();
+            this.vad.postMessage({type: 'port', port: chan.port1}, [chan.port1]);
+            this.whisper.postMessage({ type: 'init', model: document.getElementById('model-select').value, lang: document.getElementById('lang-select').value });
+
+            this.vad.postMessage({type: 'init'});
+            this.vad.onmessage = (e) => this.handleVad(e.data);
+            this.whisper.onmessage = (e) => this.handleWhisper(e.data);
+            chan.port2.onmessage = (e) => this.whisper.postMessage(e.data);
+        },
+
+        async startAudio() {
+            try {
+                const src = document.getElementById('audio-source').value;
+                const stream = (src === 'system') 
+                    ? await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+                    : await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                const ctx = new AudioContext({sampleRate: 16000});
+                const sourceNode = ctx.createMediaStreamSource(stream);
+                
+                await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+                    class P extends AudioWorkletProcessor {
+                        constructor() { super(); this.buf = new Float32Array(512); this.ptr = 0; }
+                        process(i) {
+                            const c = i[0][0]; if(!c) return true;
+                            for(let j=0; j<c.length; j++) {
+                                this.buf[this.ptr++] = c[j];
+                                if(this.ptr >= 512) {
+                                    this.port.postMessage({c: this.buf, r: Math.sqrt(this.buf.reduce((a,b)=>a+b*b,0)/512)});
+                                    this.buf = new Float32Array(512); this.ptr = 0;
                                 }
                             }
-                            silenceFrames = 0;
-                        } else if (isSpeaking) {
-                            if (++silenceFrames > 35) { isSpeaking = false; flush(false); }
+                            return true;
                         }
-                        self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
-                        port.postMessage({ type: 'return_buf', data: chunk.buffer }, [chunk.buffer]);
                     }
+                    registerProcessor('p', P);
+                `], {type:'text/javascript'})));
+
+                const workletNode = new AudioWorkletNode(ctx, 'p');
+                workletNode.port.onmessage = (e) => {
+                    this.updateMeter('rms-meter', e.data.r * 15);
+                    this.vad.postMessage({type: 'audio', chunk: e.data.c}, [e.data.c.buffer]);
                 };
+                sourceNode.connect(workletNode);
+                this.updateState('ONLINE');
+                document.getElementById('output').appendChild(this.interimSpan);
+            } catch (err) { this.updateState('ERROR_DENIED'); }
+        },
+
+        handleVad(d) {
+            if(d.type === 'ready') this.updateState('AI_ENGINES_READY');
+            if(d.type === 'vad') {
+                this.updateMeter('vad-meter', d.prob);
+                if(d.prob > 0.45) this.interimSpan.innerText = '...ASCOLTO_IN_CORSO...';
             }
-        };
-    `;
+        },
 
-    const whisperWorkerCode = `
-        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
-        let transcriber, queue = [], isBusy = false;
-
-        async function process() {
-            if (isBusy || queue.length === 0 || !transcriber) return;
-            isBusy = true;
-            const item = queue.shift();
-            try {
-                const res = await transcriber(new Float32Array(item.buffer), { 
-                    language: 'italian', 
-                    chunk_length_s: 30, 
-                    stride_length_s: 5 
+        handleWhisper(d) {
+            if(d.type === 'ready') this.startAudio();
+            if(d.type === 'text' && d.text.trim()) {
+                this.interimSpan.innerText = '';
+                d.text.trim().split(/\s+/).forEach(w => {
+                    const span = document.createElement('span');
+                    span.className = 'word-node';
+                    const clean = w.toLowerCase().replace(/[^a-zà-ù]/g, '');
+                    if(this.trie.has(clean)) span.classList.add('healed');
+                    span.innerText = w + ' ';
+                    document.getElementById('output').insertBefore(span, this.interimSpan);
                 });
-                if (res.text) self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
-            } catch (err) { console.error("WHISPER_ERR:", err); }
-            isBusy = false; process();
-        }
-
-        self.onmessage = async (e) => {
-            if (e.data.type === 'load') {
-                const m = e.data.precision === 'base' ? 'onnx-community/whisper-base' : 'onnx-community/whisper-large-v3-turbo';
-                transcriber = await pipeline('automatic-speech-recognition', m, { device: 'webgpu', dtype: 'fp16' });
-                self.postMessage({ type: 'READY' });
-            } else if (e.data.type === 'init_vad_port') {
-                e.data.port.onmessage = (ev) => { 
-                    queue.push({ buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial });
-                    process();
-                };
-                self.postMessage({ type: 'WHISPER_ONLINE' });
+                document.getElementById('output').scrollTop = document.getElementById('output').scrollHeight;
             }
-        };
-    `;
+        },
 
-    // --- APP LOGIC ---
-    let vadW, whispW, audioCtx, stream, isLoaded = false;
-    const interim = document.createElement('span'); interim.className = 'interim-text';
+        updateState(txt) { document.getElementById('state-text').innerText = txt; },
+        updateMeter(id, val) {
+            const b = Math.min(Math.floor(val * 20), 20);
+            document.getElementById(id).innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
+        },
 
-    function init() {
-        vadW = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
-        whispW = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
-        const chan = new MessageChannel();
-        vadW.postMessage({ type: 'init_whisper_port', port: chan.port1 }, [chan.port1]);
-        whispW.postMessage({ type: 'init_vad_port', port: chan.port2 }, [chan.port2]);
-
-        whispW.onmessage = (e) => {
-            if (e.data.type === 'READY') {
-                isLoaded = true; document.getElementById('sysPowerBtn').innerText = "SHUTDOWN()";
-                document.getElementById('sysPowerBtn').disabled = false;
-                start();
-            } else if (e.data.type === 'final') {
-                interim.innerText = "";
-                const s = document.createElement('span'); s.className = 'word-token'; s.innerText = " " + e.data.text.trim();
-                document.getElementById('output').insertBefore(s, interim);
-            } else if (e.data.type === 'partial') {
-                interim.innerText = " " + e.data.text.trim() + "...";
-            }
-        };
-
-        vadW.onmessage = (e) => {
-            if (e.data.type === 'ready') whispW.postMessage({ type: 'load', precision: document.getElementById('precisionSelect').value });
-            else if (e.data.type === 'vad_ui_update') {
-                document.getElementById('probVal').innerText = "PROB: " + e.data.prob.toFixed(2);
-                let b = Math.round(e.data.prob * 20);
-                document.getElementById('vadAscii').innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
-                document.getElementById('vadLed').classList.toggle('active', e.data.isSpeaking);
-            }
-        };
-    }
-
-    async function start() {
-        audioCtx = new AudioContext({ sampleRate: 16000 });
-        const src = document.getElementById('audioSource').value;
-        stream = src === 'system' ? await navigator.mediaDevices.getDisplayMedia({audio:true, video:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
-        
-        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
-            class P extends AudioWorkletProcessor {
-                constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; this.s=0; this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; }; }
-                process(inputs) {
-                    const input = inputs[0][0]; if(!input || !this.vPort) return true;
-                    for(let i=0; i<input.length; i++) {
-                        this.s += input[i]*input[i]; this.buf[this.ptr++] = input[i];
-                        if(this.ptr>=512) {
-                            this.port.postMessage({rms: Math.sqrt(this.s/512)});
-                            const b = this.buf.buffer; this.vPort.postMessage({type:'vad', data:b}, [b]);
-                            this.buf = new Float32Array(512); this.ptr=0; this.s=0;
-                        }
-                    }
-                    return true;
-                }
-            }
-            registerProcessor('p', P);
-        `], {type:'application/javascript'})));
-
-        const node = new AudioWorkletNode(audioCtx, 'p');
-        node.port.onmessage = (e) => {
-            if (e.data.rms !== undefined) {
-                let b = Math.min(Math.round(Math.sqrt(e.data.rms) * 40), 20);
-                document.getElementById('volAscii').innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
-            }
-        };
-        const ch = new MessageChannel();
-        vadW.postMessage({ type: 'init_worklet_port', port: ch.port1 }, [ch.port1]);
-        node.port.postMessage({ port: ch.port2 }, [ch.port2]);
-        audioCtx.createMediaStreamSource(stream).connect(node);
-        document.getElementById('output').appendChild(interim);
-        document.getElementById('status').innerText = "ONLINE";
-    }
-
-    document.getElementById('sysPowerBtn').onclick = () => {
-        if (!isLoaded) {
-            document.getElementById('sysPowerBtn').disabled = true;
-            document.getElementById('status').innerText = "BOOTING...";
-            vadW.postMessage({ type: 'load' });
-        } else {
-            location.reload(); // Shutdown più sicuro e pulito
+        async syncZeitgeist() {
+            const dom = document.getElementById('domain-select').value;
+            const feeds = { "general": "rss?hl=it&gl=IT&ceid=IT:it", "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", "finance": "rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it" };
+            try {
+                const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent('https://news.google.com/' + feeds[dom]));
+                const j = await r.json();
+                const w = j.contents.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
+                w.forEach(word => this.trie.insert(word));
+                console.log("ZEITGEIST_SYNC_OK:", w.length);
+            } catch(e) { console.warn("ZEITGEIST_OFFLINE"); }
         }
     };
 
-    init();
-    const L = { "italian": "ITA", "english": "ENG" };
-    for (const [v, t] of Object.entries(L)) {
-        const o = document.createElement("option"); o.value = v; o.text = t; document.getElementById('languageSelect').appendChild(o);
-    }
+    // UI Events & Features
+    document.getElementById('boot-btn').onclick = () => Kernel.boot();
+    document.getElementById('theme-select').onchange = (e) => {
+        document.body.className = (e.target.value === 'default') ? '' : 'theme-' + e.target.value;
+    };
+    
+    document.getElementById('output').onclick = (e) => {
+        if (e.target.classList.contains('word-node')) {
+            Kernel.activeToken = e.target;
+            const popup = document.getElementById('word-popup');
+            const input = document.getElementById('edit-word-input');
+            input.value = Kernel.activeToken.innerText.trim();
+            popup.style.display = 'block';
+            popup.style.top = (e.clientY + 10) + 'px';
+            popup.style.left = (e.clientX) + 'px';
+        } else {
+            document.getElementById('word-popup').style.display = 'none';
+        }
+    };
+
+    document.getElementById('confirm-word-btn').onclick = () => {
+        if (Kernel.activeToken) {
+            const newW = document.getElementById('edit-word-input').value.trim();
+            Kernel.activeToken.innerText = newW + ' ';
+            Kernel.activeToken.classList.add('healed');
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${newW}</td><td>MANUAL</td><td style="color:var(--term-ok)">VALIDATED</td>`;
+            document.getElementById('harvest-body').prepend(tr);
+            document.getElementById('word-popup').style.display = 'none';
+        }
+    };
+
+    document.getElementById('toggle-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'block';
+    document.getElementById('close-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'none';
+    document.getElementById('clear-btn').onclick = () => document.getElementById('output').innerHTML = '';
+    document.getElementById('copy-btn').onclick = () => navigator.clipboard.writeText(document.getElementById('output').innerText);
+    document.getElementById('export-btn').onclick = () => {
+        const blob = new Blob([document.getElementById('output').innerText], {type: 'text/plain'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `whisp_session_${Date.now()}.txt`;
+        a.click();
+    };
 </script>
 </body>
 </html>
