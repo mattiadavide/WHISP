@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 4.6 - HEURISTIC SHIELD</title>
+    <title>WHISP // TERMINAL 4.7 - STREAMLINED BOOT</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -71,8 +71,7 @@
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
         
-        <input type="text" id="dictUrlInput" placeholder="URL GLOSSARIO (.txt)" style="flex-grow: 2;">
-        <button id="loadDictBtn">FETCH_DICT()</button>
+        <input type="text" id="dictUrlInput" placeholder="URL GLOSSARIO (.txt)" style="flex-grow: 3;">
         <button id="loadBtn">LOAD_CORE()</button>
     </div>
 </div>
@@ -283,7 +282,6 @@
                 if (!match) return;
                 const [_, prefix, core, suffix] = match; const lower = core.toLowerCase(); 
                 
-                // --- REGOLA EURISTICA (IL NUOVO LUCCHETTO) ---
                 let isCapitalized = /^[A-ZÀ-Ú]/.test(core);
                 let isStartOfSentence = false;
                 
@@ -333,7 +331,7 @@
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
         precisionSelect: document.getElementById('precisionSelect'), languageSelect: document.getElementById('languageSelect'),
         audioSource: document.getElementById('audioSource'), dictUrlInput: document.getElementById('dictUrlInput'),
-        loadDictBtn: document.getElementById('loadDictBtn'), loadBtn: document.getElementById('loadBtn'),
+        loadBtn: document.getElementById('loadBtn'),
         startBtn: document.getElementById('startBtn'), stopBtn: document.getElementById('stopBtn'), output: document.getElementById('output'),
         vadLed: document.getElementById('vadLed'), vadFill: document.getElementById('vadFill'), 
         volFill: document.getElementById('volFill'), probVal: document.getElementById('probVal'),
@@ -489,28 +487,35 @@
         }
     };
 
-    UI.loadDictBtn.onclick = async () => {
-        const url = UI.dictUrlInput.value.trim(); if (!url) return; UI.loadDictBtn.disabled = true; UI.status.innerText = "FETCHING_KNOWLEDGE_BASE...";
-        try { 
-            const res = await fetch(url); 
-            if (res.ok) { 
-                const text = await res.text(); 
-                window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); 
-                UI.status.innerText = `DICT_LOADED [${window.referenceDict.size} TERMS]`; 
-                UI.status.style.color = "var(--term-ok)"; 
-            } else { throw new Error("404"); } 
-        } 
-        catch (e) { UI.status.innerText = "ERR_DICT_FETCH_FAILED"; UI.status.style.color = "var(--term-err)"; } UI.loadDictBtn.disabled = false;
-    };
-
-    UI.toggleHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'block'; };
-    UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
-    UI.loadBtn.onclick = () => { 
+    // Ora LOAD_CORE() scarica il dizionario prima di far partire i Worker neurli
+    UI.loadBtn.onclick = async () => { 
         UI.loadBtn.disabled = true; 
+        
+        const url = UI.dictUrlInput.value.trim(); 
+        if (url) {
+            UI.status.innerText = "FETCHING_KNOWLEDGE_BASE...";
+            try { 
+                const res = await fetch(url); 
+                if (res.ok) { 
+                    const text = await res.text(); 
+                    window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); 
+                    console.log(`Dizionario caricato: ${window.referenceDict.size} lemmi`);
+                } else { 
+                    console.warn("Impossibile caricare il dizionario (HTTP Error)"); 
+                } 
+            } 
+            catch (e) { 
+                console.warn("Impossibile raggiungere l'URL del dizionario.", e); 
+            } 
+        }
+
         UI.status.innerText = "BOOT_CORE..."; 
         vadWorker.postMessage({ type: 'load' }); 
         refiningWorker.postMessage({ type: 'load' }); 
     };
+
+    UI.toggleHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'block'; };
+    UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
