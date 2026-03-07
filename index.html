@@ -12,7 +12,7 @@
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
         .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; align-items: center; }
         select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
-        input[type="file"] { padding: 5px; font-size: 0.75em; }
+        input[type="file"] { padding: 5px; font-size: 0.75em; border: 1px dashed var(--term-dim); }
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         
@@ -62,9 +62,9 @@
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
-            <option value="turbo" selected>ENGINE: LARGE_TURBO (FP16_GPU)</option>
-            <option value="base">ENGINE: STANDARD_BASE (FP16_GPU)</option>
-            <option value="tiny">ENGINE: MOBILE_TINY (FP16_GPU)</option>
+            <option value="turbo" selected>ENG: LARGE_TURBO (FP16_GPU)</option>
+            <option value="base">ENG: STANDARD_BASE (FP16_GPU)</option>
+            <option value="tiny">ENG: MOBILE_TINY (FP16_GPU)</option>
         </select>
         <select id="languageSelect"></select>
         <select id="audioSource">
@@ -72,8 +72,16 @@
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
         
-        <input type="file" id="dictFileInput" accept=".txt" style="flex-grow: 3;" title="LOCAL_DOMAIN_GLOSSARY (.txt)">
-        <button id="sysPowerBtn" style="font-weight: bold;">BOOT_SYSTEM()</button>
+        <select id="domainSelect" style="flex-grow: 2;">
+            <option value="general">DOM: GENERALIST (NEWS SNAPSHOT)</option>
+            <option value="tech">DOM: TECH & IT (NEWS SNAPSHOT)</option>
+            <option value="finance">DOM: FINANCE & ECON (NEWS SNAPSHOT)</option>
+            <option value="medical">DOM: MEDICAL & HEALTH (NEWS SNAPSHOT)</option>
+            <option value="custom">DOM: LOCAL_FILE (.TXT)</option>
+        </select>
+        
+        <input type="file" id="dictFileInput" accept=".txt" style="display: none; flex-grow: 2;" title="LOCAL_DOMAIN_GLOSSARY (.txt)">
+        <button id="sysPowerBtn" style="font-weight: bold; flex-grow: 1;">BOOT_SYSTEM()</button>
     </div>
 </div>
 
@@ -345,7 +353,7 @@
         status: document.getElementById('status'), progressText: document.getElementById('progress-text'), zeitgeistLog: document.getElementById('zeitgeist-log'),
         progressContainer: document.getElementById('progress-container'), asciiBar: document.getElementById('ascii-bar'),
         precisionSelect: document.getElementById('precisionSelect'), languageSelect: document.getElementById('languageSelect'),
-        audioSource: document.getElementById('audioSource'), dictFileInput: document.getElementById('dictFileInput'),
+        audioSource: document.getElementById('audioSource'), domainSelect: document.getElementById('domainSelect'), dictFileInput: document.getElementById('dictFileInput'),
         sysPowerBtn: document.getElementById('sysPowerBtn'), output: document.getElementById('output'),
         vadLed: document.getElementById('vadLed'), volAscii: document.getElementById('volAscii'), vadAscii: document.getElementById('vadAscii'), 
         probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
@@ -381,7 +389,6 @@
                 UI.sysPowerBtn.style.borderColor = "var(--term-err)";
                 UI.sysPowerBtn.disabled = false;
                 
-                // AUTO-START LISTENING IMMEDIATELY AFTER BOOT
                 startListening();
                 
             } else if (d.type === 'final' && isSessionActive) {
@@ -438,28 +445,36 @@
         };
     }
 
-    // --- AUTO-RESTART LOGIC (SMART RELOAD) ---
-    UI.precisionSelect.onchange = async () => {
-        if (isCoreLoaded) { UI.sysPowerBtn.click(); setTimeout(() => UI.sysPowerBtn.click(), 500); } // Hard Reboot
+    // --- UI DYNAMICS & AUTO-RESTART ---
+    UI.domainSelect.onchange = () => {
+        UI.dictFileInput.style.display = UI.domainSelect.value === 'custom' ? 'block' : 'none';
     };
-    UI.languageSelect.onchange = () => {
-        if (isCoreLoaded) whisperWorker.postMessage({ type: 'update_params', language: UI.languageSelect.value }); // Soft Reboot
-    };
+    UI.precisionSelect.onchange = async () => { if (isCoreLoaded) { UI.sysPowerBtn.click(); setTimeout(() => UI.sysPowerBtn.click(), 500); } };
+    UI.languageSelect.onchange = () => { if (isCoreLoaded) whisperWorker.postMessage({ type: 'update_params', language: UI.languageSelect.value }); };
     UI.audioSource.onchange = async () => {
         if (isSessionActive) { 
             if(stream) stream.getTracks().forEach(t => t.stop()); 
             if(audioCtx) audioCtx.close(); 
-            startListening(); // Re-init audio only
+            startListening(); 
         }
     };
 
-    // --- ZEITGEIST ENGINE ---
-    async function fetchZeitgeist() {
+    // --- ZEITGEIST ENGINE CON MACRO-DOMINI ---
+    async function fetchZeitgeist(domainTheme) {
         UI.status.innerText = "FETCH_ZEITGEIST...";
+        
+        // Mappatura Domini -> Sezioni di Google News RSS
+        const RSS_FEEDS = {
+            "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it",
+            "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it",
+            "medical": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it",
+            "finance": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it"
+        };
+        
+        const rssUrl = encodeURIComponent(RSS_FEEDS[domainTheme] || RSS_FEEDS["general"]);
+        const proxyUrl = `https://api.allorigins.win/get?url=${rssUrl}`;
+
         try {
-            const rssUrl = encodeURIComponent('https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it');
-            const proxyUrl = `https://api.allorigins.win/get?url=${rssUrl}`;
-            
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 3500); 
             const response = await fetch(proxyUrl, { signal: controller.signal });
@@ -475,7 +490,7 @@
             matches.forEach(w => { if (w.length > 3) snapshotHarvest.add(w.toLowerCase()); });
             snapshotHarvest.forEach(w => window.referenceDict.add(w));
             
-            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK: [${snapshotHarvest.size} TOKENS]`;
+            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK [DOM: ${domainTheme.toUpperCase()}]: [${snapshotHarvest.size} TOKENS]`;
         } catch (error) {
             UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: [OFFLINE_MODE]`;
         }
@@ -535,9 +550,8 @@
         if(audioCtx) audioCtx.close(); 
         
         UI.status.innerText = "FLUSHING_AUDIO_QUEUE..."; UI.status.style.color = "var(--term-warn)"; 
-        whisperWorker.postMessage({ type: 'request_flush' }); // Scatena il refining
+        whisperWorker.postMessage({ type: 'request_flush' }); 
         
-        // Terminate Everything
         vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
         isCoreLoaded = false; window.referenceDict.clear(); 
         
@@ -571,14 +585,18 @@
     UI.sysPowerBtn.onclick = async () => { 
         if (!isCoreLoaded) {
             UI.sysPowerBtn.disabled = true; UI.sysPowerBtn.innerText = "BOOTING...";
+            
+            const selectedDomain = UI.domainSelect.value;
             const file = UI.dictFileInput.files[0];
             
             const bootCore = async () => {
-                if (!file) await fetchZeitgeist();
+                if (selectedDomain !== 'custom') {
+                    await fetchZeitgeist(selectedDomain); // Passiamo la categoria scelta
+                }
                 UI.status.innerText = "BOOT_CORE_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
             };
 
-            if (file) {
+            if (selectedDomain === 'custom' && file) {
                 UI.status.innerText = "LOADING_LOCAL_GLOSSARY...";
                 const reader = new FileReader();
                 reader.onload = (e) => { window.referenceDict = new Set(e.target.result.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); bootCore(); };
