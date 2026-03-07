@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 4.8</title>
+    <title>WHISP // TERMINAL</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -125,7 +125,6 @@
     let currentInitialPrompt = "";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
-    let sessionHarvested = new Set();
 
     const DICTIONARY_URLS = {
         "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/master/paroleitaliane/60000_parole_italiane.txt",
@@ -345,7 +344,6 @@
     let audioCtx, stream, isSessionActive = false, lastFinalText = "", isCoreLoaded = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
-    // Inizializza o Re-inizializza i Web Worker
     function initWorkers() {
         vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
         whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
@@ -365,7 +363,6 @@
                 UI.status.innerText = "ONLINE"; 
                 UI.progressContainer.style.display = 'none'; 
                 
-                // --- TOGGLE STATE: CORE ACCESO ---
                 isCoreLoaded = true;
                 UI.loadBtn.innerText = "UNLOAD_CORE()";
                 UI.loadBtn.style.color = "var(--term-err)";
@@ -404,7 +401,7 @@
                     }
                 } 
             });
-            harvestNewTerms();
+            // Automazione rimossa: Nessun harvest automatico a fine ciclo.
             UI.status.innerText = "READY"; UI.status.style.color = "var(--term-ok)";
         };
 
@@ -414,24 +411,10 @@
         };
     }
 
-    function updateHarvestUI(term, type = "AUTO_LEARN") {
+    function updateHarvestUI(term, type = "MANUAL_VALIDATE") {
         const tr = document.createElement('tr');
         tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">SAVED_IN_DB</td>`;
         UI.harvestBody.prepend(tr);
-    }
-
-    function harvestNewTerms() {
-        const text = UI.output.innerText;
-        const words = text.split(/\s+/);
-        words.forEach(w => {
-            const clean = w.toLowerCase().replace(/[^a-zÀ-ÿ]/g, '');
-            if (clean.length > 7 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
-                window.experienceDict.add(clean);
-                sessionHarvested.add(clean);
-                updateHarvestUI(clean, "AUTO_HARVEST");
-            }
-        });
-        saveExperience();
     }
 
     function rebuildTokens(text) {
@@ -484,9 +467,15 @@
         const newWord = UI.editInput.value.trim();
         activeToken.innerText = (activeToken.dataset.hid === "0" ? "" : " ") + newWord; 
         activeToken.classList.add('validated'); activeToken.classList.remove('low-conf'); 
-        window.experienceDict.add(newWord.toLowerCase()); 
-        updateHarvestUI(newWord.toLowerCase(), "MANUAL_VALIDATE");
-        await saveExperience(); UI.popup.style.display = 'none'; 
+        
+        // Apprendimento ESCLUSIVAMENTE manuale
+        const cleanWord = newWord.toLowerCase();
+        if (!window.experienceDict.has(cleanWord)) {
+            window.experienceDict.add(cleanWord); 
+            updateHarvestUI(cleanWord, "MANUAL_VALIDATE");
+            await saveExperience(); 
+        }
+        UI.popup.style.display = 'none'; 
     } };
 
     UI.languageSelect.onchange = (e) => {
@@ -498,7 +487,6 @@
         }
     };
 
-    // La nuova logica Toggle per il tasto LOAD_CORE
     UI.loadBtn.onclick = async () => { 
         if (!isCoreLoaded) {
             UI.loadBtn.disabled = true; 
@@ -519,13 +507,11 @@
             UI.status.innerText = "BOOT_CORE..."; 
             vadWorker.postMessage({ type: 'load' }); 
         } else {
-            // --- TOGGLE STATE: SPEGNIMENTO DEL CORE ---
             UI.loadBtn.disabled = true;
             UI.loadBtn.innerText = "UNLOADING...";
             
-            if (isSessionActive) await stop(); // Ferma il microfono se è ancora acceso
+            if (isSessionActive) await stop(); 
             
-            // Uccidiamo brutalmente i thread per liberare RAM/VRAM
             vadWorker.terminate();
             whisperWorker.terminate();
             healingWorker.terminate();
@@ -533,7 +519,6 @@
             
             isCoreLoaded = false;
             
-            // Reset della UI
             UI.status.innerText = "OFFLINE";
             UI.status.style.color = "var(--term-dim)";
             UI.startBtn.disabled = true;
@@ -547,7 +532,6 @@
             UI.loadBtn.style.borderColor = "var(--term-main)";
             UI.loadBtn.disabled = false;
             
-            // Prepariamo in silenzio i nuovi Worker vuoti per il prossimo giro
             initWorkers(); 
         }
     };
@@ -559,7 +543,7 @@
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
     
     (async () => {
-        initWorkers(); // Inizializza i worker al primo caricamento della pagina
+        initWorkers(); 
 
         const db = await openDB(); const tx = db.transaction(STORE_NAME, "readonly"); const req = tx.objectStore(STORE_NAME).get("words");
         req.onsuccess = () => { if(req.result) window.experienceDict = new Set(req.result); };
