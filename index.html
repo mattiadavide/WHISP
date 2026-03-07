@@ -4,13 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL V6</title>
+    <title>WHISP // TERMINAL V7</title>
     <style>
         :root { --term-bg: #000; --term-main: #0f0; --term-dim: #040; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; }
-        body.theme-amber { --term-main: #ffb000; --term-dim: #540; }
-        body.theme-cyan { --term-main: #0ff; --term-dim: #044; }
-        body.theme-white { --term-main: #fff; --term-dim: #333; }
-
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
         .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; }
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
@@ -31,7 +27,7 @@
         @keyframes blinker { 50% { opacity: 0.2; } }
     </style>
 </head>
-<body class="theme-default">
+<body>
 
 <div class="ascii-art">
  ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
@@ -40,28 +36,28 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // TERMINAL V6
+ > DESIGN BY MATTIA DAVIDE AMICO // CORE V7
 </div>
 
 <div class="header">
     <div class="settings-panel">
-        <select id="theme-select">
-            <option value="default">THEME: CRT_GREEN</option>
-            <option value="amber">THEME: VINTAGE_AMBER</option>
-            <option value="cyan">THEME: NEON_CYAN</option>
-            <option value="white">THEME: PURE_WHITE</option>
+        <select id="domain-select" style="flex-grow: 2; border-color: var(--term-accent); color: var(--term-accent);">
+            <option value="general">DOMAIN: GENERAL_NEWS</option>
+            <option value="tech">DOMAIN: TECH_AND_AI</option>
+            <option value="medical">DOMAIN: MEDICAL_HEALTH</option>
+            <option value="finance">DOMAIN: FINANCE_ECON</option>
         </select>
         <select id="model-select">
-            <option value="turbo" selected>MODEL: LARGE_V3_TURBO</option>
-            <option value="base">MODEL: BASE_STABLE</option>
-            <option value="tiny">MODEL: TINY_MOBILE</option>
+            <option value="turbo">ENGINE: LARGE_V3_TURBO</option>
+            <option value="base">ENGINE: BASE_STABLE</option>
+            <option value="tiny">ENGINE: TINY_MOBILE</option>
         </select>
         <select id="audio-source">
             <option value="mic">SRC: MICROPHONE</option>
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
         <select id="lang-select">
-            <option value="italian" selected>LANG: ITA</option>
+            <option value="italian">LANG: ITA</option>
             <option value="english">LANG: ENG</option>
         </select>
         <button id="boot-btn">BOOT_SYSTEM()</button>
@@ -79,6 +75,9 @@
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
+    /**
+     * @section Kernel_Structures
+     */
     class Trie {
         constructor() { this.root = {}; }
         insert(word) {
@@ -109,11 +108,11 @@
                 const prob = out.output.data[0];
                 if (prob > 0.45) {
                     isSpeaking = true; silenceFrames = 0;
-                    whisperPort.postMessage({type: 'stream', data: e.data.chunk});
+                    if(whisperPort) whisperPort.postMessage({type: 'stream', data: e.data.chunk});
                 } else if (isSpeaking) {
                     silenceFrames++;
-                    whisperPort.postMessage({type: 'stream', data: e.data.chunk});
-                    if (silenceFrames > 35) { isSpeaking = false; whisperPort.postMessage({type: 'commit'}); }
+                    if(whisperPort) whisperPort.postMessage({type: 'stream', data: e.data.chunk});
+                    if (silenceFrames > 35) { isSpeaking = false; if(whisperPort) whisperPort.postMessage({type: 'commit'}); }
                 }
                 self.postMessage({type: 'vad', prob});
             }
@@ -122,10 +121,11 @@
 
     const WHISPER_CODE = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
-        let pipe, buffer = [], isBusy = false;
+        let pipe, buffer = [], isBusy = false, currentLang = 'italian';
         self.onmessage = async (e) => {
             if (e.data.type === 'init') {
                 const m = { 'turbo': 'onnx-community/whisper-large-v3-turbo', 'base': 'onnx-community/whisper-base', 'tiny': 'onnx-community/whisper-tiny' };
+                currentLang = e.data.lang;
                 try {
                     pipe = await pipeline('automatic-speech-recognition', m[e.data.model], { device: 'webgpu', dtype: 'fp16' });
                 } catch {
@@ -134,9 +134,9 @@
                 self.postMessage({type: 'ready'});
             }
             if (e.data.type === 'stream') buffer.push(...e.data.data);
-            if (e.data.type === 'commit' && !isBusy && buffer.length > 4000) {
+            if (e.data.type === 'commit' && !isBusy && buffer.length > 3200) {
                 isBusy = true;
-                const res = await pipe(new Float32Array(buffer), { language: e.data.lang, task: 'transcribe' });
+                const res = await pipe(new Float32Array(buffer), { language: currentLang, task: 'transcribe' });
                 self.postMessage({type: 'text', text: res.text});
                 buffer = []; isBusy = false;
             }
@@ -148,10 +148,13 @@
         state: 'IDLE',
         
         async boot() {
-            this.updateState('BOOTING_OS...');
+            this.updateState('SYNCING_THEMATIC_DOMAIN...');
             document.getElementById('boot-btn').disabled = true;
+            
+            // 1. Sync Zeitgeist in base al dominio scelto
             await this.syncZeitgeist();
 
+            // 2. Start Workers
             this.vad = new Worker(URL.createObjectURL(new Blob([VAD_CODE], {type: 'application/javascript'})), {type: 'module'});
             this.whisper = new Worker(URL.createObjectURL(new Blob([WHISPER_CODE], {type: 'application/javascript'})), {type: 'module'});
 
@@ -161,11 +164,12 @@
                 type: 'init', 
                 model: document.getElementById('model-select').value, 
                 lang: document.getElementById('lang-select').value 
-            }, [chan.port2]);
+            });
 
             this.vad.postMessage({type: 'init'});
             this.vad.onmessage = (e) => this.handleVad(e.data);
             this.whisper.onmessage = (e) => this.handleWhisper(e.data);
+            chan.port2.onmessage = (e) => this.whisper.postMessage(e.data);
         },
 
         async startAudio() {
@@ -204,18 +208,19 @@
                 };
 
                 sourceNode.connect(workletNode);
-                this.updateState('ONLINE');
+                this.updateState('ONLINE_LISTENING');
                 document.getElementById('state-text').classList.remove('blink');
             } catch (err) { this.updateState('ERROR_DENIED'); }
         },
 
         handleVad(d) {
-            if(d.type === 'ready') this.startAudio();
+            if(d.type === 'ready') { this.updateState('LOADING_WHISPER...'); }
             if(d.type === 'vad') this.updateMeter('vad-meter', d.prob);
         },
 
         handleWhisper(d) {
-            if(d.type === 'text') {
+            if(d.type === 'ready') { this.startAudio(); }
+            if(d.type === 'text' && d.text.trim()) {
                 d.text.trim().split(/\s+/).forEach(w => {
                     const span = document.createElement('span');
                     span.className = 'word-node';
@@ -235,22 +240,25 @@
         },
 
         async syncZeitgeist() {
+            const dom = document.getElementById('domain-select').value;
+            const feeds = {
+                "general": "rss?hl=it&gl=IT&ceid=IT:it",
+                "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it",
+                "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it",
+                "finance": "rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it"
+            };
             try {
-                const proxy = 'https://api.allorigins.win/get?url=' + encodeURIComponent('https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it');
+                const proxy = 'https://api.allorigins.win/get?url=' + encodeURIComponent('https://news.google.com/' + feeds[dom]);
                 const r = await fetch(proxy);
-                if (!r.ok) throw new Error();
                 const j = await r.json();
-                const w = j.contents.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
-                w.forEach(word => this.trie.insert(word));
-                console.log("ZEITGEIST_LOADED:", w.length);
-            } catch(e) { console.warn("ZEITGEIST_OFFLINE_BYPASS"); }
+                const words = j.contents.match(/[a-zA-ZÀ-ÿ]{4,}/g) || [];
+                words.forEach(w => this.trie.insert(w));
+                console.log("THEMATIC_SYNC_OK:", words.length, "TOKENS");
+            } catch(e) { console.warn("THEMATIC_SYNC_FAIL: OFFLINE_MODE"); }
         }
     };
 
     document.getElementById('boot-btn').onclick = () => Kernel.boot();
-    document.getElementById('theme-select').onchange = (e) => {
-        document.body.className = (e.target.value === 'default') ? '' : 'theme-' + e.target.value;
-    };
 </script>
 </body>
 </html>
