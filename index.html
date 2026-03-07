@@ -525,18 +525,31 @@
         };
         try {
             const rssUrl = encodeURIComponent(FEEDS[domain] || FEEDS["general"]);
-            const proxyUrl = `https://api.allorigins.win/get?url=${rssUrl}`;
+            const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${rssUrl}`;
+            
             const controller = new AbortController();
             const tId = setTimeout(() => controller.abort(), 3500); 
             const resp = await fetch(proxyUrl, { signal: controller.signal });
             clearTimeout(tId);
-            const content = (await resp.json()).contents; 
-            const matches = content.match(/[A-ZÀ-Ú][a-zà-ù]+/g) || [];
-            const h = new Set();
-            matches.forEach(w => { if (w.length > 3) h.add(w.toLowerCase()); });
-            h.forEach(w => window.referenceDict.add(w));
-            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK [DOM: ${domain.toUpperCase()}]: [${h.size} TOKENS]`;
-        } catch (e) { UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: [OFFLINE]`; }
+            
+            const data = await resp.json(); 
+            
+            if (data && data.items) {
+                const content = data.items.map(item => item.title + " " + item.description).join(" ");
+                const matches = content.match(/[A-ZÀ-Ú][a-zà-ù]+/g) || [];
+                
+                const h = new Set();
+                matches.forEach(w => { if (w.length > 3) h.add(w.toLowerCase()); });
+                h.forEach(w => window.referenceDict.add(w));
+                
+                UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK [DOM: ${domain.toUpperCase()}]: [${h.size} TOKENS]`;
+            } else {
+                throw new Error("Formato feed non valido");
+            }
+        } catch (e) { 
+            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: [OFFLINE]`; 
+            console.warn("[WHISP] Zeitgeist offline o bloccato dal COEP. Ignorato.", e);
+        }
     }
 
     async function startListening() {
@@ -717,7 +730,7 @@
     (async () => {
         console.log("[WHISP] Inizializzazione sistema...");
         
-        // 1. Popola SUBITO le lingue, per non bloccare l'interfaccia
+        // Popola SUBITO le lingue, per non bloccare l'interfaccia
         const L = { "italian": "ITA", "english": "ENG", "spanish": "ESP" };
         for (const [c, n] of Object.entries(L)) { 
             const o = document.createElement("option"); 
@@ -727,10 +740,10 @@
         }
         console.log("[WHISP] Interfaccia caricata.");
 
-        // 2. Inizializza i Worker
+        // Inizializza i Worker
         initWorkers(); 
 
-        // 3. Prova ad aprire il DB in modo sicuro con un try/catch per evitare stalli
+        // Prova ad aprire il DB in modo sicuro con un try/catch
         try {
             const db = await openDB(); 
             const tx = db.transaction(STORE_NAME, "readonly"); 
