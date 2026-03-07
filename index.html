@@ -221,7 +221,6 @@
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
             try {
-                // Rimosse repetition_penalty e no_repeat_ngram_size per evitare problemi di tokenizzazione
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: beams, prompt: initialPrompt,
@@ -339,6 +338,7 @@
     let vadWorker, whisperWorker, healingWorker, refiningWorker, workerChannel;
     let audioCtx, stream, isSessionActive = false, lastFinalText = "", isCoreLoaded = false;
     let activeToken = null;
+    let isShuttingDown = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
     function scrollOutput() {
@@ -347,7 +347,6 @@
         });
     }
 
-    // Funzione aggiunta: ricostruisce il DOM testuale assegnando un ID a ogni parola, essenziale per la pipeline di healing
     function rebuildTokens(text) {
         UI.output.innerHTML = "";
         const words = text.split(/ +/);
@@ -417,8 +416,13 @@
                     else { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; }
                 } 
             });
-            UI.status.innerText = isSessionActive ? "ONLINE_AND_LISTENING" : "SYSTEM_HALTED";
-            UI.status.style.color = isSessionActive ? "var(--term-ok)" : "var(--term-dim)";
+            
+            if (isShuttingDown) {
+                terminateSystem();
+            } else {
+                UI.status.innerText = isSessionActive ? "ONLINE_AND_LISTENING" : "SYSTEM_HALTED";
+                UI.status.style.color = isSessionActive ? "var(--term-ok)" : "var(--term-dim)";
+            }
         };
 
         let lastVadUpdate = 0;
@@ -426,7 +430,7 @@
             if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
             else if (e.data.type === 'vad_ui_update') { 
                 const now = performance.now();
-                if (now - lastVadUpdate > 50) { // Throttling: massimo 20 FPS per l'interfaccia VAD
+                if (now - lastVadUpdate > 50) { 
                     UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2); 
                     let blocks = Math.round(e.data.prob * 20);
                     UI.vadAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
@@ -485,7 +489,7 @@
         worklet.port.onmessage = (e) => { 
             if (e.data.rms !== undefined) {
                 const now = performance.now();
-                if (now - lastRmsUpdate > 50) { // Throttling grafico per il misuratore di volume
+                if (now - lastRmsUpdate > 50) {
                     let blocks = Math.min(Math.round(Math.sqrt(e.data.rms) * 40), 20); 
                     UI.volAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
                     lastRmsUpdate = now;
@@ -498,14 +502,31 @@
     }
 
     async function stopListeningAndUnload() { 
-        isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); 
-        if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); 
-        UI.status.innerText = "FLUSHING_AUDIO..."; UI.status.style.color = "var(--term-warn)"; 
+        isShuttingDown = true;
+        isSessionActive = false; 
+        vadWorker.postMessage({ type: 'force_flush' }); 
+        if(stream) stream.getTracks().forEach(t => t.stop()); 
+        if(audioCtx) audioCtx.close(); 
+        UI.status.innerText = "FLUSHING_AUDIO..."; 
+        UI.status.style.color = "var(--term-warn)"; 
         whisperWorker.postMessage({ type: 'request_flush' }); 
+    }
+
+    function terminateSystem() {
         vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
         isCoreLoaded = false; window.referenceDict.clear(); 
-        UI.sysPowerBtn.innerText = "BOOT_SYSTEM()"; UI.sysPowerBtn.style.color = "var(--term-main)"; UI.sysPowerBtn.style.borderColor = "var(--term-main)";
-        UI.probVal.innerText = "PROB: 0.00"; UI.vadAscii.innerText = "[--------------------]"; UI.volAscii.innerText = "[--------------------]"; UI.vadLed.classList.remove('active'); UI.zeitgeistLog.innerText = "";
+        UI.sysPowerBtn.innerText = "BOOT_SYSTEM()"; 
+        UI.sysPowerBtn.style.color = "var(--term-main)"; 
+        UI.sysPowerBtn.style.borderColor = "var(--term-main)";
+        UI.probVal.innerText = "PROB: 0.00"; 
+        UI.vadAscii.innerText = "[--------------------]"; 
+        UI.volAscii.innerText = "[--------------------]"; 
+        UI.vadLed.classList.remove('active'); 
+        UI.zeitgeistLog.innerText = "";
+        UI.status.innerText = "IDLE"; 
+        UI.status.style.color = "var(--term-dim)";
+        UI.sysPowerBtn.disabled = false;
+        isShuttingDown = false;
         initWorkers(); 
     }
 
