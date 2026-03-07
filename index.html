@@ -156,7 +156,7 @@
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
         const audioBuf = new Float32Array(1500 * 512);
-        const preRoll = new Float32Array(15 * 512);
+        const preRoll = new Float32Array(25 * 512); // MODIFICA: Aumentato a 25 frame (800ms)
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
@@ -183,15 +183,16 @@
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
                         if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 60 === 0) flush(true); } 
-                        else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15; if (preRollCount < 15) preRollCount++; }
+                        else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 25; if (preRollCount < 25) preRollCount++; }
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        if (prob > (isSpeaking ? 0.35 : 0.65)) { 
+                        // MODIFICA: Abbassata la soglia di attivazione per catturare meglio le "s" (0.55 invece di 0.65)
+                        if (prob > (isSpeaking ? 0.30 : 0.55)) { 
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
-                                    let idx = (preRollPtr - preRollCount + i + 15) % 15;
+                                    let idx = (preRollPtr - preRollCount + i + 25) % 25;
                                     audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
                                 }
                             }
@@ -226,7 +227,18 @@
                     temperature: 0.0, condition_on_previous_text: false 
                 });
                 if (res.text && res.text.trim().length > 0) {
-                    self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf: res.chunks ? res.chunks.some(c => (c.confidence || 1) < 0.6) : false });
+                    // MODIFICA: Filtro per allucinazioni e frammenti a bassa confidence (musica/jingle)
+                    const textToCheck = res.text.trim();
+                    const isHallucination = /♪|\\[.*?\\]|\\*.*?\\*/.test(textToCheck);
+                    const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
+                    
+                    if (!isHallucination && avgConf > 0.40) {
+                        self.postMessage({ 
+                            type: item.isPartial ? 'partial' : 'final', 
+                            text: res.text, 
+                            isLowConf: avgConf < 0.65 
+                        });
+                    }
                 }
             } catch (e) { console.error(e); }
             isBusy = false; process();
@@ -298,7 +310,8 @@
                     return; 
                 }
 
-                if (lower.length < 5) return;
+                // MODIFICA: Abbassata la tolleranza per consentire correzioni su parole di 4 lettere (es. "port" -> "sport")
+                if (lower.length < 4) return;
 
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
@@ -401,7 +414,6 @@
                     }
                 } 
             });
-            // Automazione rimossa: Nessun harvest automatico a fine ciclo.
             UI.status.innerText = "READY"; UI.status.style.color = "var(--term-ok)";
         };
 
@@ -468,7 +480,6 @@
         activeToken.innerText = (activeToken.dataset.hid === "0" ? "" : " ") + newWord; 
         activeToken.classList.add('validated'); activeToken.classList.remove('low-conf'); 
         
-        // Apprendimento ESCLUSIVAMENTE manuale
         const cleanWord = newWord.toLowerCase();
         if (!window.experienceDict.has(cleanWord)) {
             window.experienceDict.add(cleanWord); 
