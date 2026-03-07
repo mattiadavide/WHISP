@@ -7,19 +7,51 @@
     <title>WHISP // TERMINAL OS [ULTIMATE]</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
-        body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
-        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; color: var(--term-main); }
-        .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
+        
+        * { box-sizing: border-box; }
+        
+        /* Layout Full-Screen dinamico */
+        body { 
+            background: var(--term-bg); 
+            color: var(--term-main); 
+            font-family: 'Courier New', Courier, monospace; 
+            margin: 0; 
+            padding: 20px; 
+            text-transform: uppercase; 
+            overflow-x: hidden; 
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; color: var(--term-main); flex-shrink: 0; }
+        .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); flex-shrink: 0; }
         .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; align-items: center; }
         select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
         input[type="file"] { padding: 5px; font-size: 0.75em; border: 1px dashed var(--term-dim); }
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         
-        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
-        #output { border: 1px solid rgba(255,255,255,0.1); background: transparent; padding: 15px; min-height: 400px; max-height: calc(100vh - 550px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
+        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; flex-shrink: 0; }
         
-        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(0, 170, 255, 0.05); }
+        /* Output Box si espande dinamicamente */
+        #output { 
+            border: 1px solid rgba(255,255,255,0.1); 
+            background: transparent; 
+            padding: 15px; 
+            flex-grow: 1; /* Riempi lo spazio rimanente */
+            min-height: 200px;
+            overflow-y: auto; 
+            line-height: 1.8; 
+            color: #eee; 
+            text-transform: none; 
+            scroll-behavior: smooth; 
+            margin-bottom: 20px; 
+            outline: none; 
+            white-space: pre-wrap; 
+        }
+        
+        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(0, 170, 255, 0.05); flex-shrink: 0; }
         table { width: 100%; border-collapse: collapse; font-size: 0.8em; margin-top: 10px; }
         th { text-align: left; border-bottom: 1px solid var(--term-accent); padding: 5px; color: var(--term-accent); }
         td { padding: 5px; border-bottom: 1px solid #222; }
@@ -41,6 +73,8 @@
         .blink { animation: blinker 1.5s linear infinite; }
         @keyframes blinker { 50% { opacity: 0.3; } }
         #word-popup { position: fixed; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); }
+        
+        .controls-row { margin-bottom: 10px; display: flex; gap: 10px; flex-shrink: 0; }
     </style>
 </head>
 <body>
@@ -118,7 +152,7 @@
     </table>
 </div>
 
-<div style="margin-bottom: 10px; display: flex; gap: 10px;">
+<div class="controls-row">
     <button id="toggleHarvestBtn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW_HARVEST</button>
     <button id="exportBtn" style="margin-left: auto;">EXPORT_TXT</button>
     <button id="copyBtn">COPY_ALL</button>
@@ -221,14 +255,14 @@
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
             try {
-                // >>> IL MOTORE AGGIORNATO CON CHUNKING E STRIDE <<<
+                // IL MOTORE AGGIORNATO CON CHUNKING E STRIDE
                 const res = await transcriber(new Float32Array(item.buffer), { 
                     language: currentLanguage, task: 'transcribe', 
                     num_beams: beams, prompt: initialPrompt,
                     repetition_penalty: 1.15, no_repeat_ngram_size: 3,
                     temperature: 0.0, condition_on_previous_text: false,
-                    chunk_length_s: 30,  // Previene il warning dei 30 secondi
-                    stride_length_s: 5   // Sovrappone i chunk per non perdere sillabe
+                    chunk_length_s: 30,
+                    stride_length_s: 5 
                 });
                 if (res.text && res.text.trim().length > 0) {
                     const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
@@ -334,6 +368,7 @@
         sysPowerBtn: document.getElementById('sysPowerBtn'), output: document.getElementById('output'),
         vadLed: document.getElementById('vadLed'), volAscii: document.getElementById('volAscii'), vadAscii: document.getElementById('vadAscii'), 
         probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
+        exportBtn: document.getElementById('exportBtn'), // <-- FIX INSERITO QUI
         popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn'),
         harvestPanel: document.getElementById('harvest-panel'), harvestBody: document.getElementById('harvest-body'),
         toggleHarvestBtn: document.getElementById('toggleHarvestBtn'), closeHarvestBtn: document.getElementById('closeHarvestBtn')
