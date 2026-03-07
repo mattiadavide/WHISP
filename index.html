@@ -4,109 +4,102 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // ASCII MAINFRAME</title>
+    <title>WHISP // TERMINAL V9 [ULTIMATE]</title>
     <style>
         /* === COLOR THEMES === */
         :root { 
-            --term-bg: #000; --term-main: #ffb000; --term-dim: #650; 
-            --term-err: #f00; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80;
+            --term-bg: #000; --term-main: #ffb000; --term-dim: #540; 
+            --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #f80; --term-shield: #a3f;
         }
         body.theme-green { --term-main: #0f0; --term-dim: #040; --term-accent: #0af; }
         body.theme-cyan { --term-main: #0ff; --term-dim: #044; --term-accent: #0af; }
-        body.theme-white { --term-main: #ccc; --term-dim: #444; --term-accent: #fff; }
+        body.theme-white { --term-main: #fff; --term-dim: #333; --term-accent: #aaa; }
 
-        /* === GLOBAL RESET & TYPOGRAPHY === */
-        * { 
-            box-sizing: border-box; 
-            font-family: 'Courier New', Courier, monospace;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-        }
-        
-        ::selection { background: var(--term-main); color: var(--term-bg); }
+        * { box-sizing: border-box; }
 
         body { 
             background: var(--term-bg); color: var(--term-main); 
-            max-width: 1000px; margin: 0 auto; padding: 20px; 
+            font-family: 'Courier New', Courier, monospace; 
+            max-width: 1100px; margin: 10px auto; padding: 20px; 
             text-transform: uppercase; overflow-x: hidden; 
-            line-height: 1.4; font-size: 14px;
+            transition: color 0.3s ease, background 0.3s ease;
         }
 
-        /* === SCROLLBAR TERMINAL STYLE === */
-        ::-webkit-scrollbar { width: 12px; }
-        ::-webkit-scrollbar-track { background: var(--term-bg); }
-        ::-webkit-scrollbar-thumb { background: var(--term-dim); border: 1px solid var(--term-bg); }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: var(--term-bg); border-left: 1px solid var(--term-dim); }
+        ::-webkit-scrollbar-thumb { background: var(--term-dim); }
         ::-webkit-scrollbar-thumb:hover { background: var(--term-main); }
 
-        /* === ASCII CONTAINERS === */
-        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 10px); font-weight: bold; margin-bottom: 20px; }
+        /* === UI CONTAINERS === */
+        .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; margin-bottom: 25px; font-weight: bold; }
         
-        .ascii-panel { margin-bottom: 20px; }
-        .ascii-line { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; margin: 5px 0; }
-        .ascii-border { color: var(--term-dim); user-select: none; }
+        .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
+        .settings-panel { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         
-        /* === NATIVE ELEMENTS OVERRIDE (PURE TEXT LOOK) === */
         select, button, input { 
-            appearance: none; -webkit-appearance: none; 
-            background: transparent; color: var(--term-main); 
-            border: none; padding: 0; margin: 0;
-            cursor: pointer; outline: none; font-size: 1em;
-            text-transform: uppercase; font-weight: bold;
+            background: var(--term-bg); color: var(--term-main); 
+            border: 1px solid var(--term-main); 
+            padding: 8px; font-family: inherit; cursor: pointer; outline: none; 
+            flex-grow: 1; font-size: 0.85em; font-weight: bold;
         }
-        
-        select { text-decoration: underline; padding-right: 5px; }
-        input[type="text"] { border-bottom: 1px dashed var(--term-main); text-transform: lowercase; }
-
-        /* INVERT COLORS ON HOVER (CLASSIC DOS STYLE) */
-        button:hover, select:hover { background: var(--term-main); color: var(--term-bg); text-decoration: none; }
-        button:disabled { color: var(--term-dim); cursor: not-allowed; background: transparent !important; }
+        button:hover { background: var(--term-main); color: var(--term-bg); }
+        button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
 
         /* === MASTER BUTTON === */
-        #master-btn { color: var(--term-ok); }
-        #master-btn.running { color: var(--term-err); }
-        #master-btn.booting { color: var(--term-warn); animation: blinker 1s infinite; }
+        #master-btn { background: var(--term-bg); color: var(--term-main); transition: all 0.2s; }
+        #master-btn.running { color: var(--term-err); border-color: var(--term-err); }
+        #master-btn.running:hover { background: var(--term-err); color: var(--term-bg); }
+        #master-btn.ready { color: var(--term-ok); border-color: var(--term-ok); }
+        #master-btn.ready:hover { background: var(--term-ok); color: var(--term-bg); }
+        #master-btn.booting { color: var(--term-warn); border-color: var(--term-warn); cursor: wait; }
 
-        /* === STATUS & METERS === */
-        .meter { font-weight: bold; letter-spacing: 1px; color: var(--term-main); }
+        /* === STATUS BAR & ASCII METERS === */
+        .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
         
+        .stat-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; font-size: 0.85em; margin-bottom: 5px; }
+        .ascii-meter { font-weight: bold; letter-spacing: 2px; color: var(--term-main); }
+        
+        .vad-indicator { width: 12px; height: 12px; border: 1px solid var(--term-dim); border-radius: 50%; }
+        .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 10px var(--term-ok); border-color: var(--term-ok); }
+
         /* === OUTPUT TERMINAL === */
         #output { 
-            min-height: 400px; max-height: calc(100vh - 550px); 
-            overflow-y: auto; white-space: pre-wrap; 
-            padding: 10px 0; outline: none; text-transform: none;
+            border: 1px solid rgba(255,255,255,0.1); background: transparent; 
+            padding: 15px; min-height: 400px; max-height: calc(100vh - 600px); 
+            overflow-y: auto; line-height: 1.8; color: #eee; 
+            text-transform: none; margin-bottom: 20px; outline: none; 
+            white-space: pre-wrap; scroll-behavior: auto; 
         }
 
-        /* TEXT TOKENS */
-        .word-node { cursor: pointer; transition: background 0.1s; }
-        .word-node:hover { background: var(--term-main); color: var(--term-bg); }
-        .word-node.healed { color: var(--term-accent); font-weight: bold; text-decoration: underline; }
-        .word-node.low-conf { color: var(--term-warn); background: rgba(255,255,0,0.15); }
-        .word-node.shielded { color: var(--term-dim); }
-        .interim-text { color: var(--term-dim); }
+        .word-node { cursor: pointer; padding: 0 2px; transition: background 0.2s; border-radius: 2px; }
+        .word-node:hover { background: rgba(255,255,255,0.15); }
+        .word-node.healed { color: var(--term-main); font-weight: bold; text-shadow: 0 0 8px var(--term-main); }
+        .word-node.low-conf { color: var(--term-warn); text-decoration: underline dotted; }
+        .word-node.shielded { color: var(--term-shield) !important; text-decoration: none !important; }
+        .interim-text { color: #888; font-style: italic; }
 
-        /* === HARVEST TABLE === */
-        #harvest-panel { display: none; margin-bottom: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 4px 10px; text-align: left; }
-        th { color: var(--term-dim); border-bottom: 1px dashed var(--term-dim); }
+        /* === HARVEST PANEL === */
+        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(255, 128, 0, 0.05); }
+        table { width: 100%; border-collapse: collapse; font-size: 0.8em; margin-top: 10px; }
+        th { text-align: left; border-bottom: 1px solid var(--term-accent); padding: 5px; color: var(--term-accent); }
+        td { padding: 5px; border-bottom: 1px solid #222; }
 
-        /* === POPUP (ASCII MODAL) === */
+        /* === POPUP === */
         #word-popup { 
-            position: fixed; background: var(--term-bg); 
-            border: 2px solid var(--term-main); padding: 10px; display: none; z-index: 1000; 
-            box-shadow: 8px 8px 0px var(--term-dim);
+            position: fixed; background: #111; border: 1px solid var(--term-main); 
+            padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); 
         }
+        #edit-word-input { width: 140px; margin-bottom: 5px; background: #000; color: #fff; border: 1px solid var(--term-dim); }
 
-        .blink { animation: blinker 1s steps(2, start) infinite; }
-        @keyframes blinker { to { visibility: hidden; } }
+        .blink { animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0.3; } }
     </style>
 </head>
 <body class="theme-amber">
 
 <div id="word-popup">
-    <div style="color: var(--term-dim); margin-bottom: 5px;">> OVERRIDE_TOKEN:</div>
-    > <input type="text" id="edit-word-input" style="width:120px;"><br><br>
-    <button id="confirm-word-btn">[ EXECUTE_INJECT ]</button>
+    <input type="text" id="edit-word-input"><br>
+    <button id="confirm-word-btn">VALIDATE WORD</button>
 </div>
 
 <div class="ascii-art">
@@ -116,82 +109,87 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > TERMINAL_OS_V9 // PURE_ASCII // ZERO_LATENCY
+ > DESIGN BY MATTIA DAVIDE AMICO // TERMINAL V9 [ASCII METERS]
 </div>
 
-<div class="ascii-panel">
-    <div class="ascii-border">+--[ SYSTEM_CONFIG ]----------------------------------------------------------+</div>
-    <div class="ascii-line">
-        <span>> THEME:  [ <select id="theme-select">
-            <option value="amber" selected>AMBER_PHOSPHOR</option>
-            <option value="green">GREEN_MONO</option>
-            <option value="cyan">NEON_CYAN</option>
-            <option value="white">INVERT_WHITE</option>
-        </select> ]</span>
-        <span>> DOMAIN: [ <select id="domain-select">
-            <option value="general">GENERAL_NEWS</option>
-            <option value="tech">TECH_AI</option>
-            <option value="medical">MEDICAL</option>
-            <option value="finance">ECONOMY</option>
-        </select> ]</span>
-    </div>
-    <div class="ascii-line">
-        <span>> ENGINE: [ <select id="model-select">
-            <option value="turbo" selected>LARGE_V3_TURBO</option>
-            <option value="base">STABLE_BASE</option>
-            <option value="tiny">MOBILE_TINY</option>
-        </select> ]</span>
-        <span>> SOURCE: [ <select id="audio-source">
-            <option value="mic">HW_MICROPHONE</option>
-            <option value="system">OS_SYSTEM_AUDIO</option>
-        </select> ]</span>
-        <span>> LANG: [ <select id="lang-select">
-            <option value="italian" selected>ITA</option>
-            <option value="english">ENG</option>
-        </select> ]</span>
-    </div>
-    <div class="ascii-border">+-----------------------------------------------------------------------------+</div>
-    <div class="ascii-line" style="margin-top: 10px;">
-        <button id="master-btn">[ INIT_BOOT_SEQUENCE ]</button>
+<div class="header">
+    <div class="settings-panel">
+        <select id="theme-select">
+            <option value="amber" selected>UI: AMBER CRT</option>
+            <option value="green">UI: GREEN MONO</option>
+            <option value="cyan">UI: NEON CYAN</option>
+            <option value="white">UI: LAB WHITE</option>
+        </select>
+        <select id="domain-select">
+            <option value="general">DOMAIN: GENERAL NEWS</option>
+            <option value="tech">DOMAIN: TECH & IT</option>
+            <option value="medical">DOMAIN: MEDICAL</option>
+            <option value="finance">DOMAIN: FINANCE</option>
+        </select>
+        <select id="model-select">
+            <option value="turbo" selected>ENGINE: LARGE V3 TURBO</option>
+            <option value="base">ENGINE: STABLE BASE</option>
+            <option value="tiny">ENGINE: MOBILE TINY</option>
+        </select>
+        <select id="audio-source">
+            <option value="mic">SRC: MICROPHONE</option>
+            <option value="system">SRC: SYSTEM AUDIO</option>
+        </select>
+        <select id="lang-select">
+            <option value="italian" selected>LANG: ITALIAN</option>
+            <option value="english">LANG: ENGLISH</option>
+        </select>
+        <button id="master-btn" style="flex-grow: 2;">BOOT SYSTEM()</button>
     </div>
 </div>
 
-<div class="ascii-panel">
-    <div class="ascii-border">+--[ TELEMETRY ]--------------------------------------------------------------+</div>
-    <div class="ascii-line">
-        <span style="width: 250px;">> STATE:   <span id="state-text" style="color: var(--term-dim);">OFFLINE</span></span>
-        <span>> VAD_PROB: <span id="probVal" style="color: var(--term-dim);">0.00</span></span>
+<div class="status-bar">
+    <div>
+        STATE: <span id="state-text" class="blink" style="color: var(--term-warn);">OFFLINE</span>
+        <div id="progress-container" style="display:none; margin-top:10px;">
+            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">ALLOCATING VRAM: 0%</div>
+            <div id="boot-ascii-bar" class="ascii-meter">[--------------------]</div>
+        </div>
+        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-accent); margin-top: 5px;"></div>
     </div>
-    <div class="ascii-line">
-        <span style="width: 250px;">> SIG_RMS: <span id="vol-meter" class="meter">[--------------------]</span></span>
-        <span>> VAD_NET:  <span id="vad-meter" class="meter" style="color: var(--term-ok);">[--------------------]</span></span>
+    <div style="min-width: 340px;">
+        <div class="stat-row">
+            <span>SIG_RMS</span>
+            <span id="vol-meter" class="ascii-meter">[--------------------]</span>
+        </div>
+        <div class="stat-row">
+            <span>VAD_NET</span>
+            <span id="vad-meter" class="ascii-meter">[--------------------]</span>
+        </div>
+        <div style="display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 8px;">
+            <span id="probVal" style="font-size: 0.75em;">PROB: 0.00</span>
+            <div class="vad-indicator" id="vadLed"></div>
+        </div>
     </div>
-    <div class="ascii-border">+-----------------------------------------------------------------------------+</div>
 </div>
 
-<div id="harvest-panel" class="ascii-panel">
-    <div class="ascii-border">+--[ DB_REGISTRY ]------------------------------------------------------------+</div>
-    <div style="text-align: right;"><button id="close-harvest-btn">[X] CLOSE</button></div>
+<div id="harvest-panel">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="color: var(--term-accent); font-weight: bold;">[ SESSION KNOWLEDGE HARVEST ]</span>
+        <button id="close-harvest-btn" style="flex-grow:0; padding: 2px 10px; border-color: var(--term-accent);">CLOSE</button>
+    </div>
     <table>
-        <thead><tr><th>TOKEN</th><th>METHOD</th><th>STATUS</th></tr></thead>
+        <thead><tr><th>LEMMA</th><th>TYPE</th><th>STATUS</th></tr></thead>
         <tbody id="harvest-body"></tbody>
     </table>
-    <div class="ascii-border">+-----------------------------------------------------------------------------+</div>
 </div>
 
-<div class="ascii-line" style="margin-bottom: 20px;">
-    <button id="toggle-harvest-btn">> [ VIEW_DB ]</button>
-    <button id="export-btn">> [ DUMP_TXT ]</button>
-    <button id="copy-btn">> [ COPY_BUFFER ]</button>
-    <button id="clear-btn">> [ FLUSH_SCREEN ]</button>
+<div style="margin-bottom: 10px; display: flex; gap: 10px;">
+    <button id="toggle-harvest-btn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW HARVEST</button>
+    <button id="export-btn" style="margin-left: auto;">EXPORT TXT</button>
+    <button id="copy-btn">COPY ALL</button>
+    <button id="clear-btn">FLUSH OUTPUT</button>
 </div>
 
-<div class="ascii-border">=================================[ TTY_OUTPUT ]================================</div>
-<div id="output" contenteditable="true" spellcheck="false"><span class="blink">_</span></div>
-<div class="ascii-border">======================================[ EOF ]==================================</div>
+<div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    const DB_NAME = "whisp_ascii_db";
+    const DB_NAME = "whisp_v9_db";
     const STORE_NAME = "experience";
     window.experienceDict = new Set();
     window.referenceDict = new Set();
@@ -212,6 +210,11 @@
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, "readwrite");
         tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words");
+    }
+
+    function updateAsciiMeter(id, val) {
+        const blocks = Math.min(Math.floor(val * 20), 20);
+        document.getElementById(id).innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
     }
 
     // --- WORKERS ---
@@ -247,7 +250,7 @@
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
                         
-                        // IL TRUCCO PER ZERO LATENZA E' QUI: % 15 invece di 60
+                        // FLUSSO REAL-TIME: AGGIORNAMENTO OGNI 15 PACCHETTI (Circa 0.5s) per zero latenza visiva
                         if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 15 === 0) flush(true); } 
                         else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15; if (preRollCount < 15) preRollCount++; }
                         
@@ -401,7 +404,6 @@
         precisionSelect: document.getElementById('model-select'), languageSelect: document.getElementById('lang-select'),
         audioSource: document.getElementById('audio-source'), domainSelect: document.getElementById('domain-select'),
         masterBtn: document.getElementById('master-btn'), output: document.getElementById('output'),
-        volMeter: document.getElementById('vol-meter'), vadMeter: document.getElementById('vad-meter'), probVal: document.getElementById('probVal'),
         popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn'), harvestBody: document.getElementById('harvest-body')
     };
 
@@ -411,14 +413,9 @@
     let audioCtx, stream, isSessionActive = false, lastFinalText = "", isCoreLoaded = false;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
-    function updateAsciiMeter(id, val) {
-        const blocks = Math.min(Math.floor(val * 20), 20);
-        document.getElementById(id).innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']';
-    }
-
     function updateHarvestUI(term, type = "MANUAL") {
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">[OK]</td>`;
+        tr.innerHTML = `<td>${term}</td><td style="color:var(--term-accent)">${type}</td><td style="color:var(--term-ok)">OK</td>`;
         UI.harvestBody.prepend(tr);
     }
 
@@ -434,17 +431,21 @@
         whisperWorker.onmessage = (e) => {
             const d = e.data;
             if (d.type === 'progress') {
+                document.getElementById('progress-container').style.display = 'block';
                 const p = Math.round(d.p || 0); 
-                UI.stateText.innerText = `ALLOCATING_VRAM [${p}%]`; UI.stateText.style.color = "var(--term-warn)";
+                document.getElementById('progress-text').innerText = `ALLOCATING VRAM: ${p}%`; 
+                updateAsciiMeter('boot-ascii-bar', p / 100);
             } else if (d.type === 'READY_TO_PROCESS') { 
-                UI.stateText.innerText = "VRAM_MOUNTED"; UI.stateText.style.color = "var(--term-main)";
+                document.getElementById('progress-container').style.display = 'none';
+                UI.stateText.innerText = "SYSTEM READY IN VRAM"; UI.stateText.style.color = "var(--term-main)";
                 isCoreLoaded = true; UI.masterBtn.disabled = false;
-                startListening();
+                startListening(); // AUTOSTART
             } else if (d.type === 'final' && isSessionActive) {
                 interimSpan.innerText = ""; const incomingText = d.text.trim();
                 if (lastFinalText.length > 15 && incomingText.length > 15 && (incomingText === lastFinalText || lastFinalText.endsWith(incomingText))) return;
                 lastFinalText = incomingText;
                 
+                // ZERO LAG INJECTION VIA POST-PROCESSING
                 ppWorker.postMessage({
                     type: 'PROCESS_CHUNK',
                     text: incomingText, isLowConf: d.isLowConf,
@@ -467,10 +468,9 @@
                     
                     const clean = item.text.toLowerCase().replace(/[^a-zÀ-ÿ]/g, '');
                     if (clean.length > 7 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
-                        window.experienceDict.add(clean); updateHarvestUI(clean, "AUTO_IDX"); saveExperience();
+                        window.experienceDict.add(clean); updateHarvestUI(clean, "AUTO"); saveExperience();
                     }
                 });
-                
                 UI.output.insertBefore(frag, interimSpan);
                 UI.output.scrollTop = UI.output.scrollHeight;
             }
@@ -479,15 +479,16 @@
         vadWorker.onmessage = (e) => {
             if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
             else if (e.data.type === 'vad_ui_update') { 
-                UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2); 
+                document.getElementById('probVal').innerText = "PROB: " + e.data.prob.toFixed(2); 
                 updateAsciiMeter('vad-meter', e.data.prob);
+                document.getElementById('vadLed').classList.toggle('active', e.data.isSpeaking);
             }
         };
     }
 
     async function fetchZeitgeist() {
         const dom = UI.domainSelect.value;
-        UI.stateText.innerText = "FETCH_KNOWLEDGE...";
+        UI.stateText.innerText = "FETCH KNOWLEDGE...";
         const feeds = { "general": "rss?hl=it&gl=IT&ceid=IT:it", "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", "finance": "rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it" };
         try {
             const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent('https://news.google.com/' + feeds[dom])}`;
@@ -496,21 +497,18 @@
             if (!response.ok) throw new Error("Proxy error");
             const textContent = (await response.json()).contents; 
             const matches = textContent.match(/[A-ZÀ-Ú][a-zà-ù]+/g) || [];
-            
             matches.forEach(w => { if (w.length > 3) window.referenceDict.add(w.toLowerCase()); });
-        } catch (error) { console.warn("DICT_OFFLINE"); }
+            document.getElementById('zeitgeist-log').innerText = `> DICT_SYNC_OK [DOM: ${dom.toUpperCase()}]`;
+        } catch (error) { document.getElementById('zeitgeist-log').innerText = `> DICT_SYNC_FAIL [OFFLINE MODE]`; }
     }
 
-    // --- AVVIO E STOP ---
     async function startListening() {
         isSessionActive = true; lastFinalText = "";
-        UI.stateText.innerText = "LISTENING_PORT_OPEN"; UI.stateText.style.color = "var(--term-ok)";
-        UI.masterBtn.innerText = "[ TERMINATE_SESSION ]"; UI.masterBtn.className = "running";
+        UI.stateText.innerText = "ONLINE AND LISTENING"; UI.stateText.style.color = "var(--term-ok)";
+        UI.masterBtn.innerText = "⏹ STOP SESSION"; UI.masterBtn.className = "running";
         
         audioCtx = new AudioContext({ sampleRate: 16000 });
         stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
-        
-        if (UI.output.innerText.trim() === "_") UI.output.innerHTML = "";
 
         await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
             class P extends AudioWorkletProcessor {
@@ -535,17 +533,17 @@
     async function stopListening() { 
         isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); 
         if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); 
-        UI.masterBtn.innerText = "[ RESUME_SESSION ]"; UI.masterBtn.className = "";
-        UI.stateText.innerText = "STANDBY_MODE"; UI.stateText.style.color = "var(--term-main)"; 
+        UI.masterBtn.innerText = "▶ START SESSION"; UI.masterBtn.className = "ready";
+        UI.stateText.innerText = "STANDBY MODE"; UI.stateText.style.color = "var(--term-main)"; 
     }
 
     function unloadCore() {
         if (isSessionActive) stopListening();
         vadWorker.terminate(); whisperWorker.terminate(); ppWorker.terminate();
         isCoreLoaded = false; window.referenceDict.clear(); 
-        UI.masterBtn.innerText = "[ INIT_BOOT_SEQUENCE ]";
-        UI.stateText.innerText = "VRAM_FLUSHED"; UI.stateText.style.color = "var(--term-dim)";
-        updateAsciiMeter('vol-meter', 0); updateAsciiMeter('vad-meter', 0); UI.probVal.innerText = "PROB: 0.00";
+        UI.masterBtn.innerText = "BOOT SYSTEM()"; UI.masterBtn.className = "";
+        UI.stateText.innerText = "VRAM FLUSHED"; UI.stateText.style.color = "var(--term-dim)";
+        updateAsciiMeter('vol-meter', 0); updateAsciiMeter('vad-meter', 0); document.getElementById('probVal').innerText = "PROB: 0.00";
         initWorkers(); 
     }
 
@@ -553,16 +551,16 @@
         if (isSessionActive) { await stopListening(); } 
         else {
             if (!isCoreLoaded) {
-                UI.masterBtn.disabled = true; UI.masterBtn.className = "booting"; UI.masterBtn.innerText = "[ ALLOCATING... ]";
+                UI.masterBtn.disabled = true; UI.masterBtn.className = "booting"; UI.masterBtn.innerText = "ALLOCATING VRAM...";
                 await fetchZeitgeist();
-                UI.stateText.innerText = "MOUNTING_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
+                UI.stateText.innerText = "BOOT CORE VRAM..."; vadWorker.postMessage({ type: 'load' }); 
             } else { await startListening(); }
         }
     };
 
     UI.precisionSelect.onchange = () => { if (isCoreLoaded) unloadCore(); };
 
-    // Modale ASCII
+    // Gestione Popup Parole
     let activeToken = null;
     UI.output.onclick = (e) => { 
         if (e.target.classList.contains('word-node')) { 
@@ -576,7 +574,6 @@
             const newWord = UI.editInput.value.trim();
             activeToken.innerText = " " + newWord; 
             activeToken.classList.add('healed'); activeToken.classList.remove('low-conf'); 
-            
             const cleanWord = newWord.toLowerCase();
             if (!window.experienceDict.has(cleanWord)) { window.experienceDict.add(cleanWord); updateHarvestUI(cleanWord, "MANUAL"); await saveExperience(); }
             UI.popup.style.display = 'none'; 
@@ -587,10 +584,10 @@
     // Header Bottoni
     document.getElementById('toggle-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'block';
     document.getElementById('close-harvest-btn').onclick = () => document.getElementById('harvest-panel').style.display = 'none';
-    document.getElementById('clear-btn').onclick = () => { UI.output.innerHTML = "<span class='blink'>_</span>"; };
-    document.getElementById('copy-btn').onclick = () => navigator.clipboard.writeText(UI.output.innerText.replace('_',''));
+    document.getElementById('clear-btn').onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
+    document.getElementById('copy-btn').onclick = () => navigator.clipboard.writeText(UI.output.innerText);
     document.getElementById('export-btn').onclick = () => {
-        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([UI.output.innerText.replace('_','')], { type: 'text/plain' })); a.download = `TTY_DUMP_${Date.now()}.txt`; a.click();
+        const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([UI.output.innerText], { type: 'text/plain' })); a.download = `TRANSCRIPT_${Date.now()}.txt`; a.click();
     };
     
     (async () => {
