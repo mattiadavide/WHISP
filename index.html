@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL 4.4 - NER SHIELD</title>
+    <title>WHISP // TERMINAL 4.6 - HEURISTIC SHIELD</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -127,6 +127,12 @@
     window.experienceDict = new Set();
     window.referenceDict = new Set();
     let sessionHarvested = new Set();
+
+    const DICTIONARY_URLS = {
+        "italian": "https://raw.githubusercontent.com/napolux/paroleitaliane/master/paroleitaliane/60000_parole_italiane.txt",
+        "english": "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt",
+        "spanish": "https://raw.githubusercontent.com/javierarce/palabras/master/listado-general.txt"
+    };
 
     async function openDB() {
         return new Promise((resolve, reject) => {
@@ -266,25 +272,38 @@
                 else m[i][j] = Math.min(m[i-1][j-1] + 1, Math.min(m[i][j-1] + 1, m[i-1][j] + 1));
             } } return m[b.length][a.length];
         }
+        
         self.onmessage = (e) => {
-            const { wordsToCorrect, priorityPool, referenceDict, protectedWords } = e.data; 
+            const { wordsToCorrect, priorityPool, referenceDict } = e.data; 
             const corrections = []; 
             const active = [...priorityPool, ...(referenceDict || [])];
-            
-            // Creiamo un Set per le parole protette (il nostro Lucchetto)
-            const protectedSet = new Set(protectedWords || []);
 
-            wordsToCorrect.forEach(item => {
+            wordsToCorrect.forEach((item, index) => {
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
                 if (!match) return;
                 const [_, prefix, core, suffix] = match; const lower = core.toLowerCase(); 
-                if (lower.length < 5) return;
                 
-                // IL LUCCHETTO: Se la parola è identificata dal NER, ignoriamo il calcolo di Levenshtein
-                if (protectedSet.has(lower)) {
-                    corrections.push({ id: item.id, newText: item.original, isShielded: true });
-                    return;
+                // --- REGOLA EURISTICA (IL NUOVO LUCCHETTO) ---
+                let isCapitalized = /^[A-ZÀ-Ú]/.test(core);
+                let isStartOfSentence = false;
+                
+                if (index === 0) {
+                    isStartOfSentence = true; // È la primissima parola della stringa
+                } else {
+                    const prevWord = wordsToCorrect[index - 1].original;
+                    // Se la parola precedente finisce con punto, interrogativo, esclamativo (anche con virgolette)
+                    if (/[.?!]["']?$/.test(prevWord)) {
+                        isStartOfSentence = true;
+                    }
                 }
+
+                // Se la parola ha la maiuscola, NON è inizio frase, ed è lunga almeno 4 lettere -> PROTEGGI
+                if (isCapitalized && !isStartOfSentence && core.length > 3) {
+                    corrections.push({ id: item.id, newText: item.original, isShielded: true });
+                    return; // Saltiamo il dizionario!
+                }
+
+                if (lower.length < 5) return;
 
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
@@ -292,7 +311,7 @@
                     let d = levenshtein(lower, ref); if (d < minDist) { minDist = d; best = ref; } 
                 });
                 
-                if (best && (minDist / lower.length <= 0.25)) {
+                if (best && (minDist <= 1 || minDist / lower.length <= 0.15)) {
                     const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
                     corrections.push({ id: item.id, newText: prefix + restored + suffix, isShielded: false });
                 }
@@ -301,52 +320,13 @@
         };
     `;
 
+    // Il Refining Worker torna a occuparsi solo della pulizia spazi (velocissimo)
     const refiningWorkerCode = `
-        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
-        env.allowLocalModels = false;
-
-        let nerPipeline = null;
-
-        async function loadNER() {
-            try {
-                // Carica il modello NER multilingua (viene scaricato e tenuto in cache)
-                nerPipeline = await pipeline('token-classification', 'Xenova/bert-base-multilingual-cased-ner-hrl', {
-                    device: 'wasm' // wasm è più stabile per la token classification in background
-                });
-                self.postMessage({ type: 'NER_READY' });
-            } catch (err) {
-                console.error("NER Init Error:", err);
-            }
-        }
-
-        self.onmessage = async (e) => {
-            if (e.data.type === 'load') {
-                await loadNER();
-                return;
-            }
-
+        self.onmessage = (e) => {
             let text = e.data.text;
-            
-            // 1. Pulizia sintattica (Regex originali)
             text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1'); 
             text = text.replace(/ {2,}/g, ' '); 
-
-            // 2. Estrazione Entità (Il Lucchetto)
-            let protectedWords = [];
-            if (nerPipeline && text.trim().length > 0) {
-                try {
-                    // aggregation_strategy unisce automaticamente le sillabe frammentate
-                    const entities = await nerPipeline(text, { aggregation_strategy: 'simple' });
-                    
-                    protectedWords = entities
-                        .filter(ent => ['PER', 'LOC', 'ORG'].includes(ent.entity_group))
-                        .map(ent => ent.word.replace(/[^a-zA-ZÀ-ÿ]/g, '').toLowerCase())
-                        .filter(w => w.length > 0);
-                        
-                } catch (err) { console.warn("NER processing failed:", err); }
-            }
-
-            self.postMessage({ type: 'REFINED', text, protectedWords });
+            self.postMessage({ type: 'REFINED', text });
         };
     `;
 
@@ -369,7 +349,7 @@
     const vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
     const healingWorker = new Worker(URL.createObjectURL(new Blob([healingWorkerCode], { type: 'application/javascript' })));
-    const refiningWorker = new Worker(URL.createObjectURL(new Blob([refiningWorkerCode], { type: 'application/javascript' })), { type: 'module' });
+    const refiningWorker = new Worker(URL.createObjectURL(new Blob([refiningWorkerCode], { type: 'application/javascript' })));
 
     const workerChannel = new MessageChannel();
     vadWorker.postMessage({ type: 'init_whisper_port', port: workerChannel.port1 }, [workerChannel.port1]);
@@ -429,15 +409,11 @@
         if (e.data.type === 'REFINED') {
             rebuildTokens(e.data.text); UI.status.innerText = "HEALING_ACTIVE...";
             const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
-            // Passiamo sia i dizionari che il nuovo Lucchetto (protectedWords)
             healingWorker.postMessage({ 
                 wordsToCorrect: tokens, 
                 priorityPool: Array.from(window.experienceDict), 
-                referenceDict: Array.from(window.referenceDict),
-                protectedWords: e.data.protectedWords
+                referenceDict: Array.from(window.referenceDict)
             });
-        } else if (e.data.type === 'NER_READY') {
-            console.log("NER Shield Engine Online");
         }
     };
 
@@ -446,9 +422,8 @@
             const el = UI.output.querySelector(`[data-hid="${c.id}"]`); 
             if (el) { 
                 if (c.isShielded) {
-                    // Evidenzia visivamente le parole che sono state protette
                     el.classList.add('shielded');
-                    el.title = "Protetta dal sistema NER";
+                    el.title = "Protetta dalla regola Maiuscola";
                 } else {
                     el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; 
                     el.classList.add('validated'); el.style.color = "var(--term-ok)"; 
@@ -508,9 +483,26 @@
         await saveExperience(); UI.popup.style.display = 'none'; 
     } };
 
+    UI.languageSelect.onchange = (e) => {
+        const selectedLang = e.target.value;
+        if (DICTIONARY_URLS[selectedLang]) {
+            UI.dictUrlInput.value = DICTIONARY_URLS[selectedLang];
+        } else {
+            UI.dictUrlInput.value = "";
+        }
+    };
+
     UI.loadDictBtn.onclick = async () => {
         const url = UI.dictUrlInput.value.trim(); if (!url) return; UI.loadDictBtn.disabled = true; UI.status.innerText = "FETCHING_KNOWLEDGE_BASE...";
-        try { const res = await fetch(url); if (res.ok) { const text = await res.text(); window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); UI.status.innerText = `DICT_LOADED [${window.referenceDict.size} TERMS]`; UI.status.style.color = "var(--term-ok)"; } else { throw new Error("404"); } } 
+        try { 
+            const res = await fetch(url); 
+            if (res.ok) { 
+                const text = await res.text(); 
+                window.referenceDict = new Set(text.split('\\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); 
+                UI.status.innerText = \`DICT_LOADED [\${window.referenceDict.size} TERMS]\`; 
+                UI.status.style.color = "var(--term-ok)"; 
+            } else { throw new Error("404"); } 
+        } 
         catch (e) { UI.status.innerText = "ERR_DICT_FETCH_FAILED"; UI.status.style.color = "var(--term-err)"; } UI.loadDictBtn.disabled = false;
     };
 
@@ -520,7 +512,6 @@
         UI.loadBtn.disabled = true; 
         UI.status.innerText = "BOOT_CORE..."; 
         vadWorker.postMessage({ type: 'load' }); 
-        refiningWorker.postMessage({ type: 'load' }); // Avviamo il motore NER insieme al VAD
     };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
@@ -531,6 +522,8 @@
         req.onsuccess = () => { if(req.result) window.experienceDict = new Set(req.result); };
         const LANGUAGES = { "italian": "ITA", "english": "ENG", "spanish": "ESP" };
         for (const [c, n] of Object.entries(LANGUAGES)) { const o = document.createElement("option"); o.value = c; o.text = n; UI.languageSelect.appendChild(o); }
+        
+        UI.dictUrlInput.value = DICTIONARY_URLS["italian"];
     })();
 </script>
 </body>
