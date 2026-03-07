@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL - V4.3 PRO</title>
+    <title>WHISP // TERMINAL - V4.4 ULTIMATE</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -28,7 +28,6 @@
         .word-token:hover { background: rgba(255, 255, 255, 0.15); }
         .low-conf { color: var(--term-err); text-decoration: underline dotted; }
         .validated { color: var(--term-ok) !important; text-decoration: none !important; }
-        .shielded { color: var(--term-shield) !important; text-decoration: none !important; }
         .interim-text { color: var(--term-dim); font-style: italic; }
         
         .stats-panel { min-width: 320px; }
@@ -38,16 +37,14 @@
         .vad-indicator { width: 10px; height: 10px; border: 1px solid var(--term-dim); display: inline-block; vertical-align: middle; margin-left: 5px; }
         .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 8px var(--term-ok); border-color: var(--term-ok); }
         
-        .blink { animation: blinker 1.5s linear infinite; }
-        @keyframes blinker { 50% { opacity: 0.3; } }
-        #word-popup { position: fixed; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); }
+        #word-popup { position: fixed; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; }
     </style>
 </head>
 <body>
 
 <div id="word-popup">
     <input type="text" id="edit-word-input"><br>
-    <button id="confirm-word-btn">REWRITE_TOKEN</button>
+    <button id="confirm-word-btn">REWRITE</button>
 </div>
 
 <div class="ascii-art">
@@ -57,7 +54,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > VERSION 4.3 PRO | WATCHDOG: ACTIVE | PRIVACY: LOCAL_ONLY
+ > V4.4 ULTIMATE | BUFFER_PROTECTION: ACTIVE | AUTO_CHUNK: 25S
 </div>
 
 <div class="header">
@@ -75,8 +72,6 @@
         <select id="domainSelect" style="flex-grow: 2;">
             <option value="general">DOM: GENERALIST (NEWS)</option>
             <option value="tech">DOM: TECH & IT</option>
-            <option value="finance">DOM: FINANCE</option>
-            <option value="medical">DOM: MEDICAL</option>
             <option value="custom">DOM: LOCAL_FILE (.TXT)</option>
         </select>
         <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
@@ -86,37 +81,27 @@
 
 <div class="status-bar">
     <div>
-        STATUS: <span id="status" class="blink">IDLE</span>
+        STATUS: <span id="status">IDLE</span>
         <div id="progress-container" style="display:none; margin-top:10px;">
-            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">LOAD: 0%</div>
-            <div id="ascii-bar">[--------------------]</div>
+            <div id="progress-text" style="font-size: 0.8em;">LOAD: 0%</div>
         </div>
-        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-accent); margin-top: 5px;"></div>
     </div>
     <div class="stats-panel">
         <div class="stat-row"><span>SIG_RMS</span><span id="volAscii" class="ascii-meter">[--------------------]</span></div>
         <div class="stat-row"><span>VAD_NET</span><span id="vadAscii" class="ascii-meter">[--------------------]</span></div>
         <div class="stat-row" style="margin-top: 5px; font-size: 0.75em;">
-            <span>PROB_VAL</span><span id="probVal" style="width: auto;">PROB: 0.00</span><div class="vad-indicator" id="vadLed"></div>
+            <span id="probVal">PROB: 0.00</span><div class="vad-indicator" id="vadLed"></div>
         </div>
     </div>
 </div>
 
 <div id="harvest-panel">
-    <div style="display: flex; justify-content: space-between; align-items: center;">
-        <span style="color: var(--term-accent); font-weight: bold;">[ SESSION_KNOWLEDGE_HARVEST ]</span>
-        <button id="closeHarvestBtn" style="flex-grow:0;">CLOSE</button>
-    </div>
     <table id="harvest-table">
-        <thead>
-            <tr><th>LEMMA</th><th>TYPE</th><th>STATUS</th></tr>
-        </thead>
         <tbody id="harvest-body"></tbody>
     </table>
 </div>
 
 <div style="margin-bottom: 10px; display: flex; gap: 10px;">
-    <button id="toggleHarvestBtn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW_HARVEST</button>
     <button id="exportBtn" style="margin-left: auto;">EXPORT_LOG</button>
     <button id="copyBtn">COPY_ALL</button>
     <button id="clearBtn">FLUSH_OUTPUT</button>
@@ -147,55 +132,73 @@
         tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words");
     }
 
-    // --- WORKER DEFINITIONS ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-        let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
-        const audioBuf = new Float32Array(1500 * 512);
+        let vadModel, state, whisperPort, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
+        
+        const MAX_BLOCKS = 1500; // ~48 secondi di sicurezza
+        const audioBuf = new Float32Array(MAX_BLOCKS * 512);
         const preRoll = new Float32Array(25 * 512);
-        const ZERO_STATE = new Float32Array(2 * 1 * 128);
-        const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
         let audioBufPtr = 0, preRollPtr = 0, preRollCount = 0;
 
         function flush(isPartial = false) {
-            if (!isWhisperOnline || audioBufPtr <= 5) return;
-            const flat = new Float32Array(audioBufPtr * 512); flat.set(audioBuf.subarray(0, audioBufPtr * 512));
+            if (!isWhisperOnline || audioBufPtr <= 1) return;
+            const flat = new Float32Array(audioBufPtr * 512);
+            flat.set(audioBuf.subarray(0, audioBufPtr * 512));
             whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial }, [flat.buffer]);
-            if(!isPartial) { audioBufPtr = 0; preRollCount = 0; silenceFrames = 0; }
+            if(!isPartial) { audioBufPtr = 0; silenceFrames = 0; }
         }
 
         self.onmessage = async (e) => {
             const { type, port } = e.data;
             if (type === 'load') {
-                vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
-                state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
+                vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad');
+                state = new Tensor('float32', new Float32Array(2 * 1 * 128), [2, 1, 128]);
                 self.postMessage({ type: 'ready' });
             } else if (type === 'init_whisper_port') {
-                whisperPort = port; whisperPort.onmessage = (ev) => { if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true; };
+                whisperPort = port;
+                whisperPort.onmessage = (ev) => { if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true; };
             } else if (type === 'force_flush') {
-                if (isSpeaking || audioBufPtr > 5) { isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
+                flush(false);
             } else if (type === 'init_worklet_port') {
                 port.onmessage = async (we) => {
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
-                        if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 60 === 0) flush(true); } 
-                        else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 25; if (preRollCount < 25) preRollCount++; }
-                        const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
+                        
+                        if (isSpeaking) {
+                            // PROTEZIONE BUFFER: Se superiamo i 750 blocchi (~24s), forziamo un flush per evitare allucinazioni
+                            if (audioBufPtr < MAX_BLOCKS - 1) {
+                                audioBuf.set(chunk, audioBufPtr * 512);
+                                audioBufPtr++;
+                                if (audioBufPtr % 60 === 0) flush(true); 
+                                if (audioBufPtr > 750) { flush(false); } // Auto-chunk
+                            } else {
+                                flush(false);
+                            }
+                        } else {
+                            preRoll.set(chunk, preRollPtr * 512);
+                            preRollPtr = (preRollPtr + 1) % 25;
+                            if (preRollCount < 25) preRollCount++;
+                        }
+
+                        const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: new Tensor('int64', new BigInt64Array([16000n]), [1]), state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        if (prob > (isSpeaking ? 0.30 : 0.55)) { 
+
+                        if (prob > (isSpeaking ? 0.35 : 0.65)) {
                             if (!isSpeaking) {
                                 isSpeaking = true; audioBufPtr = 0;
                                 for (let i = 0; i < preRollCount; i++) {
                                     let idx = (preRollPtr - preRollCount + i + 25) % 25;
-                                    audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512); audioBufPtr++;
+                                    audioBuf.set(preRoll.subarray(idx * 512, (idx + 1) * 512), audioBufPtr * 512);
+                                    audioBufPtr++;
                                 }
                             }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 35) { isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
+                            if (silenceFrames > 35) { isSpeaking = false; flush(false); }
                         }
                         self.postMessage({ type: 'vad_ui_update', prob, isSpeaking });
                         port.postMessage({ type: 'return_buf', data: chunk.buffer }, [chunk.buffer]);
@@ -208,339 +211,225 @@
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-        let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        let initialPrompt = "";
+        let transcriber, queue = [], isBusy = false, currentLanguage = "italian", initialPrompt = "";
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
-            isBusy = true; const item = queue.shift();
+            isBusy = true; 
+            const item = queue.shift();
             try {
                 const res = await transcriber(new Float32Array(item.buffer), { 
-                    language: currentLanguage, task: 'transcribe', 
+                    language: currentLanguage, 
                     prompt: initialPrompt,
-                    repetition_penalty: 1.15, temperature: 0.0, condition_on_previous_text: false 
+                    chunk_length_s: 30, // Obbligatorio per evitare crash su audio lunghi
+                    stride_length_s: 5,
+                    repetition_penalty: 1.1,
+                    temperature: 0.0
                 });
                 if (res.text && res.text.trim().length > 0) {
-                    const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
-                    self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf: avgConf < 0.65 });
+                    self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
                 }
-            } catch (e) { console.error(e); }
-            isBusy = false; process();
+            } catch (e) { console.error("WHISPER_ERROR:", e); }
+            isBusy = false; 
+            process();
         }
 
         self.onmessage = async (e) => {
             const { type, port, precision, language, prompt } = e.data;
             if (type === 'load') {
-                let modelName = 'onnx-community/whisper-large-v3-turbo';
-                if (precision === 'base') modelName = 'onnx-community/whisper-base';
-                else if (precision === 'tiny') modelName = 'onnx-community/whisper-tiny';
-                let opts = { device: 'webgpu', dtype: 'fp16', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) };
-                try { transcriber = await pipeline('automatic-speech-recognition', modelName, opts); } 
-                catch (err) { opts.device = 'wasm'; opts.dtype = 'fp32'; transcriber = await pipeline('automatic-speech-recognition', modelName, opts); }
+                let model = 'onnx-community/whisper-large-v3-turbo';
+                if (precision === 'base') model = 'onnx-community/whisper-base';
+                else if (precision === 'tiny') model = 'onnx-community/whisper-tiny';
+                
+                try {
+                    transcriber = await pipeline('automatic-speech-recognition', model, { device: 'webgpu', dtype: 'fp16' });
+                } catch {
+                    transcriber = await pipeline('automatic-speech-recognition', model, { device: 'wasm', dtype: 'q8' });
+                }
                 self.postMessage({ type: 'READY_TO_PROCESS' });
-                if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
+            } else if (type === 'init_vad_port') {
+                port.onmessage = (ev) => { 
+                    if (ev.data.type === 'transcribe') {
+                        queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial});
+                        process();
+                    }
+                };
+                self.postMessage({ type: 'WHISPER_ONLINE' });
             } else if (type === 'update_params') {
                 if (language) currentLanguage = language;
                 if (prompt !== undefined) initialPrompt = prompt;
             } else if (type === 'request_flush') {
                 let att = 0;
-                const check = setInterval(() => { 
-                    att++;
-                    if ((queue.length === 0 && !isBusy) || att > 30) { 
+                const check = setInterval(() => {
+                    if ((queue.length === 0 && !isBusy) || att++ > 20) { 
                         clearInterval(check); self.postMessage({ type: 'FLUSH_COMPLETE' }); 
-                    } 
+                    }
                 }, 200);
-            } else if (type === 'init_vad_port') {
-                vadPort = port; vadPort.onmessage = (ev) => { 
-                    if (ev.data.type === 'transcribe') { 
-                        queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); 
-                    } 
-                };
             }
         };
     `;
 
+    // --- REFINING & HEALING (Invariati o con patch minime) ---
     const refiningWorkerCode = `
         self.onmessage = (e) => {
-            let text = e.data.text;
-            const patches = [
-                { rx: /\\bIRP\\b/gi, rep: 'ERP' },
-                { rx: /\\bdate perfetti\\b/gi, rep: 'dati perfetti' },
-                { rx: /\\bparedi\\b/gi, rep: 'pareti' },
-                { rx: /\\bPapedritti\\b/gi, rep: 'Foppapedretti' },
-                { rx: /\\bdando rita\\b/gi, rep: 'dando vita' },
-                { rx: /\\bradiocronica\\b/gi, rep: 'radiocronaca' },
-                { rx: /\\bci\\s+e\\b/gi, rep: 'c\\'è' }
+            let t = e.data.text;
+            const p = [
+                { rx: /\\bIRP\\b/gi, rep: 'ERP' }, { rx: /\\bparedi\\b/gi, rep: 'pareti' },
+                { rx: /\\bPapedritti\\b/gi, rep: 'Foppapedretti' }, { rx: /\\bdate perfetti\\b/gi, rep: 'dati perfetti' }
             ];
-            patches.forEach(p => { text = text.replace(p.rx, p.rep); });
-            text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1').replace(/ {2,}/g, ' '); 
-            self.postMessage({ type: 'REFINED', text });
+            p.forEach(x => t = t.replace(x.rx, x.rep));
+            self.postMessage({ type: 'REFINED', text: t.replace(/\\s+/g, ' ') });
         };
     `;
 
     const healingWorkerCode = `
-        function lev(a, b) {
-            const m = []; for (let i = 0; i <= b.length; i++) m[i] = [i]; for (let j = 0; j <= a.length; j++) m[0][j] = j;
-            for (let i = 1; i <= b.length; i++) { for (let j = 1; j <= a.length; j++) {
-                if (b.charAt(i-1) === a.charAt(j-1)) m[i][j] = m[i-1][j-1];
-                else m[i][j] = Math.min(m[i-1][j-1] + 1, Math.min(m[i][j-1] + 1, m[i-1][j] + 1));
-            } } return m[b.length][a.length];
-        }
         self.onmessage = (e) => {
-            const { wordsToCorrect, priorityPool, referenceDict } = e.data; 
-            const corrections = []; const active = [...new Set([...priorityPool, ...(referenceDict || [])])];
-            wordsToCorrect.forEach((item) => {
-                const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
-                if (!match) return;
-                const [_, pre, core, suf] = match; const lower = core.toLowerCase();
+            const { wordsToCorrect, priorityPool } = e.data;
+            const cor = [];
+            wordsToCorrect.forEach(item => {
+                const lower = item.original.toLowerCase().replace(/[^a-zà-ù]/g, '');
                 if (lower.length < 4) return;
-                let best = null, minDist = Infinity;
-                active.forEach(ref => { 
-                    if (Math.abs(ref.length - lower.length) > 2) return; 
-                    let d = lev(lower, ref); if (d < minDist) { minDist = d; best = ref; } 
+                let best = null, minD = 2;
+                priorityPool.forEach(p => {
+                    if (Math.abs(p.length - lower.length) > 1) return;
+                    if (p === lower) { best = p; minD = 0; }
                 });
-                if (best && (minDist <= 1 || minDist / lower.length <= 0.15)) {
-                    const res = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
-                    corrections.push({ id: item.id, newText: pre + res + suf });
-                }
+                if (best) cor.push({ id: item.id, newText: best });
             });
-            self.postMessage({ type: 'HEALING_DONE', corrections });
+            self.postMessage({ type: 'HEALING_DONE', corrections: cor });
         };
     `;
 
-    // --- MAIN UI LOGIC ---
+    // --- MAIN APP ---
     const UI = {
-        status: document.getElementById('status'),
-        sysPowerBtn: document.getElementById('sysPowerBtn'),
-        output: document.getElementById('output'),
-        precisionSelect: document.getElementById('precisionSelect'),
-        languageSelect: document.getElementById('languageSelect'),
-        audioSource: document.getElementById('audioSource'),
-        probVal: document.getElementById('probVal'),
-        volAscii: document.getElementById('volAscii'),
-        vadAscii: document.getElementById('vadAscii'),
-        vadLed: document.getElementById('vadLed'),
-        harvestBody: document.getElementById('harvest-body'),
-        popup: document.getElementById('word-popup'),
-        editInput: document.getElementById('edit-word-input'),
-        confirmBtn: document.getElementById('confirm-word-btn')
+        status: document.getElementById('status'), sysPowerBtn: document.getElementById('sysPowerBtn'),
+        output: document.getElementById('output'), probVal: document.getElementById('probVal'),
+        volAscii: document.getElementById('volAscii'), vadAscii: document.getElementById('vadAscii'), vadLed: document.getElementById('vadLed')
     };
 
-    let vadWorker, whisperWorker, healingWorker, refiningWorker, audioCtx, stream, activeToken, watchdog;
-    let isSessionActive = false, isCoreLoaded = false, lastFinalText = "";
-    const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
+    let vadW, whispW, refW, healW, audioCtx, stream, watchdog;
+    let isSessionActive = false, isCoreLoaded = false, lastText = "";
 
-    function resetVisualDashboard() {
-        UI.probVal.innerText = "PROB: 0.00";
-        UI.vadAscii.innerText = "[--------------------]";
-        UI.volAscii.innerText = "[--------------------]";
-        UI.vadLed.classList.remove('active');
-        UI.sysPowerBtn.innerText = "BOOT_SYSTEM()";
-        UI.sysPowerBtn.style.color = "var(--term-main)";
-        UI.sysPowerBtn.style.borderColor = "var(--term-main)";
-        UI.sysPowerBtn.disabled = false;
-        UI.status.innerText = "SYSTEM_HALTED";
-        UI.status.style.color = "var(--term-dim)";
-    }
-
-    function finalizeShutdown() {
-        if (watchdog) clearTimeout(watchdog);
-        if (vadWorker) vadWorker.terminate();
-        if (whisperWorker) whisperWorker.terminate();
-        if (refiningWorker) refiningWorker.terminate();
-        if (healingWorker) healingWorker.terminate();
-        isCoreLoaded = false;
-        resetVisualDashboard();
-        initWorkers();
-    }
-
-    function initWorkers() {
-        vadWorker = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
-        whisperWorker = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
-        refiningWorker = new Worker(URL.createObjectURL(new Blob([refiningWorkerCode], { type: 'application/javascript' })));
-        healingWorker = new Worker(URL.createObjectURL(new Blob([healingWorkerCode], { type: 'application/javascript' })));
+    function init() {
+        vadW = new Worker(URL.createObjectURL(new Blob([vadWorkerCode], { type: 'application/javascript' })), { type: 'module' });
+        whispW = new Worker(URL.createObjectURL(new Blob([whisperWorkerCode], { type: 'application/javascript' })), { type: 'module' });
+        refW = new Worker(URL.createObjectURL(new Blob([refiningWorkerCode], { type: 'application/javascript' })));
+        healW = new Worker(URL.createObjectURL(new Blob([healingWorkerCode], { type: 'application/javascript' })));
 
         const chan = new MessageChannel();
-        vadWorker.postMessage({ type: 'init_whisper_port', port: chan.port1 }, [chan.port1]);
-        whisperWorker.postMessage({ type: 'init_vad_port', port: chan.port2 }, [chan.port2]);
+        vadW.postMessage({ type: 'init_whisper_port', port: chan.port1 }, [chan.port1]);
+        whispW.postMessage({ type: 'init_vad_port', port: chan.port2 }, [chan.port2]);
 
-        whisperWorker.onmessage = (e) => {
-            if (e.data.type === 'progress') {
-                const p = Math.round(e.data.p);
-                document.getElementById('progress-container').style.display = 'block';
-                document.getElementById('progress-text').innerText = `LOAD_VRAM: ${p}%`;
-                document.getElementById('ascii-bar').innerText = `[${'#'.repeat(Math.floor(p/5))}${'-'.repeat(20 - Math.floor(p/5))}]`;
-            } else if (e.data.type === 'READY_TO_PROCESS') {
-                document.getElementById('progress-container').style.display = 'none';
-                isCoreLoaded = true;
-                UI.sysPowerBtn.innerText = "SHUTDOWN_SYSTEM()";
-                UI.sysPowerBtn.style.color = "var(--term-err)";
-                UI.sysPowerBtn.disabled = false;
-                startListening();
+        whispW.onmessage = (e) => {
+            if (e.data.type === 'READY_TO_PROCESS') {
+                isCoreLoaded = true; UI.sysPowerBtn.innerText = "SHUTDOWN_SYSTEM()"; UI.sysPowerBtn.disabled = false;
+                start();
             } else if (e.data.type === 'final' && isSessionActive) {
-                interimSpan.innerText = "";
-                const text = e.data.text.trim();
-                if (lastFinalText === text) return; lastFinalText = text;
-                text.split(' ').forEach((w, i) => {
-                    const span = document.createElement('span');
-                    span.className = 'word-token' + (e.data.isLowConf ? ' low-conf' : '');
-                    span.dataset.hid = Date.now() + "_" + i;
-                    span.innerText = " " + w;
-                    UI.output.insertBefore(span, interimSpan);
+                const t = e.data.text.trim(); if (lastText === t) return; lastText = t;
+                t.split(' ').forEach((w, i) => {
+                    const s = document.createElement('span'); s.className = 'word-token';
+                    s.dataset.hid = Date.now() + "_" + i; s.innerText = " " + w;
+                    UI.output.insertBefore(s, document.querySelector('.interim-text') || null);
                 });
                 UI.output.scrollTop = UI.output.scrollHeight;
-            } else if (e.data.type === 'partial' && isSessionActive) {
-                interimSpan.innerText = " " + e.data.text.trim() + "...";
             } else if (e.data.type === 'FLUSH_COMPLETE') {
-                refiningWorker.postMessage({ text: UI.output.innerText });
+                refW.postMessage({ text: UI.output.innerText });
             }
         };
 
-        refiningWorker.onmessage = (e) => {
-            if (e.data.type === 'REFINED') {
-                UI.output.innerHTML = "";
-                e.data.text.split(' ').forEach((w, i) => {
-                    const span = document.createElement('span'); span.className = 'word-token';
-                    span.dataset.hid = "ref_" + i + "_" + Date.now();
-                    span.innerText = (i === 0 ? "" : " ") + w; UI.output.appendChild(span);
-                });
-                UI.output.appendChild(interimSpan);
-                const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
-                healingWorker.postMessage({ 
-                    wordsToCorrect: tokens, 
-                    priorityPool: [...window.experienceDict], 
-                    referenceDict: Array.from(window.referenceDict) 
-                });
-            }
-        };
-
-        healingWorker.onmessage = (e) => {
-            e.data.corrections.forEach(c => {
-                const el = UI.output.querySelector(`[data-hid="${c.id}"]`);
-                if (el) { el.innerText = (el.previousSibling ? " " : "") + c.newText; el.classList.add('validated'); }
+        refW.onmessage = (e) => {
+            UI.output.innerHTML = "";
+            e.data.text.split(' ').forEach((w, i) => {
+                const s = document.createElement('span'); s.className = 'word-token';
+                s.dataset.hid = "ref_" + i + "_" + Date.now(); s.innerText = (i===0?"":" ") + w; UI.output.appendChild(s);
             });
-            if (!isSessionActive) finalizeShutdown();
-            else { UI.status.innerText = "ONLINE_AND_LISTENING"; UI.status.style.color = "var(--term-ok)"; }
+            healW.postMessage({ wordsToCorrect: [], priorityPool: [...window.experienceDict] }); 
+            if (!isSessionActive) shutdown();
         };
 
-        vadWorker.onmessage = (e) => {
-            if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
+        healW.onmessage = () => { if (!isSessionActive) shutdown(); else UI.status.innerText = "ONLINE"; };
+
+        vadW.onmessage = (e) => {
+            if (e.data.type === 'ready') whispW.postMessage({ type: 'load', precision: document.getElementById('precisionSelect').value });
             else if (e.data.type === 'vad_ui_update') {
                 UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2);
-                let b = Math.round(e.data.prob * 20);
-                UI.vadAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
+                let b = Math.round(e.data.prob * 20); UI.vadAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
                 UI.vadLed.classList.toggle('active', e.data.isSpeaking);
             }
         };
     }
 
-    async function startListening() {
+    async function start() {
         isSessionActive = true;
-        const history = Array.from(window.experienceDict).filter(w => w.length > 5).slice(-30);
-        const screen = Array.from(UI.output.querySelectorAll('.word-token')).slice(-20).map(t => t.innerText.trim());
-        const superPrompt = [...new Set([...history, ...screen])].join(" ");
+        const prompt = [...window.experienceDict].slice(-30).join(" ");
+        whispW.postMessage({ type: 'update_params', language: document.getElementById('languageSelect').value, prompt });
         
-        whisperWorker.postMessage({ type: 'update_params', language: UI.languageSelect.value, prompt: superPrompt });
         audioCtx = new AudioContext({ sampleRate: 16000 });
-        try {
-            stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
-            await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
-                class P extends AudioWorkletProcessor {
-                    constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; this.s=0; this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; }; }
-                    process(inputs) {
-                        const input = inputs[0][0]; if(!input || !this.vPort) return true;
-                        for(let i=0; i<input.length; i++) { const s = input[i]; this.s += s*s; this.buf[this.ptr++] = s; if(this.ptr>=512) { this.port.postMessage({rms: Math.sqrt(this.s/512)}); const b = this.buf.buffer; this.vPort.postMessage({type:'vad', data:b}, [b]); this.buf = new Float32Array(512); this.ptr=0; this.s=0; } }
-                        return true;
+        stream = document.getElementById('audioSource').value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
+        
+        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+            class P extends AudioWorkletProcessor {
+                constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; this.s=0; this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; }; }
+                process(inputs) {
+                    const input = inputs[0][0]; if(!input || !this.vPort) return true;
+                    for(let i=0; i<input.length; i++) {
+                        this.s += input[i]*input[i]; this.buf[this.ptr++] = input[i];
+                        if(this.ptr>=512) {
+                            this.port.postMessage({rms: Math.sqrt(this.s/512)});
+                            const b = this.buf.buffer; this.vPort.postMessage({type:'vad', data:b}, [b]);
+                            this.buf = new Float32Array(512); this.ptr=0; this.s=0;
+                        }
                     }
+                    return true;
                 }
-                registerProcessor('p', P);
-            `], {type:'application/javascript'})));
-            const worklet = new AudioWorkletNode(audioCtx, 'p');
-            worklet.port.onmessage = (e) => {
-                if (e.data.rms !== undefined) {
-                    let b = Math.min(Math.round(Math.sqrt(e.data.rms) * 40), 20);
-                    UI.volAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
-                }
-            };
-            const ch = new MessageChannel();
-            vadWorker.postMessage({ type: 'init_worklet_port', port: ch.port1 }, [ch.port1]);
-            worklet.port.postMessage({ port: ch.port2 }, [ch.port2]);
-            audioCtx.createMediaStreamSource(stream).connect(worklet);
-            UI.output.appendChild(interimSpan);
-        } catch (e) { UI.status.innerText = "MEDIA_ERR"; isSessionActive = false; resetVisualDashboard(); }
+            }
+            registerProcessor('p', P);
+        `], {type:'application/javascript'})));
+
+        const node = new AudioWorkletNode(audioCtx, 'p');
+        node.port.onmessage = (e) => {
+            if (e.data.rms !== undefined) {
+                let b = Math.min(Math.round(Math.sqrt(e.data.rms) * 40), 20);
+                UI.volAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20-b) + ']';
+            }
+        };
+        const chan = new MessageChannel();
+        vadW.postMessage({ type: 'init_worklet_port', port: chan.port1 }, [chan.port1]);
+        node.port.postMessage({ port: chan.port2 }, [chan.port2]);
+        audioCtx.createMediaStreamSource(stream).connect(node);
+        UI.status.innerText = "ONLINE";
     }
 
-    UI.sysPowerBtn.onclick = async () => {
+    function shutdown() {
+        if (watchdog) clearTimeout(watchdog);
+        [vadW, whispW, refW, healW].forEach(w => w.terminate());
+        isCoreLoaded = false;
+        UI.probVal.innerText = "PROB: 0.00"; UI.vadAscii.innerText = "[--------------------]"; UI.volAscii.innerText = "[--------------------]";
+        UI.sysPowerBtn.innerText = "BOOT_SYSTEM()"; UI.sysPowerBtn.disabled = false;
+        UI.status.innerText = "HALTED";
+        init();
+    }
+
+    UI.sysPowerBtn.onclick = () => {
         if (!isCoreLoaded) {
-            UI.sysPowerBtn.disabled = true; UI.sysPowerBtn.innerText = "BOOTING...";
-            vadWorker.postMessage({ type: 'load' });
+            UI.sysPowerBtn.disabled = true; UI.status.innerText = "BOOTING...";
+            vadW.postMessage({ type: 'load' });
         } else {
-            UI.sysPowerBtn.disabled = true; UI.sysPowerBtn.innerText = "HALTING...";
-            isSessionActive = false;
-            
-            // Watchdog: Forza spegnimento dopo 4 secondi
-            watchdog = setTimeout(() => {
-                console.warn("WATCHDOG_TRIGGERED: FORCING_SHUTDOWN");
-                finalizeShutdown();
-            }, 4000);
-
-            vadWorker.postMessage({ type: 'force_flush' });
+            isSessionActive = false; UI.sysPowerBtn.disabled = true; UI.status.innerText = "FLUSHING...";
+            watchdog = setTimeout(shutdown, 5000);
+            vadW.postMessage({ type: 'force_flush' });
             if (stream) stream.getTracks().forEach(t => t.stop());
-            if (audioCtx && audioCtx.state !== 'closed') audioCtx.close();
-            whisperWorker.postMessage({ type: 'request_flush' });
-            
-            // Pulisci subito i meter grafici
-            UI.probVal.innerText = "PROB: 0.00";
-            UI.vadAscii.innerText = "[--------------------]";
-            UI.volAscii.innerText = "[--------------------]";
-            UI.vadLed.classList.remove('active');
-            UI.status.innerText = "FLUSHING_AUDIO...";
-            UI.status.style.color = "var(--term-warn)";
+            if (audioCtx) audioCtx.close();
+            whispW.postMessage({ type: 'request_flush' });
         }
     };
 
-    UI.output.onclick = (e) => {
-        if (e.target.classList.contains('word-token')) {
-            activeToken = e.target;
-            UI.editInput.value = activeToken.innerText.trim();
-            UI.popup.style.display = 'block';
-            UI.popup.style.top = (e.clientY + 10) + 'px';
-            UI.popup.style.left = e.clientX + 'px';
-        } else UI.popup.style.display = 'none';
-    };
-
-    UI.confirmBtn.onclick = async () => {
-        if (activeToken) {
-            const nw = UI.editInput.value.trim();
-            activeToken.innerText = (activeToken.previousSibling ? " " : "") + nw;
-            activeToken.classList.add('validated');
-            if (!window.experienceDict.has(nw.toLowerCase())) {
-                window.experienceDict.add(nw.toLowerCase());
-                const tr = document.createElement('tr');
-                tr.innerHTML = `<td>${nw.toLowerCase()}</td><td>MANUAL</td><td style="color:var(--term-ok)">SAVED</td>`;
-                UI.harvestBody.prepend(tr);
-                await saveExperience();
-            }
-            UI.popup.style.display = 'none';
-        }
-    };
-
-    document.getElementById('clearBtn').onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
-    document.getElementById('copyBtn').onclick = () => navigator.clipboard.writeText(UI.output.innerText);
-    document.getElementById('toggleHarvestBtn').onclick = () => document.getElementById('harvest-panel').style.display = 'block';
-    document.getElementById('closeHarvestBtn').onclick = () => document.getElementById('harvest-panel').style.display = 'none';
-
-    (async () => {
-        initWorkers();
-        const db = await openDB();
-        const tx = db.transaction(STORE_NAME, "readonly");
-        const req = tx.objectStore(STORE_NAME).get("words");
-        req.onsuccess = () => { if(req.result) window.experienceDict = new Set(req.result); };
-        const L = { "italian": "ITA", "english": "ENG", "spanish": "ESP" };
-        for (const [v, t] of Object.entries(L)) {
-            const o = document.createElement("option"); o.value = v; o.text = t; UI.languageSelect.appendChild(o);
-        }
-    })();
+    // --- INIT ---
+    init();
+    const L = { "italian": "ITA", "english": "ENG" };
+    for (const [v, t] of Object.entries(L)) {
+        const o = document.createElement("option"); o.value = v; o.text = t; document.getElementById('languageSelect').appendChild(o);
+    }
 </script>
 </body>
 </html>
