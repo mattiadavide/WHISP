@@ -302,21 +302,42 @@
     const refiningWorkerCode = `
         self.onmessage = (e) => {
             let text = e.data.text;
+            
+            // 1. Pulizia Balbuzie (Whisper a volte ripete la stessa parola in loop)
             text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1').replace(/ {2,}/g, ' '); 
-            const semanticPatches = [
-                { rx: /\\bradiocronica\\b/gi, rep: 'radiocronaca' },
-                { rx: /\\bradioconista\\b/gi, rep: 'radiocronista' },
-                { rx: /vengon piazati/gi, rep: 'vengono piazzati' },
-                { rx: /\\bamicolo\\b/gi, rep: 'amico lo' },
-                { rx: /istituti dei cechi/gi, rep: 'istituti dei ciechi' },
-                { rx: /un amico ceco/gi, rep: 'un amico cieco' },
-                { rx: /\\b(lo|dello|allo|sullo|il|al|sul|del)\\s+port\\b/gi, rep: '$1 sport' },
-                { rx: /\\b(un)\\s+po\\b/gi, rep: '$1 po\\'' },
-                { rx: /\\bper\\s+che\\b/gi, rep: 'perché' },
-                { rx: /\\bci\\s+e\\b/gi, rep: 'c\\'è' },
+
+            // 2. Motore di Regole Morfologiche e Fonotattiche (Italiano)
+            const grammarRules = [
+                // A. S-Impura (Fonetica)
+                { 
+                    rx: /\\b(lo|dello|allo|sullo|dallo|nello)\\s+([bcdfghkmnpqrtvw]\\w+)\\b/gi, 
+                    rep: (match, p1, p2) => p1 + ' s' + p2 
+                },
+
+                // B. Elisioni e Troncamenti (Mancanza di apostrofi comuni)
+                { rx: /\\b(un)\\s+po\\b/gi, rep: "$1 po'" },
+                { rx: /\\b(qual)\\s+e\\b/gi, rep: "$1 è" }, 
+                { rx: /\\b(c|v|t|s)\\s+e\\b/gi, rep: "$1'è" }, 
+
+                // C. Accenti Terminali (Composti del 'che')
+                { rx: /\\b(per|poi|affin|anzia|checc|non)\\s*che\\b/gi, rep: "$1ché" },
+
+                // D. Agglutinazione (Whisper separa i prefissi)
+                { rx: /\\b(sotto|sopra|sovra|contro|anti|auto|pseudo|semi)\\s+([a-z]{3,})\\b/gi, rep: "$1$2" },
+
+                // E. Contestualizzazione Inizio Frase
                 { rx: /(?:^|\\.\\s+)\\bAll'ora\\b/gi, rep: 'Allora' }
             ];
-            semanticPatches.forEach(p => { text = text.replace(p.rx, p.rep); });
+
+            // Applica il motore di regole
+            grammarRules.forEach(rule => { 
+                if (typeof rule.rep === 'function') {
+                    text = text.replace(rule.rx, rule.rep);
+                } else {
+                    text = text.replace(rule.rx, rule.rep); 
+                }
+            });
+
             self.postMessage({ type: 'REFINED', text });
         };
     `;
@@ -332,7 +353,8 @@
         probVal: document.getElementById('probVal'), clearBtn: document.getElementById('clearBtn'), copyBtn: document.getElementById('copyBtn'),
         popup: document.getElementById('word-popup'), editInput: document.getElementById('edit-word-input'), confirmBtn: document.getElementById('confirm-word-btn'),
         harvestPanel: document.getElementById('harvest-panel'), harvestBody: document.getElementById('harvest-body'),
-        toggleHarvestBtn: document.getElementById('toggleHarvestBtn'), closeHarvestBtn: document.getElementById('closeHarvestBtn')
+        toggleHarvestBtn: document.getElementById('toggleHarvestBtn'), closeHarvestBtn: document.getElementById('closeHarvestBtn'),
+        exportBtn: document.getElementById('exportBtn')
     };
 
     let vadWorker, whisperWorker, healingWorker, refiningWorker, workerChannel;
@@ -552,6 +574,20 @@
     UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
+    
+    // Configurazione Export TXT
+    UI.exportBtn.onclick = () => {
+        const textToSave = UI.output.innerText;
+        const blob = new Blob([textToSave], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `WHISP_TRANSCRIPT_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
     
     (async () => {
         initWorkers(); 
