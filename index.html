@@ -288,19 +288,17 @@
                 let isStartOfSentence = false;
                 
                 if (index === 0) {
-                    isStartOfSentence = true; // È la primissima parola della stringa
+                    isStartOfSentence = true; 
                 } else {
                     const prevWord = wordsToCorrect[index - 1].original;
-                    // Se la parola precedente finisce con punto, interrogativo, esclamativo (anche con virgolette)
                     if (/[.?!]["']?$/.test(prevWord)) {
                         isStartOfSentence = true;
                     }
                 }
 
-                // Se la parola ha la maiuscola, NON è inizio frase, ed è lunga almeno 4 lettere -> PROTEGGI
                 if (isCapitalized && !isStartOfSentence && core.length > 3) {
                     corrections.push({ id: item.id, newText: item.original, isShielded: true });
-                    return; // Saltiamo il dizionario!
+                    return; 
                 }
 
                 if (lower.length < 5) return;
@@ -320,7 +318,6 @@
         };
     `;
 
-    // Il Refining Worker torna a occuparsi solo della pulizia spazi (velocissimo)
     const refiningWorkerCode = `
         self.onmessage = (e) => {
             let text = e.data.text;
@@ -498,8 +495,8 @@
             const res = await fetch(url); 
             if (res.ok) { 
                 const text = await res.text(); 
-                window.referenceDict = new Set(text.split('\\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); 
-                UI.status.innerText = \`DICT_LOADED [\${window.referenceDict.size} TERMS]\`; 
+                window.referenceDict = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0)); 
+                UI.status.innerText = `DICT_LOADED [${window.referenceDict.size} TERMS]`; 
                 UI.status.style.color = "var(--term-ok)"; 
             } else { throw new Error("404"); } 
         } 
@@ -512,6 +509,7 @@
         UI.loadBtn.disabled = true; 
         UI.status.innerText = "BOOT_CORE..."; 
         vadWorker.postMessage({ type: 'load' }); 
+        refiningWorker.postMessage({ type: 'load' }); 
     };
     UI.startBtn.onclick = start; UI.stopBtn.onclick = stop;
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
