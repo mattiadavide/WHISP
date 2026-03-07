@@ -231,25 +231,40 @@
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null;
-        let beams = 1, initialPrompt = "";
+        let currentPrecision = "turbo"; 
+        let initialPrompt = "";
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
             try {
-                const res = await transcriber(new Float32Array(item.buffer), { 
+                // Configurazione Base universale
+                let config = {
                     language: currentLanguage, 
                     task: 'transcribe', 
-                    num_beams: beams, 
-                    prompt: initialPrompt,
                     temperature: 0.0, 
-                    condition_on_previous_text: false,
-                    chunk_length_s: 30
-                });
+                    condition_on_previous_text: false
+                };
+
+                // ROUTING DINAMICO
+                if (currentPrecision === 'tiny') {
+                    // TINY MODEL: Ha bisogno dei freni anti-loop
+                    config.repetition_penalty = 1.15;
+                    config.no_repeat_ngram_size = 3;
+                } else {
+                    // BASE / TURBO MODEL: Hanno bisogno di ancoraggio temporale per non fare lo spelling
+                    config.chunk_length_s = 30;
+                    config.return_timestamps = true;
+                }
+
+                const res = await transcriber(new Float32Array(item.buffer), config);
                 
                 if (res.text && res.text.trim().length > 0) {
                     const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
-                    if (!/♪|\\[.*?\\]|\\*.*?\\*/.test(res.text) && avgConf > 0.40) {
+                    const textToCheck = res.text.trim();
+                    const isHallucination = /♪|\\[.*?\\]|\\*.*?\\*/.test(textToCheck);
+
+                    if (!isHallucination && avgConf > 0.40) {
                         self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf: avgConf < 0.65 });
                     }
                 }
@@ -260,6 +275,7 @@
         self.onmessage = async (e) => {
             const { type, port, precision, language, prompt } = e.data;
             if (type === 'load') {
+                currentPrecision = precision;
                 let modelName = 'onnx-community/whisper-large-v3-turbo';
                 let pipeOptions = { device: 'webgpu', dtype: 'fp16', progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) };
                 if (precision === 'base') modelName = 'onnx-community/whisper-base';
@@ -346,10 +362,10 @@
         self.onmessage = (e) => {
             let text = e.data.text;
             
-            // Pulizia Balbuzie
-            text = text.replace(/\\b(\\w{2,12})\\b(?:\\s+\\1\\b)+/gi, '$1').replace(/ {2,}/g, ' '); 
+            // 1. PULIZIA BALBUZIE AGGRESSIVA (Singole parole E frasi in loop)
+            text = text.replace(/\\b([a-zA-ZÀ-ÿ\\s']{2,50}?)\\b(?:\\s+\\1\\b){1,}/gi, '$1').replace(/ {2,}/g, ' '); 
 
-            // Motore di Regole Morfologiche e Fonotattiche
+            // 2. Motore di Regole Morfologiche e Fonotattiche
             const grammarRules = [
                 { rx: /\\b(lo|dello|allo|sullo|dallo|nello)\\s+([bcdfghkmnpqrtvw]\\w+)\\b/gi, rep: (match, p1, p2) => p1 + ' s' + p2 },
                 { rx: /\\b(un)\\s+po\\b/gi, rep: "$1 po'" },
@@ -658,7 +674,7 @@
             const boot = async () => { 
                 if (dom !== 'custom') await fetchZeitgeist(dom); 
                 UI.status.innerText = "BOOT_VRAM..."; 
-                vadWorker.postMessage({ type: 'load' }); 
+                vadWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value }); 
             };
             
             if (dom === 'custom' && file) {
