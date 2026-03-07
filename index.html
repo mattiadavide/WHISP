@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL V9 [LIGHTNING + THEMES]</title>
+    <title>WHISP // TERMINAL V9 [SANITIZED CORE]</title>
     <style>
         /* === COLOR THEMES === */
         :root { 
@@ -109,7 +109,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // TERMINAL V9 [CONTEXT ENGINE]
+ > DESIGN BY MATTIA DAVIDE AMICO // TERMINAL V9 [SANITIZED CORE]
 </div>
 
 <div class="header">
@@ -200,6 +200,20 @@
     window.referenceDict = new Set();
     let sessionHarvested = new Set();
 
+    // MEMORY LEAK FIX: Generiamo il BlobURL una sola volta all'avvio, non ad ogni click di Start
+    const audioProcessorCode = `
+        class P extends AudioWorkletProcessor {
+            constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; this.s=0; this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; }; }
+            process(inputs) {
+                const input = inputs[0][0]; if(!input || !this.vPort) return true;
+                for(let i=0; i<input.length; i++) { const s = input[i]; this.s += s*s; this.buf[this.ptr++] = s; if(this.ptr>=512) { this.port.postMessage({rms: Math.sqrt(this.s/512)}); const b = this.buf.buffer; this.vPort.postMessage({type:'vad', data:b}, [b]); this.buf = new Float32Array(512); this.ptr=0; this.s=0; } }
+                return true;
+            }
+        }
+        registerProcessor('p', P);
+    `;
+    const audioWorkletURL = URL.createObjectURL(new Blob([audioProcessorCode], {type:'application/javascript'}));
+
     async function openDB() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, 1);
@@ -255,7 +269,7 @@
                 port.onmessage = async (we) => {
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
-                        if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 60 === 0) flush(true); } 
+                        if (isSpeaking) { audioBuf.set(chunk, audioBufPtr * 512); audioBufPtr++; if (audioBufPtr % 15 === 0) flush(true); } 
                         else { preRoll.set(chunk, preRollPtr * 512); preRollPtr = (preRollPtr + 1) % 15; if (preRollCount < 15) preRollCount++; }
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
@@ -355,10 +369,18 @@
             } } return m[b.length][a.length];
         }
         
+        // REDUNDANCY FIX: Il dizionario di riferimento (RSS) viene salvato localmente nel Worker.
+        let cachedReferenceDict = [];
+
         self.onmessage = (e) => {
-            const { wordsToCorrect, priorityPool, referenceDict } = e.data; 
+            if (e.data.type === 'set_dictionary') {
+                cachedReferenceDict = e.data.referenceDict || [];
+                return;
+            }
+
+            const { wordsToCorrect, priorityPool } = e.data; 
             const corrections = []; 
-            const active = [...priorityPool, ...(referenceDict || [])];
+            const active = [...priorityPool, ...cachedReferenceDict];
 
             wordsToCorrect.forEach((item, index) => {
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
@@ -378,7 +400,7 @@
                     corrections.push({ id: item.id, newText: item.original, isShielded: true }); return; 
                 }
 
-                if (lower.length < 4) return;
+                if (lower.length < 5) return;
 
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
@@ -403,16 +425,10 @@
             
             const semanticPatches = [
                 { rx: /\\bradiocronica\\b/gi, rep: 'radiocronaca' },
-                { rx: /\\bradioconista\\b/gi, rep: 'radiocronista' },
                 { rx: /vengon piazati/gi, rep: 'vengono piazzati' },
-                { rx: /\\bamicolo\\b/gi, rep: 'amico lo' },
-                { rx: /istituti dei cechi/gi, rep: 'istituti dei ciechi' },
-                { rx: /un amico ceco/gi, rep: 'un amico cieco' },
                 { rx: /\\b(lo|dello|allo|sullo|il|al|sul|del)\\s+port\\b/gi, rep: '$1 sport' },
-                { rx: /\\b(un)\\s+po\\b/gi, rep: '$1 po\\'' },
                 { rx: /\\bper\\s+che\\b/gi, rep: 'perché' },
-                { rx: /\\bci\\s+e\\b/gi, rep: 'c\\'è' },
-                { rx: /(?:^|\\.\\s+)\\bAll'ora\\b/gi, rep: 'Allora' }
+                { rx: /\\bci\\s+e\\b/gi, rep: 'c\\'è' }
             ];
 
             semanticPatches.forEach(patch => { text = text.replace(patch.rx, patch.rep); });
@@ -455,8 +471,7 @@
             const d = e.data;
             if (d.type === 'progress') {
                 UI.progressContainer.style.display = 'block'; const p = Math.round(d.p || 0); 
-                UI.progressText.innerText = 'BOOTING_MODEL: ' + p + '%';
-                updateAsciiMeter('ascii-bar', p / 100);
+                UI.progressText.innerText = 'BOOTING_MODEL: ' + p + '%'; updateAsciiMeter('ascii-bar', p / 100);
             } else if (d.type === 'READY_TO_PROCESS') { 
                 UI.status.innerText = "READY_IN_VRAM"; UI.status.style.color = "var(--term-main)";
                 UI.progressContainer.style.display = 'none'; 
@@ -464,7 +479,6 @@
                 UI.masterBtn.disabled = false;
                 startListening();
             } else if (d.type === 'final' && isSessionActive) {
-                // LOGICA VELOCE: Stampa diretta a schermo senza colli di bottiglia
                 interimSpan.innerText = ""; const incomingText = d.text.trim();
                 if (lastFinalText.length > 15 && incomingText.length > 15) { if (incomingText === lastFinalText || lastFinalText.endsWith(incomingText)) return; }
                 lastFinalText = incomingText;
@@ -474,7 +488,6 @@
                 interimSpan.innerText = " " + d.text.trim() + "..."; 
                 UI.output.scrollTop = UI.output.scrollHeight; 
             } else if (d.type === 'FLUSH_COMPLETE') { 
-                // CURE SEMANTICHE SOLO ALLA FINE
                 UI.status.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); 
                 UI.masterBtn.disabled = false; 
             }
@@ -484,7 +497,9 @@
             if (e.data.type === 'REFINED') {
                 rebuildTokens(e.data.text); UI.status.innerText = "HEALING_ACTIVE...";
                 const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
-                healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: Array.from(window.experienceDict), referenceDict: Array.from(window.referenceDict) });
+                
+                // PERFORMANCE FIX: Inviamo solo la Priority Pool (che cambia), il referenceDict è stato inviato al boot.
+                healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: Array.from(window.experienceDict) });
             }
         };
 
@@ -492,13 +507,8 @@
             e.data.corrections.forEach(c => { 
                 const el = UI.output.querySelector(`[data-hid="${c.id}"]`); 
                 if (el) { 
-                    if (c.isShielded) {
-                        el.classList.add('shielded');
-                        el.title = "Protetta da regola Maiuscola";
-                    } else {
-                        el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; 
-                        el.classList.add('validated'); el.style.color = "var(--term-ok)"; 
-                    }
+                    if (c.isShielded) { el.classList.add('shielded'); } 
+                    else { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; }
                 } 
             });
             harvestNewTerms();
@@ -523,13 +533,10 @@
 
     function harvestNewTerms() {
         const text = UI.output.innerText;
-        const words = text.split(/\s+/);
-        words.forEach(w => {
+        text.split(/\s+/).forEach(w => {
             const clean = w.toLowerCase().replace(/[^a-zÀ-ÿ]/g, '');
             if (clean.length > 7 && !window.experienceDict.has(clean) && !window.referenceDict.has(clean)) {
-                window.experienceDict.add(clean);
-                sessionHarvested.add(clean);
-                updateHarvestUI(clean, "AUTO_HARVEST");
+                window.experienceDict.add(clean); sessionHarvested.add(clean); updateHarvestUI(clean, "AUTO_HARVEST");
             }
         });
         saveExperience();
@@ -539,8 +546,7 @@
         UI.output.innerHTML = ""; const lines = text.split('\n'); let globalIdx = 0;
         lines.forEach((line, lineIdx) => {
             if (line.trim() === "" && lineIdx > 0) { UI.output.appendChild(document.createElement('br')); return; }
-            const words = line.trim().split(/ +/);
-            words.forEach((w, wordIdx) => { if (!w) return; const span = document.createElement('span'); span.className = 'word-token'; span.dataset.hid = globalIdx++; span.innerText = (wordIdx === 0 ? "" : " ") + w; UI.output.appendChild(span); });
+            line.trim().split(/ +/).forEach((w, wordIdx) => { if (!w) return; const span = document.createElement('span'); span.className = 'word-token'; span.dataset.hid = globalIdx++; span.innerText = (wordIdx === 0 ? "" : " ") + w; UI.output.appendChild(span); });
             if (lineIdx < lines.length - 1) UI.output.appendChild(document.createElement('br'));
         });
         UI.output.appendChild(interimSpan);
@@ -553,28 +559,23 @@
         const feeds = { "general": "rss?hl=it&gl=IT&ceid=IT:it", "tech": "rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", "finance": "rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it" };
         
         try {
-            const rssUrl = encodeURIComponent('https://news.google.com/' + feeds[dom]);
-            const proxyUrl = `https://api.allorigins.win/get?url=${rssUrl}`;
-            
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3500); 
-            const response = await fetch(proxyUrl, { signal: controller.signal });
-            clearTimeout(timeoutId);
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent('https://news.google.com/' + feeds[dom])}`;
+            const controller = new AbortController(); const timeoutId = setTimeout(() => controller.abort(), 3500); 
+            const response = await fetch(proxyUrl, { signal: controller.signal }); clearTimeout(timeoutId);
             
             if (!response.ok) throw new Error("Proxy response error");
             const textContent = (await response.json()).contents; 
-            
-            const regex = /[A-ZÀ-Ú][a-zà-ù]+/g;
-            const matches = textContent.match(regex) || [];
+            const matches = textContent.match(/[A-ZÀ-Ú][a-zà-ù]+/g) || [];
             
             const snapshotHarvest = new Set();
             matches.forEach(w => { if (w.length > 3) snapshotHarvest.add(w.toLowerCase()); });
             snapshotHarvest.forEach(w => window.referenceDict.add(w));
             
+            // PERFORMANCE FIX: Inviamo il dizionario statico al worker una volta sola!
+            healingWorker.postMessage({ type: 'set_dictionary', referenceDict: Array.from(window.referenceDict) });
+
             document.getElementById('zeitgeist-log').innerText = `> KNOWLEDGE_SYNC_OK [${dom.toUpperCase()}]: [${snapshotHarvest.size} TOKENS]`;
-        } catch (error) {
-            document.getElementById('zeitgeist-log').innerText = `> KNOWLEDGE_SYNC_FAIL: [OFFLINE_MODE]`;
-        }
+        } catch (error) { document.getElementById('zeitgeist-log').innerText = `> KNOWLEDGE_SYNC_FAIL: [OFFLINE_MODE]`; }
     }
 
     // --- AVVIO E STOP DEL MICROFONO ---
@@ -589,17 +590,9 @@
         
         audioCtx = new AudioContext({ sampleRate: 16000 });
         stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({video:true, audio:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
-        await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
-            class P extends AudioWorkletProcessor {
-                constructor() { super(); this.ptr=0; this.buf=new Float32Array(512); this.vPort=null; this.s=0; this.port.onmessage=(e)=>{ if(e.data.port) this.vPort=e.data.port; }; }
-                process(inputs) {
-                    const input = inputs[0][0]; if(!input || !this.vPort) return true;
-                    for(let i=0; i<input.length; i++) { const s = input[i]; this.s += s*s; this.buf[this.ptr++] = s; if(this.ptr>=512) { this.port.postMessage({rms: Math.sqrt(this.s/512)}); const b = this.buf.buffer; this.vPort.postMessage({type:'vad', data:b}, [b]); this.buf = new Float32Array(512); this.ptr=0; this.s=0; } }
-                    return true;
-                }
-            }
-            registerProcessor('p', P);
-        `], {type:'application/javascript'})));
+        
+        // MEMORY LEAK FIX: Usiamo l'URL globale invece di crearlo ogni volta
+        await audioCtx.audioWorklet.addModule(audioWorkletURL);
         
         const worklet = new AudioWorkletNode(audioCtx, 'p'); 
         worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) updateAsciiMeter('volAscii', e.data.rms * 5); };
@@ -611,27 +604,40 @@
 
     async function stopListening() { 
         isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); 
-        if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); 
+        if(stream) stream.getTracks().forEach(t => t.stop()); 
         
-        UI.masterBtn.innerText = "▶ START_SESSION"; UI.masterBtn.className = "ready"; UI.masterBtn.disabled = true; // Sblocca a fine flush
+        // MEMORY LEAK FIX: Sospendiamo e chiudiamo correttamente il contesto audio
+        if(audioCtx) { await audioCtx.suspend(); audioCtx.close(); }
+        
+        UI.masterBtn.innerText = "▶ START_SESSION"; UI.masterBtn.className = "ready"; UI.masterBtn.disabled = true; 
         UI.status.innerText = "FLUSHING_AUDIO_QUEUE..."; UI.status.style.color = "var(--term-warn)"; 
-        
         whisperWorker.postMessage({ type: 'request_flush' }); 
     }
 
+    // LOGIC FIX: Funzione per forzare lo scaricamento della VRAM se si cambiano opzioni critiche
+    function unloadCore() {
+        if (isSessionActive) stopListening();
+        vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
+        isCoreLoaded = false; window.referenceDict.clear(); 
+        
+        UI.masterBtn.innerText = "[ BOOT_SYSTEM ]"; UI.masterBtn.className = "";
+        UI.status.innerText = "VRAM_FLUSHED"; UI.status.style.color = "var(--term-dim)";
+        updateAsciiMeter('volAscii', 0); updateAsciiMeter('vadAscii', 0); UI.probVal.innerText = "PROB: 0.00";
+        initWorkers(); 
+    }
+
+    // Se l'utente cambia motore o microfono, la VRAM deve essere svuotata
+    UI.precisionSelect.onchange = () => { if (isCoreLoaded) unloadCore(); };
+    UI.audioSource.onchange = () => { if (isCoreLoaded) unloadCore(); };
+
     UI.masterBtn.onclick = async () => { 
-        if (isSessionActive) { 
-            await stopListening(); 
-        } else {
+        if (isSessionActive) { await stopListening(); } 
+        else {
             if (!isCoreLoaded) {
                 UI.masterBtn.disabled = true; UI.masterBtn.className = "booting"; UI.masterBtn.innerText = "BOOTING_MODELS...";
-                
-                await fetchZeitgeist(); // SCARICA IL MICRO-DIZIONARIO TEMATICO AL VOLO
-
+                await fetchZeitgeist(); 
                 UI.status.innerText = "BOOT_CORE_VRAM..."; vadWorker.postMessage({ type: 'load' }); 
-            } else { 
-                await startListening(); 
-            }
+            } else { await startListening(); }
         }
     };
 
