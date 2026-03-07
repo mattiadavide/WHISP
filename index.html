@@ -68,10 +68,12 @@
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
         <select id="domainSelect" style="flex-grow: 2;">
-            <option value="general">DOM: GENERALIST (NEWS SNAPSHOT)</option>
-            <option value="tech">DOM: TECH & IT (NEWS SNAPSHOT)</option>
-            <option value="finance">DOM: FINANCE & ECON (NEWS SNAPSHOT)</option>
-            <option value="medical">DOM: MEDICAL & HEALTH (NEWS SNAPSHOT)</option>
+            <option value="general">DOM: GENERALIST (NEWS)</option>
+            <option value="tech">DOM: TECH & IT (NEWS)</option>
+            <option value="finance">DOM: FINANCE & ECON (NEWS)</option>
+            <option value="medical">DOM: MEDICAL & HEALTH (NEWS)</option>
+            <option value="sport">DOM: SPORT & ATHLETICS (NEWS)</option>
+            <option value="art">DOM: ART & CULTURE (NEWS)</option>
             <option value="custom">DOM: LOCAL_FILE (.TXT)</option>
         </select>
         <input type="file" id="dictFileInput" accept=".txt" style="display: none; flex-grow: 2;">
@@ -135,11 +137,7 @@
     }
 
     async function saveExperience() {
-        try {
-            const db = await openDB();
-            const tx = db.transaction(STORE_NAME, "readwrite");
-            tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words");
-        } catch(e) {}
+        try { const db = await openDB(); const tx = db.transaction(STORE_NAME, "readwrite"); tx.objectStore(STORE_NAME).put(Array.from(window.experienceDict), "words"); } catch(e) {}
     }
 
     // --- WORKERS ---
@@ -315,10 +313,7 @@
         lines.forEach((line, lineIdx) => {
             if (line.trim() === "" && lineIdx > 0) { UI.output.appendChild(document.createElement('br')); return; }
             const words = line.trim().split(/ +/);
-            words.forEach((w, wordIdx) => { 
-                if (!w) return; const span = document.createElement('span'); span.className = 'word-token'; 
-                span.dataset.hid = globalIdx++; span.innerText = (wordIdx === 0 ? "" : " ") + w; UI.output.appendChild(span); 
-            });
+            words.forEach((w, wordIdx) => { if (!w) return; const span = document.createElement('span'); span.className = 'word-token'; span.dataset.hid = globalIdx++; span.innerText = (wordIdx === 0 ? "" : " ") + w; UI.output.appendChild(span); });
             if (lineIdx < lines.length - 1) UI.output.appendChild(document.createElement('br'));
         });
         UI.output.appendChild(interimSpan);
@@ -336,16 +331,13 @@
         whisperWorker.onmessage = (e) => {
             const d = e.data;
             if (d.type === 'progress') {
-                UI.progressContainer.style.display = 'block'; const p = Math.round(d.p || 0); UI.progressText.innerText = 'BOOTING: ' + p + '%';
-                const b = Math.floor(p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
+                UI.progressContainer.style.display = 'block'; UI.progressText.innerText = 'BOOTING: ' + Math.round(d.p || 0) + '%';
+                const b = Math.floor(d.p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
             } else if (d.type === 'READY_TO_PROCESS') { 
-                UI.progressContainer.style.display = 'none'; isCoreLoaded = true; UI.sysPowerBtn.innerText = "SHUTDOWN_SYSTEM()"; UI.sysPowerBtn.style.color = "var(--term-err)"; UI.sysPowerBtn.style.borderColor = "var(--term-err)"; UI.sysPowerBtn.disabled = false;
-                startListening();
+                UI.progressContainer.style.display = 'none'; isCoreLoaded = true; UI.sysPowerBtn.innerText = "SHUTDOWN_SYSTEM()"; UI.sysPowerBtn.style.color = "var(--term-err)"; UI.sysPowerBtn.style.borderColor = "var(--term-err)"; UI.sysPowerBtn.disabled = false; startListening();
             } else if (d.type === 'final' && (isSessionActive || isShuttingDown)) {
-                interimSpan.innerText = ""; const incomingText = d.text.trim();
-                if (lastFinalText.length > 15 && incomingText.length > 15 && (incomingText === lastFinalText || lastFinalText.endsWith(incomingText))) return;
-                lastFinalText = incomingText;
-                incomingText.split(/ +/).forEach(w => { const span = document.createElement('span'); span.className = 'word-token' + (d.isLowConf ? ' low-conf' : ''); span.innerText = " " + w; UI.output.insertBefore(span, interimSpan); });
+                interimSpan.innerText = ""; const inc = d.text.trim(); if (lastFinalText.length > 15 && inc.length > 15 && (inc === lastFinalText || lastFinalText.endsWith(inc))) return; lastFinalText = inc;
+                inc.split(/ +/).forEach(w => { const s = document.createElement('span'); s.className = 'word-token' + (d.isLowConf ? ' low-conf' : ''); s.innerText = " " + w; UI.output.insertBefore(s, interimSpan); });
                 scrollOutput();
             } else if (d.type === 'partial' && (isSessionActive || isShuttingDown)) { interimSpan.innerText = " " + d.text.trim() + "..."; scrollOutput(); }
             else if (d.type === 'FLUSH_COMPLETE') { UI.status.innerText = "REFINING_SEMANTICS..."; refiningWorker.postMessage({ text: UI.output.innerText }); }
@@ -354,46 +346,43 @@
         refiningWorker.onmessage = (e) => {
             if (e.data.type === 'REFINED') {
                 rebuildTokens(e.data.text); UI.status.innerText = "HEALING_ACTIVE...";
-                const tokenElements = Array.from(UI.output.querySelectorAll('.word-token'));
-                const tokens = tokenElements.map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
+                const tokens = Array.from(UI.output.querySelectorAll('.word-token')).map(s => ({ original: s.innerText.trim(), id: s.dataset.hid }));
                 const sessionHarvest = new Set();
-                tokenElements.forEach(t => { if (!t.classList.contains('low-conf') && t.innerText.trim().length > 4) { const cw = t.innerText.trim().toLowerCase().replace(/[^a-zà-ù]/g, ''); if (cw.length > 4) sessionHarvest.add(cw); } });
+                Array.from(UI.output.querySelectorAll('.word-token')).forEach(t => { if (!t.classList.contains('low-conf') && t.innerText.trim().length > 4) { const cw = t.innerText.trim().toLowerCase().replace(/[^a-zà-ù]/g, ''); if (cw.length > 4) sessionHarvest.add(cw); } });
                 healingWorker.postMessage({ wordsToCorrect: tokens, priorityPool: [...new Set([...window.experienceDict, ...sessionHarvest])], referenceDict: Array.from(window.referenceDict) });
             }
         };
 
         healingWorker.onmessage = (e) => {
-            e.data.corrections.forEach(c => { 
-                const el = UI.output.querySelector(`[data-hid="${c.id}"]`); 
-                if (el) { if (c.isShielded) el.classList.add('shielded'); else { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; } }
-            });
-            if (isShuttingDown) terminateSystem();
-            else { UI.status.innerText = isSessionActive ? "ONLINE_AND_LISTENING" : "SYSTEM_HALTED"; UI.status.style.color = isSessionActive ? "var(--term-ok)" : "var(--term-dim)"; }
+            e.data.corrections.forEach(c => { const el = UI.output.querySelector(`[data-hid="${c.id}"]`); if (el) { if (c.isShielded) el.classList.add('shielded'); else { el.innerText = (el.dataset.hid === "0" ? "" : " ") + c.newText; el.classList.add('validated'); el.style.color = "var(--term-ok)"; } } });
+            if (isShuttingDown) terminateSystem(); else { UI.status.innerText = isSessionActive ? "ONLINE_AND_LISTENING" : "SYSTEM_HALTED"; UI.status.style.color = isSessionActive ? "var(--term-ok)" : "var(--term-dim)"; }
         };
 
-        let lastVadUpdate = 0;
-        vadWorker.onmessage = (e) => {
+        let lastVad = 0; vadWorker.onmessage = (e) => {
             if (e.data.type === 'ready') whisperWorker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
-            else if (e.data.type === 'vad_ui_update') { 
-                const now = performance.now(); if (now - lastVadUpdate > 50) {
-                    UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2); let blocks = Math.round(e.data.prob * 20); UI.vadAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']'; UI.vadLed.classList.toggle('active', e.data.isSpeaking); lastVadUpdate = now;
-                }
-            }
+            else if (e.data.type === 'vad_ui_update') { const now = performance.now(); if (now - lastVad > 50) { UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2); let b = Math.round(e.data.prob * 20); UI.vadAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']'; UI.vadLed.classList.toggle('active', e.data.isSpeaking); lastVad = now; } }
         };
     }
 
     async function fetchZeitgeist(domain) {
         UI.status.innerText = "FETCH_ZEITGEIST...";
-        const FEEDS = { "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", "medical": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", "finance": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it" };
+        const FEEDS = { 
+            "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", 
+            "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", 
+            "medical": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", 
+            "finance": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it",
+            "sport": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=it&gl=IT&ceid=IT:it",
+            "art": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=it&gl=IT&ceid=IT:it" 
+        };
         try {
             const rssUrl = encodeURIComponent(FEEDS[domain] || FEEDS["general"]);
-            const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${rssUrl}`;
-            const controller = new AbortController(); const tId = setTimeout(() => controller.abort(), 3500); 
+            const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${rssUrl}&count=50`; // Massimo count per RSS2JSON
+            const controller = new AbortController(); const tId = setTimeout(() => controller.abort(), 4000); 
             const resp = await fetch(proxyUrl, { signal: controller.signal }); clearTimeout(tId);
             const data = await resp.json();
             if (data?.items) {
                 const content = data.items.map(i => i.title + " " + i.description).join(" ");
-                const matches = content.match(/[A-ZÀ-Ú][a-zà-ù]+/g) || [];
+                const matches = content.match(/[a-zA-ZÀ-ÿ]+/g) || []; // Regex estesa per catturare tutto il lessico
                 const h = new Set(); matches.forEach(w => { if (w.length > 3) h.add(w.toLowerCase()); });
                 h.forEach(w => window.referenceDict.add(w)); UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK [DOM: ${domain.toUpperCase()}]: [${h.size} TOKENS]`;
             }
@@ -417,19 +406,14 @@
             }
             registerProcessor('p', P);
         `], {type:'application/javascript'})));
-        const worklet = new AudioWorkletNode(audioCtx, 'p'); let lastRmsUpdate = 0;
-        worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) { const now = performance.now(); if (now - lastRmsUpdate > 50) { let blocks = Math.min(Math.round(Math.sqrt(e.data.rms) * 40), 20); UI.volAscii.innerText = '[' + '#'.repeat(blocks) + '-'.repeat(20 - blocks) + ']'; lastRmsUpdate = now; } } };
+        const worklet = new AudioWorkletNode(audioCtx, 'p'); let lastRms = 0;
+        worklet.port.onmessage = (e) => { if (e.data.rms !== undefined) { const now = performance.now(); if (now - lastRms > 50) { let b = Math.min(Math.round(Math.sqrt(e.data.rms) * 40), 20); UI.volAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']'; lastRms = now; } } };
         const audioChannel = new MessageChannel(); vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
         worklet.port.postMessage({ port: audioChannel.port2 }, [audioChannel.port2]); audioCtx.createMediaStreamSource(stream).connect(worklet);
         UI.output.appendChild(interimSpan);
     }
 
-    async function stopListeningAndUnload() { 
-        isShuttingDown = true; isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); 
-        if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); 
-        UI.status.innerText = "FLUSHING_AUDIO..."; UI.status.style.color = "var(--term-warn)"; 
-        whisperWorker.postMessage({ type: 'request_flush' }); 
-    }
+    async function stopListeningAndUnload() { isShuttingDown = true; isSessionActive = false; vadWorker.postMessage({ type: 'force_flush' }); if(stream) stream.getTracks().forEach(t => t.stop()); if(audioCtx) audioCtx.close(); UI.status.innerText = "FLUSHING_AUDIO..."; UI.status.style.color = "var(--term-warn)"; whisperWorker.postMessage({ type: 'request_flush' }); }
 
     function terminateSystem() {
         vadWorker.terminate(); whisperWorker.terminate(); healingWorker.terminate(); refiningWorker.terminate();
