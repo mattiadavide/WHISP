@@ -11,7 +11,13 @@ export class AudioProcessor {
         
         this.stream = sourceType === 'system' 
             ? await navigator.mediaDevices.getDisplayMedia({audio: true, video: true}) 
-            : await navigator.mediaDevices.getUserMedia({audio: true});
+            : await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            });
 
         await this.audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
         class P extends AudioWorkletProcessor {

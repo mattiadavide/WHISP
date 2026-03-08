@@ -52,13 +52,25 @@ async function process() {
                 ? res.chunks.reduce((acc, c) => acc + (c.confidence ?? 1), 0) / res.chunks.length 
                 : 1;
 
-            self.postMessage({ 
-                type: item.isPartial ? 'partial' : 'final', 
-                text: res.text, 
-                isLowConf: avgConf < 0.60,
-                wordConf,
-                avgConf
-            });
+            // [FIX 5 — EXACT META-TOKEN GATING]: Reverted invasive global Regex. 
+            // Whisper hallucinates silent noise as music. We discard the text ONLY if the **entire** 
+            // segment is exactly a meta-token like "[Musica]", "(musica)", or "*musica*".
+            const cleanText = res.text.trim();
+            if (/^\[.*?\]$/.test(cleanText) || /^\(.*?\)$/.test(cleanText) || /^\*.*?\*$/.test(cleanText)) {
+                res.text = "";
+            }
+
+            if (res.text.trim().length > 0) {
+                self.postMessage({ 
+                    type: item.isPartial ? 'partial' : 'final', 
+                    text: res.text, 
+                    isLowConf: avgConf < 0.60,
+                    wordConf,
+                    avgConf
+                });
+            } else if (!item.isPartial) {
+                self.postMessage({ type: 'final', text: "", isLowConf: false, wordConf: null });
+            }
         } else if (!item.isPartial) {
             self.postMessage({ type: 'final', text: "", isLowConf: false, wordConf: null });
         }

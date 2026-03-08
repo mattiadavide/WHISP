@@ -348,4 +348,11 @@ UI.exportBtn.onclick = () => {
 
 // Bootstrap
 initLanguages();
-startRenderLoop();
+startRenderLoop(workerStore);
+
+// Listen to Zeitgeist dictionary sync completion to inject prompt words
+window.addEventListener('zeitgeist_sync_done', () => {
+    if (workerStore.whisper && workerStore.whisper.worker) {
+        workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: Array.from(referenceDict).join(' ') });
+    }
+});

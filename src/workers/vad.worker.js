@@ -62,8 +62,8 @@ self.onmessage = async (e) => {
                 // [APEX TUNING]: Ampio respiro (20s) per analizzare le frasi per intero prima che VAD dia il final flush.
                 const maxContextChunks = (currentPrecision === 'turbo') ? 625 : 300;
                 
-                // [APEX TUNING]: Abbassata soglia d'ingresso al parlato per non perdere respiri e start deboli
-                if (prob > (isSpeaking ? 0.35 : 0.65)) { 
+                // [APEX TUNING]: Alzata severamente la soglia d'ingresso per rigettare musica e rumore di fondo.
+                if (prob > (isSpeaking ? 0.45 : 0.85)) { 
                     if (!isSpeaking) { isSpeaking = true; audioChunks = [...preRoll]; }
                     silenceFrames = 0;
                 } else if (isSpeaking) {
