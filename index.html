@@ -273,13 +273,20 @@
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
                 if (!match) return;
                 const [_, prefix, core, suffix] = match; const lower = core.toLowerCase();
-                if (lower.length < 4) return;
+                
+                // Non correggere parole più corte di 5 caratteri
+                if (lower.length < 5) return; 
+                
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
                     if (Math.abs(ref.length - lower.length) > 2) return; 
                     let d = levenshtein(lower, ref); if (d < minDist) { minDist = d; best = ref; } 
                 });
-                if (best && (minDist <= 1 || minDist / lower.length <= 0.15)) {
+                
+                // Soglia dinamica in base alla lunghezza della parola
+                let threshold = lower.length >= 10 ? 2 : (lower.length >= 6 ? 1 : 0);
+                
+                if (best && minDist > 0 && minDist <= threshold) {
                     const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
                     corrections.push({ id: item.id, newText: prefix + restored + suffix });
                 }
@@ -487,7 +494,6 @@
             UI.sysPowerBtn.disabled = true;
             try {
                 initWorkers();
-                // Send current language immediately
                 workerStore.whisper.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
                 await startListening();
                 workerStore.vad.worker.postMessage({ type: 'load' });
