@@ -48,8 +48,20 @@ export async function fetchZeitgeist(domain) {
         const data = await resp.json();
         
         if (data.status === 'ok' && data.items && data.items.length > 0) {
-            data.items.forEach(i => extractValuableTokens((i.title || "") + " " + (i.description || "").replace(/<[^>]*>?/gm, '')));
-            UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${referenceDict.size}]`;
+            let i = 0;
+            const processChunk = () => {
+                const end = Math.min(i + 5, data.items.length); // Process 5 items at a time
+                for (; i < end; i++) {
+                    const item = data.items[i];
+                    extractValuableTokens((item.title || "") + " " + (item.description || "").replace(/<[^>]*>?/gm, ''));
+                }
+                if (i < data.items.length) {
+                    setTimeout(processChunk, 0); // Yield to main thread (60fps render loop)
+                } else {
+                    UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${referenceDict.size}]`;
+                }
+            };
+            processChunk(); // Start non-blocking chunk processor
         } else {
             throw new Error("No items in RSS");
         }

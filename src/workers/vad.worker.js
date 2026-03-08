@@ -1,6 +1,9 @@
 import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
 
 env.allowLocalModels = false;
+// [OPT]: Multi-thread WASM + SIMD for VAD CPU fallback (4-8x speedup on devices without WebGPU)
+env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
+env.backends.onnx.wasm.simd = true;
 
 let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
 let audioChunks = [];

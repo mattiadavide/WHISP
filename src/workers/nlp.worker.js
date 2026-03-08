@@ -68,6 +68,22 @@ self.onmessage = (e) => {
             text = text.replace(/\b(un)\s+po\b/gi, "$1 po'");
             text = text.replace(/\b(qual)\s+e\b/gi, "$1 è");
             text = text.replace(/\b(lo|dello|allo|sullo)\s+([bcdfghkmnpqrtvw]\w+)\b/gi, (m, p1, p2) => p1 + ' s' + p2);
+
+            // [FORMAT]: Italian discourse marker comma inference
+            // Adds commas before conjunctions that typically introduce a clause
+            text = text.replace(/\s+(però|però|quindi|invece|allora|dunque|oppure|eppure|infatti|cioè|ovvero)\s+/gi, (m, w) => `, ${w} `);
+        }
+        if (currentLang === 'english') {
+            text = text.replace(/\s+(however|therefore|instead|actually|so|but|yet|indeed|namely)\s+/gi, (m, w) => `, ${w} `);
+        }
+
+        // [FORMAT]: Auto-capitalize first word of every segment
+        text = text.replace(/^\s*([a-zA-ZÀ-ÿ])/, (m, c) => c.toUpperCase());
+
+        // [FORMAT]: Auto-terminate with period if no terminal punctuation present
+        const lastChar = text.trimEnd().slice(-1);
+        if (lastChar && !'.!?,;:…'.includes(lastChar)) {
+            text = text.trimEnd() + '.';
         }
 
         // Build a word-level confidence lookup from wordConf chunks (per-word confidence from Whisper)

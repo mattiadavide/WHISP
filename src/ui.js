@@ -8,9 +8,11 @@ export const UI = {
     dictFileInput: document.getElementById('dictFileInput'),
     sysPowerBtn: document.getElementById('sysPowerBtn'), 
     output: document.getElementById('output'),
-    volAscii: document.getElementById('rmsMeter'), 
-    vadAscii: document.getElementById('vadMeter'), 
+    kittLeft: document.getElementById('kittLeft'), 
+    kittRight: document.getElementById('kittRight'),
     probVal: document.getElementById('probVal'), 
+    vadVal: document.getElementById('vadVal'),
+    rmsVal: document.getElementById('rmsVal'),
     clearBtn: document.getElementById('clearBtn'), 
     copyBtn: document.getElementById('copyBtn'),
     popup: document.getElementById('word-popup'), 
@@ -57,8 +59,9 @@ export function setPowerBtn(text, color, disabled = undefined) {
 }
 
 export function resetMeters() {
-    if(UI.volAscii) UI.volAscii.innerText = '[--------------------]'; 
-    if(UI.vadAscii) UI.vadAscii.innerText = '[--------------------]';
+    const empty = '.'.repeat(12);
+    if(UI.kittLeft) UI.kittLeft.innerText = empty; 
+    if(UI.kittRight) UI.kittRight.innerText = empty;
 }
 
 // [APEX TUNING]: Render Loop disaccoppiato tramite requestAnimationFrame 
@@ -74,10 +77,32 @@ export function startRenderLoop() {
     function loop() {
         if (renderState.needsRender) {
             if(UI.probVal) UI.probVal.innerText = renderState.prob.toFixed(2);
-            let b = Math.round(renderState.prob * 20); 
-            if(UI.vadAscii) UI.vadAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
-            let volLevel = Math.min(20, Math.floor(renderState.rms * 150)); 
-            if(UI.volAscii) UI.volAscii.innerText = '[' + '#'.repeat(volLevel) + '-'.repeat(20 - volLevel) + ']';
+            
+            // Single Thin Continuous Line Logic (Dynamically Lengthening Dots)
+            const maxDots = 25;
+            
+            // Reactivity: Combine Neural VAD probability (speech gating) with RMS (physical volume bounce)
+            // We subtract a small noise floor (-0.1) so background hum drops the meter to exactly zero dots.
+            let rawVol = Math.max(0, Math.min(1, (renderState.prob * 0.8) + (renderState.rms * 0.5) - 0.1)); 
+
+            let dotCount = Math.floor(rawVol * maxDots);
+            // "una linea continua sottile in ascii anche puntini che si allunga"
+            // Start with at least 1 dot so there's always a center focal point even in silence
+            let dotString = '.'.repeat(Math.max(1, dotCount));
+
+            if(UI.kittLeft) UI.kittLeft.innerText = dotString;
+            if(UI.kittRight) UI.kittRight.innerText = dotString;
+
+            // [SUPERCAR INTENSITY]: Intensity drives brightness and glow
+            // Driven heavily by rawVol to "light up" fast
+            const intensity = 0.2 + (rawVol * 2.0);
+            if(UI.kittLeft) UI.kittLeft.style.setProperty('--kitt-intensity', intensity);
+            if(UI.kittRight) UI.kittRight.style.setProperty('--kitt-intensity', intensity);
+            
+            // Text-based metrics in the 2x2 grid
+            if(UI.vadVal) UI.vadVal.innerText = renderState.prob.toFixed(2);
+            if(UI.rmsVal) UI.rmsVal.innerText = (renderState.rms * 10).toFixed(2);
+            
             renderState.needsRender = false;
         }
         requestAnimationFrame(loop);

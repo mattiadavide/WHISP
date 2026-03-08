@@ -27,11 +27,11 @@
         <div class="settings-panel">
             <div class="grid-cell">
                 <span class="label">MOD</span>
-                <select id="precisionSelect">
-                    <option value="turbo" selected>TRB</option>
-                    <option value="base">BAS</option>
-                    <option value="tiny">TNY</option>
-                </select>
+                            <select id="precisionSelect" class="cmd-input">
+                                <option value="turbo" selected>APEX LARGE (TURBO)</option>
+                                <option value="base">APEX LITE (FAST)</option>
+                                <option value="tiny">APEX EDGE (ULTRA-FAST)</option>
+                            </select>
             </div>
             <div class="grid-cell">
                 <span class="label">LNG</span>
@@ -81,32 +81,42 @@
 
 <footer id="bottom-bar">
     <div class="footer-grid">
-        <div class="status-panel">
-            <div class="status-text">
-                <span class="label">[PRB_VAL]</span> <span id="probVal" class="prob-text">0.00</span>
+        <!-- LEFT: symmetric 2x2 grid for status -->
+        <div class="status-grid">
+            <div class="status-item cli-btn-static">
+                <span class="label">PRB</span> <span id="probVal">0.00</span>
             </div>
-            <div class="status-text"><span class="label">[SYS_STAT]</span> <span id="sysStatus">IDLE</span></div>
-            <div id="zeitgeistLog" class="zeitgeist-display"></div>
-        </div>
-        
-        <div class="meter-panel">
-            <div class="ascii-row">
-                <span class="label">[SIG_RMS]</span>
-                <span id="rmsMeter" class="ascii-meter">[--------------------]</span>
+            <div class="status-item cli-btn-static">
+                <span id="sysStatus">IDLE</span>
             </div>
-            <div class="ascii-row">
-                <span class="label">[VAD_NET]</span>
-                <span id="vadMeter" class="ascii-meter">[--------------------]</span>
+            <div class="status-item cli-btn-static">
+                <span class="label">VAD</span> <span id="vadVal">0.00</span>
+            </div>
+            <div class="status-item cli-btn-static">
+                <span class="label">RMS</span> <span id="rmsVal">0.00</span>
             </div>
         </div>
 
-        <div class="controls-panel">
+        <!-- CENTER: Specular Outward ASCII Meters -->
+        <div class="kitt-meters-container">
+            <div class="kitt-segment left-segment">
+                <span id="kittLeft" class="ascii-kitt">............</span>
+            </div>
+            <div class="kitt-segment right-segment">
+                <span id="kittRight" class="ascii-kitt">............</span>
+            </div>
+        </div>
+
+        <!-- RIGHT: symmetric 2x2 grid for controls -->
+        <div class="controls-grid">
             <button id="toggleHarvestBtn" class="cli-btn alt-btn">HRVST</button>
             <button id="exportBtn" class="cli-btn">EXPORT</button>
             <button id="copyBtn" class="cli-btn">COPY</button>
             <button id="clearBtn" class="cli-btn alt-btn" style="color: var(--term-warn);">FLUSH</button>
         </div>
     </div>
+    <!-- [FIX]: Restoring zeitgeistLog to prevent runtime crash in main.js -->
+    <div id="zeitgeistLog" style="display:none"></div>
 </footer>
 </div>
 

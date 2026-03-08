@@ -1,9 +1,12 @@
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
 
-// [APEX TUNING]: Setup sperimentale WebGPU e rimozione telemetrie onnx
+// [OPT]: Disable telemetry, enable multi-thread WASM with SIMD for CPU fallback performance
 env.allowLocalModels = false;
 env.backends.onnx.wasm.proxy = true;
 env.backends.onnx.logLevel = 'fatal';
+// OPT: Prevent CPU lockup on MacBook Air M3 by using only half the available cores
+env.backends.onnx.wasm.numThreads = Math.max(1, Math.floor((navigator.hardwareConcurrency || 4) / 2));
+env.backends.onnx.wasm.simd = true;
 let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null, currentPrecision = "turbo", initialPrompt = "";
 
 async function process() {
@@ -78,6 +81,17 @@ self.onmessage = async (e) => {
             device: 'webgpu', dtype: safeDtype, 
             progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
         });
+        
+        // [OPT]: Monitor GPU context loss — surfaces hardware crashes instead of silent freeze
+        const gpuDevice = transcriber?.model?.session?.handler?.backend?.device;
+        if (gpuDevice?.lost) {
+            gpuDevice.lost.then(info => {
+                console.error('[APEX] WebGPU device lost:', info.reason, info.message);
+                self.postMessage({ type: 'GPU_LOST', reason: info.reason });
+                transcriber = null; // Force full reload on recovery
+            });
+        }
+        
         self.postMessage({ type: 'READY_TO_PROCESS' });
         if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
     } else if (type === 'update_params') {

@@ -5,9 +5,11 @@ import { AudioProcessor } from './audio.js';
 let workerStore = { vad: null, whisper: null, nlp: null };
 let audioProcessor = new AudioProcessor();
 let isCoreLoaded = false;
-let isBootingUp = false; // Guard against rapid double-click
+let isBootingUp = false;
 let activeToken = null;
-let transcriptBuffer = []; // In-memory transcript — avoids O(n) DOM re-query every export
+let transcriptBuffer = [];
+let lastSegmentTime = 0;
+let lastInterimWords = []; // Tracks current interim word list for word-diff streaming
 
 // Funzione helper per risolvere i worker in modo compatibile con sottocartelle (GitHub Pages)
 function getWorkerUrl(scriptName) {
@@ -42,16 +44,36 @@ function initWorkers() {
 
     workerStore.nlp.worker.onmessage = (e) => {
         if (e.data.type === 'NLP_DONE') {
-            const frag = document.createDocumentFragment(); 
-            e.data.tokens.forEach(t => {
+            if (e.data.tokens.length === 0) return;
+
+            const now = Date.now();
+            const silenceGap = lastSegmentTime > 0 ? now - lastSegmentTime : 0;
+            lastSegmentTime = now;
+
+            // Clear interim streams and reset word tracker
+            interimSpan.innerHTML = '';
+            lastInterimWords = [];
+
+            const frag = document.createDocumentFragment();
+            if (silenceGap > 2500 && UI.output.querySelector('.word-token')) {
+                const br = document.createElement('div');
+                br.style.cssText = 'display:block; height:0.8em; width:100%;';
+                frag.appendChild(br);
+                transcriptBuffer.push('\n\n');
+            }
+
+            const STREAM_DELAY_MS = 35;
+            e.data.tokens.forEach((t, i) => {
                 const s = document.createElement('span');
                 s.className = 'word-token' + (t.isLowConf ? ' low-conf' : '') + (t.healed ? ' validated' : '');
-                s.innerText = " " + t.text;
+                s.innerText = ' ' + t.text;
+                s.style.animationDelay = `${i * STREAM_DELAY_MS}ms`;
                 frag.appendChild(s);
-                transcriptBuffer.push(" " + t.text); // Keep in-memory copy
+                transcriptBuffer.push(' ' + t.text);
             });
+
             UI.output.insertBefore(frag, interimSpan);
-            interimSpan.innerText = "";
+            interimSpan.innerText = '';
             UI.output.scrollTop = UI.output.scrollHeight;
         }
     };
@@ -83,15 +105,52 @@ function initWorkers() {
                 cursor.id = 'termCursor';
                 UI.output.appendChild(cursor);
             }
+        } else if (d.type === 'GPU_LOST') {
+            // GPU hardware crash — surface clearly to user instead of freezing
+            setStatus('GPU_FAULT', 'var(--term-err)');
+            setPowerBtn('▶', undefined, false);
+            isCoreLoaded = false;
+            isBootingUp = false;
+            const errDiv = document.createElement('div');
+            errDiv.className = 'sys-log';
+            errDiv.style.color = 'var(--term-err)';
+            errDiv.innerText = `[APEX] GPU CONTEXT LOST: ${d.reason || 'unknown'}. RELOAD PAGE TO RECOVER.`;
+            UI.output.appendChild(errDiv);
         } else if (d.type === 'final') {
             workerStore.nlp.worker.postMessage({
                 type: 'PROCESS_TEXT', text: d.text, isLowConf: d.isLowConf,
                 wordConf: d.wordConf || null,
                 priorityPool: Array.from(experienceDict), referenceDict: Array.from(referenceDict)
             });
-        } else if (d.type === 'partial') { 
-            interimSpan.innerText = " " + d.text.trim() + "..."; 
-            UI.output.scrollTop = UI.output.scrollHeight; 
+        } else if (d.type === 'partial') {
+            // [STREAM]: Word-diff interim streaming — only animate NEW words arriving
+            // Compares current word list with previous to find appended words only
+            const newWords = d.text.trim().split(/\s+/).filter(Boolean);
+            const prevCount = lastInterimWords.length;
+            const addedWords = newWords.slice(prevCount);
+            lastInterimWords = newWords;
+
+            if (addedWords.length > 0) {
+                const existingSpans = interimSpan.querySelectorAll('.interim-word').length;
+                addedWords.forEach((word, i) => {
+                    const ws = document.createElement('span');
+                    ws.className = 'interim-word interim-text';
+                    ws.innerText = ' ' + word;
+                    ws.style.animationDelay = `${i * 40}ms`;
+                    ws.style.animation = 'wordStreamIn 0.2s ease-out both';
+                    interimSpan.appendChild(ws);
+                });
+            } else if (newWords.length < prevCount) {
+                // Whisper revised a word — clear and re-render cleanly
+                interimSpan.innerHTML = '';
+                newWords.forEach((word, i) => {
+                    const ws = document.createElement('span');
+                    ws.className = 'interim-word interim-text';
+                    ws.innerText = ' ' + word;
+                    interimSpan.appendChild(ws);
+                });
+            }
+            UI.output.scrollTop = UI.output.scrollHeight;
         }
     };
 
@@ -154,8 +213,8 @@ UI.sysPowerBtn.onclick = async () => {
         isBootingUp = true;
         setPowerBtn("...", undefined, true);
         try {
-            // Boot animation and worker init run in parallel
-            const bootAnim = runBootSequence();
+            // Run boot animation sequentially FIRST to guarantee 60fps without WASM compilation interrupting
+            await runBootSequence();
             
             initWorkers();
             workerStore.whisper.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value, precision: UI.precisionSelect.value });
@@ -163,15 +222,17 @@ UI.sysPowerBtn.onclick = async () => {
             workerStore.vad.worker.postMessage({ type: 'update_params', precision: UI.precisionSelect.value });
             
             UI.zeitgeistLog.innerText = "";
-            await loadStopWords(UI.languageSelect.value);
+            
+            // [OPT 2026]: Non-blocking background dictionary sync. Do not halt the critical boot path.
+            loadStopWords(UI.languageSelect.value).then(() => {
+                return fetchZeitgeist(UI.domainSelect.value);
+            }).catch(e => console.error("Zeitgeist background load failed:", e));
             
             await audioProcessor.init(UI.audioSource.value, workerStore.vad.worker);
             
             workerStore.vad.worker.postMessage({ type: 'load' });
-            await fetchZeitgeist(UI.domainSelect.value);
             
-            // Wait for animation to finish if still running
-            await bootAnim;
+            // Wait for Whisper worker to finish loading (isBootingUp is managed inside worker logic or when mic starts)
             isBootingUp = false;
             
         } catch (err) { 
