@@ -84,7 +84,7 @@
             <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING_MODELS: 0%</div>
             <div id="ascii-bar">[--------------------]</div>
         </div>
-        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-accent); margin-top: 5px;"></div>
+        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-accent); margin-top: 5px; white-space: pre-line;"></div>
     </div>
     <div class="stats-panel">
         <div class="stat-row"><span>SIG_RMS</span><span id="volAscii" class="ascii-meter">[--------------------]</span></div>
@@ -274,7 +274,6 @@
                 if (!match) return;
                 const [_, prefix, core, suffix] = match; const lower = core.toLowerCase();
                 
-                // Non correggere parole più corte di 5 caratteri
                 if (lower.length < 5) return; 
                 
                 let best = null, minDist = Infinity;
@@ -283,7 +282,6 @@
                     let d = levenshtein(lower, ref); if (d < minDist) { minDist = d; best = ref; } 
                 });
                 
-                // Soglia dinamica in base alla lunghezza della parola
                 let threshold = lower.length >= 10 ? 2 : (lower.length >= 6 ? 1 : 0);
                 
                 if (best && minDist > 0 && minDist <= threshold) {
@@ -297,6 +295,7 @@
 
     window.experienceDict = new Set();
     window.referenceDict = new Set();
+    window.dynamicStopWords = new Set();
     let pendingTokens = {};
 
     const UI = {
@@ -417,9 +416,37 @@
         };
     }
 
+    async function loadStopWords(languageVal) {
+        const langCodes = { "italian": "it", "english": "en", "spanish": "es", "french": "fr", "german": "de" };
+        const code = langCodes[languageVal] || "it";
+        try {
+            const res = await fetch(`https://raw.githubusercontent.com/stopwords-iso/stopwords-${code}/master/stopwords-${code}.txt`);
+            if (!res.ok) throw new Error("Fetch failed");
+            const text = await res.text();
+            window.dynamicStopWords = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0));
+            UI.zeitgeistLog.innerText += `\n> STOPWORDS_${code.toUpperCase()}_LOADED [${window.dynamicStopWords.size} RULES]`;
+        } catch (e) {
+            console.warn("Impossibile caricare stop-words, uso fallback vuoto.");
+            window.dynamicStopWords = new Set();
+        }
+    }
+
+    function extractValuableTokens(text) {
+        if (!text) return;
+        const words = text.match(/[a-zA-ZÀ-ÿ]{4,}/g);
+        if (words) {
+            words.forEach(w => {
+                const lower = w.toLowerCase();
+                if (!window.dynamicStopWords.has(lower)) {
+                    window.referenceDict.add(lower);
+                }
+            });
+        }
+    }
+
     async function fetchZeitgeist(domain) {
         if (domain === 'custom') return;
-        UI.zeitgeistLog.innerText = `> SYNCING_ZEITGEIST...`;
+        UI.zeitgeistLog.innerText += `\n> SYNCING_ZEITGEIST...`;
         const FEEDS = { 
             "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", 
             "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it",
@@ -442,14 +469,14 @@
                 items.forEach(i => {
                     const title = i.querySelector("title")?.textContent || "";
                     const desc = (i.querySelector("description")?.textContent || "").replace(/<[^>]*>?/gm, ''); 
-                    (title + " " + desc).match(/[a-zA-ZÀ-ÿ]{4,}/g)?.forEach(w => window.referenceDict.add(w.toLowerCase()));
+                    extractValuableTokens(title + " " + desc);
                 });
-                UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK [TOKENS: ${window.referenceDict.size}]`;
+                UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${window.referenceDict.size}]`;
             } else {
                 throw new Error("No items");
             }
         } catch (e) { 
-            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: USA LOCAL_FILE (.TXT)`; 
+            UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_FAIL: USA LOCAL_FILE (.TXT)`; 
         }
     }
 
@@ -495,6 +522,10 @@
             try {
                 initWorkers();
                 workerStore.whisper.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
+                
+                UI.zeitgeistLog.innerText = "";
+                await loadStopWords(UI.languageSelect.value);
+                
                 await startListening();
                 workerStore.vad.worker.postMessage({ type: 'load' });
                 await fetchZeitgeist(UI.domainSelect.value);
@@ -530,6 +561,7 @@
         if (workerStore.whisper) {
             workerStore.whisper.worker.postMessage({ type: 'update_params', language: e.target.value });
         }
+        loadStopWords(e.target.value);
     };
 
     UI.domainSelect.onchange = (e) => { if (e.target.value === 'custom') UI.dictFileInput.click(); };
@@ -538,8 +570,8 @@
         if (!file) return;
         const reader = new FileReader();
         reader.onload = (ev) => {
-            ev.target.result.match(/[a-zA-ZÀ-ÿ]{4,}/g)?.forEach(w => window.referenceDict.add(w.toLowerCase()));
-            UI.zeitgeistLog.innerText = `> CUSTOM_DICT_LOADED [TOKENS: ${window.referenceDict.size}]`;
+            extractValuableTokens(ev.target.result);
+            UI.zeitgeistLog.innerText += `\n> CUSTOM_DICT_LOADED [TOKENS: ${window.referenceDict.size}]`;
         };
         reader.readAsText(file);
     };
