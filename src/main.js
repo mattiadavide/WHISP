@@ -43,15 +43,30 @@ function initWorkers() {
     workerStore.whisper.worker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'progress') {
-            UI.progressContainer.style.display = 'block'; 
-            UI.progressText.innerText = 'BOOTING: ' + Math.round(d.p || 0) + '%';
-            const b = Math.floor(d.p/5); 
-            UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
+            let progDiv = document.getElementById('dl-progress');
+            if(!progDiv) {
+                progDiv = document.createElement('div');
+                progDiv.id = 'dl-progress';
+                progDiv.className = 'sys-log';
+                UI.output.appendChild(progDiv);
+            }
+            const pText = 'FETCHING NEURAL WEIGHTS: ' + Math.round(d.p || 0) + '%';
+            const b = Math.floor((d.p || 0)/5); 
+            progDiv.innerText = pText + ' [' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
+            UI.output.scrollTop = UI.output.scrollHeight;
         } else if (d.type === 'READY_TO_PROCESS') { 
-            UI.progressContainer.style.display = 'none'; 
+            const progDiv = document.getElementById('dl-progress');
+            if(progDiv) progDiv.style.display = 'none';
             isCoreLoaded = true; 
             setPowerBtn("■", "var(--term-warn)", false);
             setStatus("ONLINE", "var(--term-ok)");
+            UI.output.appendChild(interimSpan);
+            if (!document.getElementById('termCursor')) {
+                const cursor = document.createElement('span');
+                cursor.className = 'terminal-cursor';
+                cursor.id = 'termCursor';
+                UI.output.appendChild(cursor);
+            }
         } else if (d.type === 'final') {
             workerStore.nlp.worker.postMessage({
                 type: 'PROCESS_TEXT', text: d.text, isLowConf: d.isLowConf,
@@ -110,7 +125,9 @@ UI.sysPowerBtn.onclick = async () => {
     if (!isCoreLoaded) {
         setPowerBtn("...", undefined, true);
         try {
-            runBootSequence();
+            // Run boot animation AND worker init in parallel - don't block workers behind animation
+            const bootAnim = runBootSequence();
+            
             initWorkers();
             workerStore.whisper.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value, precision: UI.precisionSelect.value });
             workerStore.nlp.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
@@ -124,11 +141,9 @@ UI.sysPowerBtn.onclick = async () => {
             workerStore.vad.worker.postMessage({ type: 'load' });
             await fetchZeitgeist(UI.domainSelect.value);
             
-            UI.output.appendChild(interimSpan);
-            const cursor = document.createElement('span');
-            cursor.className = 'terminal-cursor';
-            cursor.id = 'termCursor';
-            UI.output.appendChild(cursor);
+            // Wait for animation to finish if still running
+            await bootAnim;
+            
         } catch (err) { 
             setPowerBtn("▶", undefined, false);
             setStatus("MIC_ERROR", "var(--term-err)"); 
@@ -146,6 +161,9 @@ UI.sysPowerBtn.onclick = async () => {
         setPowerBtn("■", "var(--term-warn)");
         setStatus("ONLINE", "var(--term-ok)");
         UI.output.appendChild(interimSpan);
+        if (!document.getElementById('termCursor')) {
+             const cursor = document.createElement('span'); cursor.className = 'terminal-cursor'; cursor.id = 'termCursor'; UI.output.appendChild(cursor);
+        }
     }
 };
 

@@ -80,9 +80,9 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     gap: 15px;
 }
 
-.status-panel { display: flex; flex-direction: column; gap: 6px; text-align: left; justify-content: center; flex: 1; align-items: flex-start; }
+.status-panel { display: flex; flex-direction: column; gap: 6px; text-align: center; justify-content: center; flex: 1; align-items: center; }
 .status-text { font-weight: bold; color: var(--term-main); }
-.zeitgeist-display { font-size: 0.8em; color: var(--term-accent); white-space: pre-line; max-height: 3em; overflow: hidden; opacity: 0.8; margin-top: 5px; }
+.zeitgeist-display { font-size: 0.8em; color: var(--term-accent); white-space: pre-line; max-height: 3em; overflow: hidden; opacity: 0.8; margin-top: 5px; text-align: center; }
 
 .meter-panel { display: flex; flex-direction: column; gap: 6px; align-items: center; justify-content: center; flex: 1; }
 .ascii-row { display: flex; align-items: center; gap: 10px; width: 100%; justify-content: center; }
@@ -92,7 +92,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 .vad-row { justify-content: center; }
 .prob-text { width: 4ch; text-align: left; }
 
-.controls-panel { display: grid; grid-template-columns: repeat(4, auto); gap: 10px; justify-content: flex-end; align-items: center; align-content: center; flex: 1; }
+.controls-panel { display: grid; grid-template-columns: repeat(4, auto); gap: 10px; justify-content: center; align-items: center; align-content: center; flex: 1; }
 .cli-btn { padding: 4px 10px; width: auto; font-size: 0.9em; }
 .cli-btn.alt-btn { color: var(--term-err); border-color: rgba(255, 51, 51, 0.5); }
 .cli-btn.alt-btn:hover { background: rgba(255, 51, 51, 0.15); border-color: var(--term-err); color: var(--term-err); }
