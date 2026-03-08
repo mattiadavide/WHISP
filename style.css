@@ -130,32 +130,20 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     height: 40px;
 }
 
-.kitt-segment {
-    display: flex;
-    align-items: center;
-    min-width: 150px;
-    font-family: 'Courier New', Courier, monospace;
-    font-weight: 800;
-    font-size: 1.4em;
-    color: var(--term-err); /* KITT Red */
-}
 
-.left-segment {
-    justify-content: flex-end;
-    text-align: right;
-}
-
-.right-segment {
-    justify-content: flex-start;
-    text-align: left;
-}
 
 .ascii-kitt {
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: 800;
+    color: var(--term-err); /* KITT Red */
     letter-spacing: 2px;
     white-space: pre;
     transition: all 0.1s ease-out;
     filter: brightness(var(--kitt-intensity, 0.5)) drop-shadow(0 0 5px rgba(255, 176, 0, var(--kitt-intensity, 0.5)));
-    font-size: 1.2em;
+    font-size: 1.4em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 /* RIGHT: Controls Grid (2x2) */

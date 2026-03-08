@@ -8,8 +8,7 @@ export const UI = {
     dictFileInput: document.getElementById('dictFileInput'),
     sysPowerBtn: document.getElementById('sysPowerBtn'), 
     output: document.getElementById('output'),
-    kittLeft: document.getElementById('kittLeft'), 
-    kittRight: document.getElementById('kittRight'),
+    kittCenter: document.getElementById('kittCenter'),
     probVal: document.getElementById('probVal'), 
     vadVal: document.getElementById('vadVal'),
     rmsVal: document.getElementById('rmsVal'),
@@ -59,9 +58,8 @@ export function setPowerBtn(text, color, disabled = undefined) {
 }
 
 export function resetMeters() {
-    const empty = '.'.repeat(12);
-    if(UI.kittLeft) UI.kittLeft.innerText = empty; 
-    if(UI.kittRight) UI.kittRight.innerText = empty;
+    const empty = '.'.repeat(25);
+    if(UI.kittCenter) UI.kittCenter.innerText = empty;
 }
 
 // [APEX TUNING]: Render Loop disaccoppiato tramite requestAnimationFrame 
@@ -80,25 +78,26 @@ export function startRenderLoop() {
             if(UI.probVal) UI.probVal.innerText = renderState.asrProb.toFixed(2);
             
             // Single Thin Continuous Line Logic (Dynamically Lengthening Dots)
-            const maxDots = 25;
+            const maxDots = 12;
             
             // Reactivity: Combine Neural VAD probability (speech gating) with true physical RMS bounce (multiplied for visibility)
             // We subtract a small noise floor (-0.1) so background hum drops the meter to exactly zero dots.
             let rawVol = Math.max(0, Math.min(1, (renderState.prob * 0.8) + (renderState.rms * 5.0) - 0.1)); 
 
-            let dotCount = Math.floor(rawVol * maxDots);
-            // "una linea continua sottile in ascii anche puntini che si allunga"
-            // Start with at least 1 dot so there's always a center focal point even in silence
-            let dotString = '.'.repeat(Math.max(1, dotCount));
+            let dotCount = Math.floor(rawVol * maxDots); // dots per side
+            
+            // Generate a symmetric string: [dots] + [center char] + [dots]
+            // We use standard dots for the line.
+            let sideDots = '.'.repeat(Math.max(0, dotCount));
+            // Let's ensure there's always at least one center dot
+            let dotString = sideDots + '.' + sideDots;
 
-            if(UI.kittLeft) UI.kittLeft.innerText = dotString;
-            if(UI.kittRight) UI.kittRight.innerText = dotString;
+            if(UI.kittCenter) UI.kittCenter.innerText = dotString;
 
             // [SUPERCAR INTENSITY]: Intensity drives brightness and glow
             // Driven heavily by rawVol to "light up" fast
             const intensity = 0.2 + (rawVol * 2.0);
-            if(UI.kittLeft) UI.kittLeft.style.setProperty('--kitt-intensity', intensity);
-            if(UI.kittRight) UI.kittRight.style.setProperty('--kitt-intensity', intensity);
+            if(UI.kittCenter) UI.kittCenter.style.setProperty('--kitt-intensity', intensity);
             
             // Text-based metrics in the 2x2 grid
             if(UI.vadVal) UI.vadVal.innerText = renderState.prob.toFixed(2);
