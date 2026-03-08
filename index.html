@@ -272,9 +272,14 @@
             wordsToCorrect.forEach((item) => {
                 const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
                 if (!match) return;
-                const [_, prefix, core, suffix] = match; const lower = core.toLowerCase();
+                const [_, prefix, core, suffix] = match; 
                 
-                if (lower.length < 5) return; 
+                // Interveniamo SOLO se la parola inizia con la Maiuscola
+                const isCapitalized = /^[A-ZÀ-Ÿ]/.test(core);
+                if (!isCapitalized) return;
+                
+                const lower = core.toLowerCase();
+                if (lower.length < 4) return; 
                 
                 let best = null, minDist = Infinity;
                 active.forEach(ref => { 
@@ -285,7 +290,7 @@
                 let threshold = lower.length >= 10 ? 2 : (lower.length >= 6 ? 1 : 0);
                 
                 if (best && minDist > 0 && minDist <= threshold) {
-                    const restored = core[0] === core[0].toUpperCase() ? best[0].toUpperCase() + best.slice(1) : best;
+                    const restored = best[0].toUpperCase() + best.slice(1);
                     corrections.push({ id: item.id, newText: prefix + restored + suffix });
                 }
             });
