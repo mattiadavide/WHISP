@@ -86,18 +86,10 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 .footer-grid {
     display: flex;
     justify-content: space-between;
-    width: 100%;
-    align-items: center;
-    font-size: 0.85em;
-    gap: 15px;
-}
-
-.footer-grid {
-    display: flex;
-    justify-content: space-between;
     align-items: center;
     gap: 30px;
     height: 100%;
+    width: 100%;
 }
 
 /* LEFT: Status Grid (2x2 matching controls) */
@@ -250,34 +242,54 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 
 /* RESPONSIVITY RULES */
 @media screen and (max-width: 950px) {
+    /* HEADER STACKING */
+    #top-bar {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 15px;
+        padding-top: 10px;
+    }
+    .settings-panel {
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+    }
+
+    /* FOOTER STACKING */
     .footer-grid { 
-        display: grid;
-        grid-template-areas: 
-            "meters   controls"
-            "status   controls";
-        grid-template-columns: 1fr auto; 
-        gap: 15px; 
+        flex-direction: column;
+        gap: 20px;
     }
-    .status-panel { grid-area: status; align-items: flex-start; text-align: left; width: 100%; justify-content: flex-end; }
-    .meter-panel { grid-area: meters; align-items: flex-start; text-align: left; width: 100%; justify-content: flex-start;}
-    .ascii-row { justify-content: flex-start; }
-    .ascii-row .label { width: 10ch; text-align: right; }
-    .controls-panel { 
-        grid-area: controls;
-        display: grid; 
-        grid-template-columns: 1fr 1fr; 
-        gap: 10px; 
-        width: auto; 
-        max-width: none; 
-        justify-content: end;
-        align-self: center;
+    .status-grid {
+        justify-content: center;
+        width: 100%;
+        max-width: 400px;
     }
-    .cli-btn { width: 100%; min-width: 60px; height: 44px; display: flex; align-items: center; justify-content: center; }
-    .ascii-meter { letter-spacing: 0; font-size: 0.8em; }
+    .controls-grid {
+        justify-content: center;
+        width: 100%;
+        max-width: 400px;
+    }
+    .kitt-meters-container {
+        width: 100%;
+        transform: scale(0.9);
+    }
+    .cli-btn { 
+        width: 100%; 
+        height: 44px; 
+    }
 }
 
 @media screen and (max-width: 550px) {
-    .ascii-meter { font-size: 0.6em; }
-    .ascii-row .label { font-size: 0.9em; width: 9ch; }
+    .ascii-art {
+        font-size: clamp(3px, 1.2vw, 6px);
+    }
+    .kitt-meters-container {
+        transform: scale(0.7);
+    }
+    .status-grid, .controls-grid {
+        grid-template-columns: 1fr 1fr;
+    }
     .cli-btn { font-size: 0.8em; padding: 0 5px; }
 }
