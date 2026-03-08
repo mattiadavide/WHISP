@@ -1,4 +1,5 @@
 import { UI } from './ui.js';
+import { workerStore } from './main.js';
 
 export const experienceDict = new Set();
 export const referenceDict = new Set();
@@ -59,6 +60,9 @@ export async function fetchZeitgeist(domain) {
                     setTimeout(processChunk, 0); // Yield to main thread (60fps render loop)
                 } else {
                     UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${referenceDict.size}]`;
+                    if (workerStore.whisper && workerStore.whisper.worker) {
+                        workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: Array.from(referenceDict).join(' ') });
+                    }
                 }
             };
             processChunk(); // Start non-blocking chunk processor

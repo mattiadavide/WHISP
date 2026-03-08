@@ -279,6 +279,9 @@ UI.dictFileInput.onchange = (e) => {
     reader.onload = (ev) => { 
         extractValuableTokens(ev.target.result); 
         UI.zeitgeistLog.innerText += `\n> CUSTOM_DICT_LOADED [TOKENS: ${referenceDict.size}]`; 
+        if (workerStore.whisper && workerStore.whisper.worker) {
+            workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: Array.from(referenceDict).join(' ') });
+        }
     };
     reader.readAsText(file);
 };
