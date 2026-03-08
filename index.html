@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL</title>
+    <title>WHISP // TERMINAL v4.2.1 ULTIMATE</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -50,7 +50,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO
+ > DESIGN BY MATTIA DAVIDE AMICO // v4.2.1 ULTIMATE
 </div>
 <div class="header">
     <div class="settings-panel">
@@ -232,7 +232,6 @@
                 currentPrecision = precision;
                 let model = precision === 'base' ? 'onnx-community/whisper-base' : precision === 'tiny' ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
                 
-                // FIX MEMORIA: Turbo DEVE essere fp16 per evitare crash su WebGPU
                 let safeDtype = (precision === 'turbo') ? 'fp16' : 'fp32';
                 
                 transcriber = await pipeline('automatic-speech-recognition', model, { 
@@ -266,13 +265,9 @@
                 return;
             }
             
-            // 1. Stuttering di base (parole uguali separate da spazi)
             text = text.replace(/\\b([a-zA-ZÀ-ÿ\\s']{2,50}?)\\b(?:\\s+\\1\\b){1,}/gi, '$1'); 
-            
-            // 2. LOOP KILLER: Intercetta parole ripetute più di 3 volte con punteggiatura (es: c'è, c'è, c'è)
             text = text.replace(/([a-zA-ZÀ-ÿ']{2,})([\\s,;.!?]+\\1){3,}/gi, '$1');
             
-            // 3. Cerotti ortografici per l'italiano
             if (currentLang === 'italian') {
                 const rules = [
                     { rx: /\\b(un)\\s+po\\b/gi, rep: "$1 po'" },
@@ -488,27 +483,25 @@
             "art": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=it&gl=IT&ceid=IT:it"
         };
         try {
-            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(FEEDS[domain] || FEEDS.general)}`;
-            const resp = await fetch(proxyUrl);
+            const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(FEEDS[domain] || FEEDS.general)}`;
+            
+            const resp = await fetch(proxyUrl, { credentials: 'omit' });
             if (!resp.ok) throw new Error("Proxy error");
             const data = await resp.json();
             
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(data.contents, "text/xml");
-            const items = xmlDoc.querySelectorAll("item");
-            
-            if (items.length > 0) {
-                items.forEach(i => {
-                    const title = i.querySelector("title")?.textContent || "";
-                    const desc = (i.querySelector("description")?.textContent || "").replace(/<[^>]*>?/gm, ''); 
+            if (data.status === 'ok' && data.items && data.items.length > 0) {
+                data.items.forEach(i => {
+                    const title = i.title || "";
+                    const desc = (i.description || "").replace(/<[^>]*>?/gm, ''); 
                     extractValuableTokens(title + " " + desc);
                 });
                 UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${window.referenceDict.size}]`;
             } else {
-                throw new Error("No items");
+                throw new Error("No items in RSS");
             }
         } catch (e) { 
             UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_FAIL: USA LOCAL_FILE (.TXT)`; 
+            console.error("Errore Zeitgeist:", e);
         }
     }
 
