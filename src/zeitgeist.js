@@ -30,32 +30,56 @@ export function extractValuableTokens(text) {
 
 export async function fetchZeitgeist(domain) {
     if (domain === 'custom') return;
-    UI.zeitgeistLog.innerText += `\n> SYNCING_ZEITGEIST...`;
+    UI.zeitgeistLog.innerText += `\n> SYNCING_ZEITGEIST_GLOBAL...`;
     
-    const FEEDS = { 
-        "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", 
-        "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it",
-        "finance": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it", 
-        "medical": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it",
-        "sport": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=it&gl=IT&ceid=IT:it", 
-        "art": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=it&gl=IT&ceid=IT:it"
-    };
+    // Global snapshot aggregates multiple top-level domains
+    const FEEDS = [
+        "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", // General
+        "https://news.google.com/rss/headlines/section/topic/WORLD?hl=it&gl=IT&ceid=IT:it", // World News
+        "https://news.google.com/rss/headlines/section/topic/NATION?hl=it&gl=IT&ceid=IT:it", // National
+        "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it", // Tech
+        "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it", // Business / Finance
+        "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it", // Health
+        "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=it&gl=IT&ceid=IT:it", // Sports
+        "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=it&gl=IT&ceid=IT:it", // Art, Music, Cinema
+        "https://news.google.com/rss/headlines/section/topic/SCIENCE?hl=it&gl=IT&ceid=IT:it", // Science & Nature
+    ];
+    
+    let allItems = [];
     
     try {
-        const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(FEEDS[domain] || FEEDS.general)}`;
-        const resp = await fetch(proxyUrl, { credentials: 'omit' });
-        if (!resp.ok) throw new Error("Proxy error");
-        const data = await resp.json();
+        for (const url of FEEDS) {
+            try {
+                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+                const resp = await fetch(proxyUrl, { credentials: 'omit' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.contents) {
+                        const parser = new DOMParser();
+                        const xml = parser.parseFromString(data.contents, "text/xml");
+                        const items = Array.from(xml.querySelectorAll("item"));
+                        for (const item of items) {
+                            allItems.push({
+                                title: item.querySelector("title")?.textContent || "",
+                                description: item.querySelector("description")?.textContent || ""
+                            });
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn("[APEX] Feed sync skipped:", url);
+            }
+        }
         
-        if (data.status === 'ok' && data.items && data.items.length > 0) {
+        if (allItems.length > 0) {
             let i = 0;
             const processChunk = () => {
-                const end = Math.min(i + 5, data.items.length); // Process 5 items at a time
+                const end = Math.min(i + 15, allItems.length); // Process 15 items at a time
                 for (; i < end; i++) {
-                    const item = data.items[i];
+                    const item = allItems[i];
                     extractValuableTokens((item.title || "") + " " + (item.description || "").replace(/<[^>]*>?/gm, ''));
                 }
-                if (i < data.items.length) {
+                if (i < allItems.length) {
                     setTimeout(processChunk, 0); // Yield to main thread (60fps render loop)
                 } else {
                     UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${referenceDict.size}]`;

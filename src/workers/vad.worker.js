@@ -10,15 +10,24 @@ let audioChunks = [];
 let currentPrecision = 'turbo';
 const preRoll = [];
 const PRE_ROLL_MAX = 50; // Aumentato preroll per non perdere l'iniziale
+const MIN_SPEECH_CHUNKS = 15; // ~0.5s di parlato minimo effettivo per far partire Whisper (rigetta click e tosse)
 const ZERO_STATE = new Float32Array(2 * 1 * 128);
 const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
 
 function flush(isPartial = false) {
     if (!isWhisperOnline || audioChunks.length === 0) return;
+    
+    // [APEX TUNING]: Scarta totalmente i frammenti troppo brevi (es. colpi di tosse, click del mouse, brevi ronzii musicali)
+    if (!isPartial && audioChunks.length < MIN_SPEECH_CHUNKS) {
+        audioChunks = []; silenceFrames = 0;
+        return;
+    }
+    
     const totalLength = audioChunks.reduce((acc, c) => acc + c.length, 0);
     const flat = new Float32Array(totalLength);
     let offset = 0;
     for (const chunk of audioChunks) { flat.set(chunk, offset); offset += chunk.length; }
+    
     whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial }, [flat.buffer]);
     if(!isPartial) { audioChunks = []; silenceFrames = 0; }
 }
