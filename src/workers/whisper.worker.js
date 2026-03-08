@@ -24,9 +24,6 @@ async function process() {
         if (currentPrecision !== 'turbo') {
             config.return_timestamps = true; 
             config.condition_on_previous_text = false;
-            config.repetition_penalty = 1.3; 
-            config.no_repeat_ngram_size = 2;
-            config.top_k = 50;
         }
 
         const res = await transcriber(new Float32Array(item.buffer), config);
