@@ -120,6 +120,7 @@
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
         let audioChunks = [];
+        let currentPrecision = 'turbo';
         const preRoll = [];
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
@@ -135,18 +136,18 @@
         }
 
         self.onmessage = async (e) => {
-            const { type, port } = e.data;
+            const { type, port, precision } = e.data;
             if (type === 'load') {
                 vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
                 state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
                 self.postMessage({ type: 'ready' });
+            } else if (type === 'update_params') {
+                if (precision) currentPrecision = precision;
             } else if (type === 'init_whisper_port') {
                 whisperPort = port; whisperPort.onmessage = (ev) => { if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true; };
             } else if (type === 'force_flush') {
                 if (isSpeaking || audioChunks.length > 0) { 
-                    isSpeaking = false; 
-                    flush(false); 
-                    state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
+                    isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
                 }
             } else if (type === 'init_worklet_port') {
                 port.onmessage = async (we) => {
@@ -158,7 +159,7 @@
 
                         if (isSpeaking) { 
                             audioChunks.push(chunk); 
-                            if (audioChunks.length % 90 === 0) flush(true); 
+                            if (audioChunks.length % 60 === 0) flush(true); 
                         } else { 
                             preRoll.push(chunk); if (preRoll.length > 25) preRoll.shift(); 
                         }
@@ -167,20 +168,21 @@
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
                         
+                        const maxSilenceFrames = (currentPrecision === 'turbo') ? 30 : 15;
+                        const maxContextChunks = (currentPrecision === 'turbo') ? 300 : 150;
+                        
                         if (prob > (isSpeaking ? 0.50 : 0.75)) { 
                             if (!isSpeaking) { isSpeaking = true; audioChunks = [...preRoll]; }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 30) { 
+                            if (silenceFrames > maxSilenceFrames) { 
                                 isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
                             }
                         }
 
-                        if (isSpeaking && audioChunks.length > 300) {
-                            isSpeaking = false; 
-                            flush(false); 
-                            state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
+                        if (isSpeaking && audioChunks.length > maxContextChunks) {
+                            isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
                         }
 
                         self.postMessage({ type: 'vad_ui_update', prob, isSpeaking, rms });
@@ -241,19 +243,31 @@
     `;
 
     const refiningWorkerCode = `
+        let currentLang = 'italian';
+        
         self.onmessage = (e) => {
+            if (e.data.type === 'update_params') {
+                currentLang = e.data.language;
+                return;
+            }
+            
             let text = e.data.text;
             if (!text) {
                 self.postMessage({ type: 'REFINED', batchId: e.data.batchId, text: "", isLowConf: e.data.isLowConf });
                 return;
             }
+            
             text = text.replace(/\\b([a-zA-ZÀ-ÿ\\s']{2,50}?)\\b(?:\\s+\\1\\b){1,}/gi, '$1'); 
-            const rules = [
-                { rx: /\\b(un)\\s+po\\b/gi, rep: "$1 po'" },
-                { rx: /\\b(qual)\\s+e\\b/gi, rep: "$1 è" },
-                { rx: /\\b(lo|dello|allo|sullo)\\s+([bcdfghkmnpqrtvw]\\w+)\\b/gi, rep: (m, p1, p2) => p1 + ' s' + p2 }
-            ];
-            rules.forEach(r => text = text.replace(r.rx, r.rep));
+            
+            if (currentLang === 'italian') {
+                const rules = [
+                    { rx: /\\b(un)\\s+po\\b/gi, rep: "$1 po'" },
+                    { rx: /\\b(qual)\\s+e\\b/gi, rep: "$1 è" },
+                    { rx: /\\b(lo|dello|allo|sullo)\\s+([bcdfghkmnpqrtvw]\\w+)\\b/gi, rep: (m, p1, p2) => p1 + ' s' + p2 }
+                ];
+                rules.forEach(r => text = text.replace(r.rx, r.rep));
+            }
+            
             self.postMessage({ type: 'REFINED', batchId: e.data.batchId, text, isLowConf: e.data.isLowConf });
         };
     `;
@@ -274,7 +288,6 @@
                 if (!match) return;
                 const [_, prefix, core, suffix] = match; 
                 
-                // Interveniamo SOLO se la parola inizia con la Maiuscola
                 const isCapitalized = /^[A-ZÀ-Ÿ]/.test(core);
                 if (!isCapitalized) return;
                 
@@ -526,7 +539,10 @@
             UI.sysPowerBtn.disabled = true;
             try {
                 initWorkers();
+                
                 workerStore.whisper.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
+                workerStore.refining.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
+                workerStore.vad.worker.postMessage({ type: 'update_params', precision: UI.precisionSelect.value });
                 
                 UI.zeitgeistLog.innerText = "";
                 await loadStopWords(UI.languageSelect.value);
@@ -563,10 +579,13 @@
     };
 
     UI.languageSelect.onchange = (e) => {
-        if (workerStore.whisper) {
-            workerStore.whisper.worker.postMessage({ type: 'update_params', language: e.target.value });
-        }
+        if (workerStore.whisper) workerStore.whisper.worker.postMessage({ type: 'update_params', language: e.target.value });
+        if (workerStore.refining) workerStore.refining.worker.postMessage({ type: 'update_params', language: e.target.value });
         loadStopWords(e.target.value);
+    };
+
+    UI.precisionSelect.onchange = (e) => {
+        if (workerStore.vad) workerStore.vad.worker.postMessage({ type: 'update_params', precision: e.target.value });
     };
 
     UI.domainSelect.onchange = (e) => { if (e.target.value === 'custom') UI.dictFileInput.click(); };
@@ -610,6 +629,7 @@
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
     UI.toggleHarvestBtn.onclick = () => { UI.harvestPanel.style.display = UI.harvestPanel.style.display === 'block' ? 'none' : 'block'; };
     UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
+    
     UI.exportBtn.onclick = () => {
         const a = document.createElement('a');
         a.href = URL.createObjectURL(new Blob([UI.output.innerText], {type: 'text/plain'}));
