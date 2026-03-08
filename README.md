@@ -1,37 +1,4 @@
-### 1. WHISP Process Chain (ASCII Flowchart)
-
-
-+----------------+      +-----------------------+      +-----------------------+
-|  AUDIO INPUT   |      |  AUDIO WORKLET NODE   |      |      VAD WORKER       |
-| (Mic / System) | ---->| (PCM @ 16kHz / 512sz) | ---->| (Silero-VAD Inference)|
-+----------------+      +-----------------------+      +-----------+-----------+
-                                                                   |
-                                                   ________________|________________
-                                                  |                                 |
-                                           [ NO SPEECH ]                     [ SPEECH DETECTED ]
-                                           | Drop Packet |                   |  Post to Whisper |
-                                           +-------------+                   +--------+--------+
-                                                                                      |
-                                                                             +--------v--------+
-                                                                             | WHISPER WORKER  |
-                                                                             | (WebGPU / FP16) |
-                                                                             +--------+--------+
-                                                                                      |
-+----------------+      +-----------------------+                    +----------------v--------+
-| ZEITGEIST FEED |      |   NLP REFINERY        |                    |   TRANSCRIPTION BUS   |
-| (RSS / Local)  | ---->| (Levenshtein Distance)| <------------------ |    (Raw Text Tokens)  |
-+----------------+      +-----------+-----------+                    +-------------------------+
-                                    |
-                         +----------v----------+
-                         |  APEX UI TERMINAL   |
-                         | (Manual Validation) |
-                         +---------------------+
-
-```
-
----
-
-### 2. Technical Specifications
+###  Technical Specifications
 
 #### **Core Overview**
 
