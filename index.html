@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL v4.6 RECOVERY</title>
+    <title>WHISP // TERMINAL v4.2.1 ULTIMATE</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -12,22 +12,37 @@
         .header { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 20px; background: rgba(255, 255, 255, 0.05); }
         .settings-panel { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 15px; align-items: center; }
         select, button, input { background: var(--term-bg); color: var(--term-main); border: 1px solid var(--term-main); padding: 8px; font-family: inherit; cursor: pointer; outline: none; flex-grow: 1; font-size: 0.85em; }
+        input[type="file"] { padding: 5px; font-size: 0.75em; border: 1px dashed var(--term-dim); }
         button:hover { background: var(--term-main); color: var(--term-bg); }
         button:disabled { color: var(--term-dim); border-color: var(--term-dim); cursor: not-allowed; }
         .status-bar { border: 1px solid var(--term-main); padding: 15px; margin-bottom: 15px; display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; }
-        #output { border: 1px solid rgba(255,255,255,0.1); background: transparent; padding: 15px; min-height: 400px; max-height: calc(100vh - 550px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; outline: none; white-space: pre-wrap; }
-        .word-token { cursor: pointer; padding: 2px 1px; display: inline-block; }
+        #output { border: 1px solid rgba(255,255,255,0.1); background: transparent; padding: 15px; min-height: 400px; max-height: calc(100vh - 550px); overflow-y: auto; line-height: 1.8; color: #eee; text-transform: none; scroll-behavior: smooth; margin-bottom: 20px; outline: none; white-space: pre-wrap; }
+        #harvest-panel { display: none; border: 1px solid var(--term-accent); padding: 15px; margin-bottom: 20px; background: rgba(0, 170, 255, 0.05); }
+        table { width: 100%; border-collapse: collapse; font-size: 0.8em; margin-top: 10px; }
+        th { text-align: left; border-bottom: 1px solid var(--term-accent); padding: 5px; color: var(--term-accent); }
+        td { padding: 5px; border-bottom: 1px solid #222; }
+        .word-token { cursor: pointer; transition: background 0.2s; padding: 2px 1px; border-radius: 2px; display: inline-block; }
+        .word-token:hover { background: rgba(255, 255, 255, 0.15); }
+        .low-conf { color: var(--term-err); text-decoration: underline dotted; }
+        .validated { color: var(--term-ok) !important; text-decoration: none !important; }
+        .shielded { color: var(--term-shield) !important; text-decoration: none !important; }
         .interim-text { color: var(--term-dim); font-style: italic; }
-        .stats-panel { min-width: 320px; }
-        .stat-row { display: flex; align-items: center; gap: 15px; font-size: 0.85em; height: 1.4em; }
-        .ascii-meter { display: inline-block; width: 23ch; font-weight: bold; color: var(--term-main); }
-        .vad-indicator { width: 10px; height: 10px; border: 1px solid var(--term-dim); display: inline-block; vertical-align: middle; }
-        .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 8px var(--term-ok); }
+        .stats-panel { min-width: 320px; padding-right: 40px; }
+        .stat-row { display: flex; align-items: center; justify-content: flex-start; gap: 15px; font-size: 0.85em; height: 1.4em; line-height: 1.4em; white-space: nowrap; }
+        .stat-row span:first-child { width: 8ch; flex-shrink: 0; }
+        .ascii-meter { display: inline-block; width: 23ch; text-align: left; font-weight: bold; color: var(--term-main); flex-shrink: 0; overflow: hidden; }
+        .vad-indicator { width: 10px; height: 10px; border: 1px solid var(--term-dim); display: inline-block; vertical-align: middle; margin-left: 5px; flex-shrink: 0; }
+        .vad-indicator.active { background: var(--term-ok); box-shadow: 0 0 8px var(--term-ok); border-color: var(--term-ok); }
         .blink { animation: blinker 1.5s linear infinite; }
         @keyframes blinker { 50% { opacity: 0.3; } }
+        #word-popup { position: absolute; background: #111; border: 1px solid var(--term-main); padding: 10px; display: none; z-index: 1000; box-shadow: 0 0 15px rgba(0,0,0,0.8); }
     </style>
 </head>
 <body>
+<div id="word-popup">
+    <input type="text" id="edit-word-input" style="background:#000; color:#fff; border:1px solid #fff; padding:5px; margin-bottom:5px; width:120px;"><br>
+    <button id="confirm-word-btn">VALIDATE_WORD</button>
+</div>
 <div class="ascii-art">
  ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
  ██║    ██║██║  ██║██║██╔════╝██╔══██╗
@@ -35,52 +50,77 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > VERSION 4.6 RECOVERY // MEMORY_FIXED
+ > DESIGN BY MATTIA DAVIDE AMICO // v4.2.1 ULTIMATE
 </div>
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
-            <option value="turbo" selected>MOD: LARGE_TURBO (FORCE_FP16)</option>
-            <option value="base">MOD: STANDARD_BASE (FP32)</option>
-            <option value="tiny">MOD: MOBILE_TINY (FP32)</option>
+            <option value="turbo" selected>MOD: LARGE_TURBO (FP16_GPU)</option>
+            <option value="base">MOD: STANDARD_BASE (FP32_GPU)</option>
+            <option value="tiny">MOD: MOBILE_TINY (FP32_GPU)</option>
         </select>
         <select id="languageSelect"></select>
         <select id="audioSource">
             <option value="mic">SRC: MICROPHONE</option>
             <option value="system">SRC: SYSTEM_AUDIO</option>
         </select>
-        <button id="sysPowerBtn" style="font-weight: bold;">BOOT_SYSTEM()</button>
+        <select id="domainSelect" style="flex-grow: 2;">
+            <option value="general">DOM: GENERALIST (NEWS)</option>
+            <option value="tech">DOM: TECH & IT (NEWS)</option>
+            <option value="finance">DOM: FINANCE & ECON (NEWS)</option>
+            <option value="medical">DOM: MEDICAL & HEALTH (NEWS)</option>
+            <option value="sport">DOM: SPORT & ATHLETICS (NEWS)</option>
+            <option value="art">DOM: ART & CULTURE (NEWS)</option>
+            <option value="custom">DOM: LOCAL_FILE (.TXT)</option>
+        </select>
+        <input type="file" id="dictFileInput" accept=".txt" style="display: none; flex-grow: 2;">
+        <button id="sysPowerBtn" style="font-weight: bold; flex-grow: 1;">BOOT_SYSTEM()</button>
     </div>
 </div>
 <div class="status-bar">
     <div>
         STATUS: <span id="status" class="blink">IDLE</span>
         <div id="progress-container" style="display:none; margin-top:10px;">
-            <div id="progress-text" style="font-size: 0.8em;">FETCHING_MODELS: 0%</div>
+            <div id="progress-text" style="font-size: 0.8em; margin-bottom: 5px;">FETCHING_MODELS: 0%</div>
             <div id="ascii-bar">[--------------------]</div>
         </div>
+        <div id="zeitgeist-log" style="font-size: 0.75em; color: var(--term-accent); margin-top: 5px; white-space: pre-line;"></div>
     </div>
     <div class="stats-panel">
         <div class="stat-row"><span>SIG_RMS</span><span id="volAscii" class="ascii-meter">[--------------------]</span></div>
         <div class="stat-row"><span>VAD_NET</span><span id="vadAscii" class="ascii-meter">[--------------------]</span></div>
-        <div class="stat-row" style="font-size: 0.75em;">
-            <span>PROB_VAL</span><span id="probVal">PROB: 0.00</span><div class="vad-indicator" id="vadLed"></div>
+        <div class="stat-row" style="margin-top: 5px; font-size: 0.75em;">
+            <span>PROB_VAL</span><span id="probVal" style="width: auto; min-width: 10ch;">PROB: 0.00</span><div class="vad-indicator" id="vadLed"></div>
         </div>
     </div>
 </div>
+<div id="harvest-panel">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="color: var(--term-accent); font-weight: bold;">[ SESSION_KNOWLEDGE_HARVEST ]</span>
+        <button id="closeHarvestBtn" style="flex-grow:0; padding: 2px 10px; border-color: var(--term-accent);">CLOSE</button>
+    </div>
+    <table id="harvest-table">
+        <thead>
+            <tr><th>LEMMA</th><th>EXTRACTION_TYPE</th><th>STATUS</th></tr>
+        </thead>
+        <tbody id="harvest-body"></tbody>
+    </table>
+</div>
 <div style="margin-bottom: 10px; display: flex; gap: 10px;">
+    <button id="toggleHarvestBtn" style="color: var(--term-accent); border-color: var(--term-accent);">SHOW_HARVEST</button>
+    <button id="exportBtn" style="margin-left: auto;">EXPORT_TXT</button>
     <button id="copyBtn">COPY_ALL</button>
     <button id="clearBtn">FLUSH_OUTPUT</button>
 </div>
 <div id="output" contenteditable="true" spellcheck="false"></div>
 
 <script type="module">
-    // --- WORKER CODES ---
     const vadWorkerCode = `
         import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
         let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
         let audioChunks = [];
+        let currentPrecision = 'turbo';
         const preRoll = [];
         const ZERO_STATE = new Float32Array(2 * 1 * 128);
         const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
@@ -89,38 +129,62 @@
             if (!isWhisperOnline || audioChunks.length === 0) return;
             const totalLength = audioChunks.reduce((acc, c) => acc + c.length, 0);
             const flat = new Float32Array(totalLength);
-            let offset = 0; for (const chunk of audioChunks) { flat.set(chunk, offset); offset += chunk.length; }
-            whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial }, [flat.buffer]);
+            let offset = 0;
+            for (const chunk of audioChunks) { flat.set(chunk, offset); offset += chunk.length; }
+            whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial, silenceDuration: silenceFrames }, [flat.buffer]);
             if(!isPartial) { audioChunks = []; silenceFrames = 0; }
         }
 
         self.onmessage = async (e) => {
-            const { type, port } = e.data;
+            const { type, port, precision } = e.data;
             if (type === 'load') {
                 vadModel = await AutoModel.from_pretrained('onnx-community/silero-vad', { config: { model_type: 'custom' } });
                 state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
                 self.postMessage({ type: 'ready' });
+            } else if (type === 'update_params') {
+                if (precision) currentPrecision = precision;
             } else if (type === 'init_whisper_port') {
-                whisperPort = port; 
-                whisperPort.onmessage = (ev) => { if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true; };
+                whisperPort = port; whisperPort.onmessage = (ev) => { if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true; };
+            } else if (type === 'force_flush') {
+                if (isSpeaking || audioChunks.length > 0) { 
+                    isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
+                }
             } else if (type === 'init_worklet_port') {
                 port.onmessage = async (we) => {
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
-                        let sumSq = 0; for(let i=0; i<chunk.length; i++) sumSq += chunk[i]*chunk[i];
+                        let sumSq = 0;
+                        for(let i=0; i<chunk.length; i++) sumSq += chunk[i]*chunk[i];
                         const rms = Math.sqrt(sumSq / chunk.length);
-                        if (isSpeaking) { audioChunks.push(chunk); if (audioChunks.length % 60 === 0) flush(true); } 
-                        else { preRoll.push(chunk); if (preRoll.length > 25) preRoll.shift(); }
+
+                        if (isSpeaking) { 
+                            audioChunks.push(chunk); 
+                            if (audioChunks.length % 60 === 0) flush(true); 
+                        } else { 
+                            preRoll.push(chunk); if (preRoll.length > 25) preRoll.shift(); 
+                        }
+                        
                         const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                         state = out.stateN || out.staten || state;
                         const prob = out.output.data[0];
-                        if (prob > (isSpeaking ? 0.45 : 0.75)) { 
+                        
+                        const maxSilenceFrames = (currentPrecision === 'turbo') ? 30 : 15;
+                        const maxContextChunks = (currentPrecision === 'turbo') ? 300 : 150;
+                        
+                        if (prob > (isSpeaking ? 0.50 : 0.75)) { 
                             if (!isSpeaking) { isSpeaking = true; audioChunks = [...preRoll]; }
                             silenceFrames = 0;
                         } else if (isSpeaking) {
                             silenceFrames++;
-                            if (silenceFrames > 35) { isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
+                            if (silenceFrames > maxSilenceFrames) { 
+                                isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
+                            }
                         }
+
+                        if (isSpeaking && audioChunks.length > maxContextChunks) {
+                            isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]);
+                        }
+
                         self.postMessage({ type: 'vad_ui_update', prob, isSpeaking, rms });
                     }
                 };
@@ -131,112 +195,332 @@
     const whisperWorkerCode = `
         import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js';
         env.allowLocalModels = false;
-        let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null, currentPrecision = "turbo";
-        let contextBuffer = "";
+        let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null, currentPrecision = "turbo", initialPrompt = "";
 
         async function process() {
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
             try {
                 let config = { 
-                    language: currentLanguage, task: 'transcribe', temperature: 0.0,
-                    prompt: contextBuffer.slice(-300), 
-                    num_beams: (currentPrecision === 'turbo' ? 1 : 5) 
+                    language: currentLanguage, 
+                    task: 'transcribe', 
+                    temperature: 0.0, 
+                    prompt: initialPrompt
                 };
+
+                if (currentPrecision !== 'turbo') {
+                    config.return_timestamps = true; 
+                    config.condition_on_previous_text = false;
+                    config.repetition_penalty = 1.5; 
+                    config.no_repeat_ngram_size = 3;
+                }
+
                 const res = await transcriber(new Float32Array(item.buffer), config);
-                if (res.text && res.text.trim().length > 1) {
-                    if (!item.isPartial) contextBuffer = (contextBuffer + " " + res.text).slice(-200);
-                    self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text });
+                if (res.text && res.text.trim().length > 0) {
+                    const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
+                    self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf: avgConf < 0.60 });
+                } else if (!item.isPartial) {
+                    self.postMessage({ type: 'final', text: "", isLowConf: false });
                 }
             } catch (e) { console.error(e); }
-            isBusy = false; setTimeout(process, 10);
+            isBusy = false; process();
         }
 
         self.onmessage = async (e) => {
-            const { type, port, precision, language, dtype } = e.data;
+            const { type, port, precision, language, prompt } = e.data;
             if (type === 'load') {
                 currentPrecision = precision;
                 let model = precision === 'base' ? 'onnx-community/whisper-base' : precision === 'tiny' ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
+                
+                // FIX MEMORIA: Turbo DEVE essere fp16 per evitare crash su WebGPU
+                let safeDtype = (precision === 'turbo') ? 'fp16' : 'fp32';
+                
                 transcriber = await pipeline('automatic-speech-recognition', model, { 
-                    device: 'webgpu', dtype: dtype, 
+                    device: 'webgpu', dtype: safeDtype, 
                     progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                 });
                 self.postMessage({ type: 'READY_TO_PROCESS' });
                 if (vadPort) vadPort.postMessage({ type: 'WHISPER_ONLINE' });
+            } else if (type === 'update_params') {
+                if (precision) currentPrecision = precision;
+                if (language) currentLanguage = language;
+                if (prompt !== undefined) initialPrompt = prompt;
             } else if (type === 'init_vad_port') {
-                vadPort = port; 
-                vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); } };
+                vadPort = port; vadPort.onmessage = (ev) => { if (ev.data.type === 'transcribe') { queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); process(); } };
             }
         };
     `;
 
-    // --- MAIN LOGIC ---
+    const refiningWorkerCode = `
+        let currentLang = 'italian';
+        
+        self.onmessage = (e) => {
+            if (e.data.type === 'update_params') {
+                currentLang = e.data.language;
+                return;
+            }
+            
+            let text = e.data.text;
+            if (!text) {
+                self.postMessage({ type: 'REFINED', batchId: e.data.batchId, text: "", isLowConf: e.data.isLowConf });
+                return;
+            }
+            
+            // 1. Stuttering di base (parole uguali separate da spazi)
+            text = text.replace(/\\b([a-zA-ZÀ-ÿ\\s']{2,50}?)\\b(?:\\s+\\1\\b){1,}/gi, '$1'); 
+            
+            // 2. LOOP KILLER: Intercetta parole ripetute più di 3 volte con punteggiatura (es: c'è, c'è, c'è)
+            text = text.replace(/([a-zA-ZÀ-ÿ']{2,})([\\s,;.!?]+\\1){3,}/gi, '$1');
+            
+            // 3. Cerotti ortografici per l'italiano
+            if (currentLang === 'italian') {
+                const rules = [
+                    { rx: /\\b(un)\\s+po\\b/gi, rep: "$1 po'" },
+                    { rx: /\\b(qual)\\s+e\\b/gi, rep: "$1 è" },
+                    { rx: /\\b(lo|dello|allo|sullo)\\s+([bcdfghkmnpqrtvw]\\w+)\\b/gi, rep: (m, p1, p2) => p1 + ' s' + p2 }
+                ];
+                rules.forEach(r => text = text.replace(r.rx, r.rep));
+            }
+            
+            self.postMessage({ type: 'REFINED', batchId: e.data.batchId, text, isLowConf: e.data.isLowConf });
+        };
+    `;
+
+    const healingWorkerCode = `
+        function levenshtein(a, b) {
+            const m = []; for (let i = 0; i <= b.length; i++) m[i] = [i]; for (let j = 0; j <= a.length; j++) m[0][j] = j;
+            for (let i = 1; i <= b.length; i++) { for (let j = 1; j <= a.length; j++) {
+                if (b.charAt(i-1) === a.charAt(j-1)) m[i][j] = m[i-1][j-1];
+                else m[i][j] = Math.min(m[i-1][j-1] + 1, Math.min(m[i][j-1] + 1, m[i-1][j] + 1));
+            } } return m[b.length][a.length];
+        }
+        self.onmessage = (e) => {
+            const { batchId, wordsToCorrect, priorityPool, referenceDict } = e.data; 
+            const corrections = []; const active = [...priorityPool, ...(referenceDict || [])];
+            wordsToCorrect.forEach((item) => {
+                const match = item.original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/); 
+                if (!match) return;
+                const [_, prefix, core, suffix] = match; 
+                
+                const isCapitalized = /^[A-ZÀ-Ÿ]/.test(core);
+                if (!isCapitalized) return;
+                
+                const lower = core.toLowerCase();
+                if (lower.length < 4) return; 
+                
+                let best = null, minDist = Infinity;
+                active.forEach(ref => { 
+                    if (Math.abs(ref.length - lower.length) > 2) return; 
+                    let d = levenshtein(lower, ref); if (d < minDist) { minDist = d; best = ref; } 
+                });
+                
+                let threshold = lower.length >= 10 ? 2 : (lower.length >= 6 ? 1 : 0);
+                
+                if (best && minDist > 0 && minDist <= threshold) {
+                    const restored = best[0].toUpperCase() + best.slice(1);
+                    corrections.push({ id: item.id, newText: prefix + restored + suffix });
+                }
+            });
+            self.postMessage({ type: 'HEALING_DONE', batchId, corrections });
+        };
+    `;
+
+    window.experienceDict = new Set();
+    window.referenceDict = new Set();
+    window.dynamicStopWords = new Set();
+    let pendingTokens = {};
+
     const UI = {
-        status: document.getElementById('status'),
-        progressContainer: document.getElementById('progress-container'),
-        progressText: document.getElementById('progress-text'),
+        status: document.getElementById('status'), 
+        progressText: document.getElementById('progress-text'), 
+        zeitgeistLog: document.getElementById('zeitgeist-log'),
+        progressContainer: document.getElementById('progress-container'), 
         asciiBar: document.getElementById('ascii-bar'),
-        precisionSelect: document.getElementById('precisionSelect'),
+        precisionSelect: document.getElementById('precisionSelect'), 
         languageSelect: document.getElementById('languageSelect'),
-        sysPowerBtn: document.getElementById('sysPowerBtn'),
+        audioSource: document.getElementById('audioSource'), 
+        domainSelect: document.getElementById('domainSelect'), 
+        dictFileInput: document.getElementById('dictFileInput'),
+        sysPowerBtn: document.getElementById('sysPowerBtn'), 
         output: document.getElementById('output'),
-        vadLed: document.getElementById('vadLed'),
-        volAscii: document.getElementById('volAscii'),
-        vadAscii: document.getElementById('vadAscii'),
-        probVal: document.getElementById('probVal'),
+        vadLed: document.getElementById('vadLed'), 
+        volAscii: document.getElementById('volAscii'), 
+        vadAscii: document.getElementById('vadAscii'), 
+        probVal: document.getElementById('probVal'), 
+        clearBtn: document.getElementById('clearBtn'), 
         copyBtn: document.getElementById('copyBtn'),
-        clearBtn: document.getElementById('clearBtn')
+        popup: document.getElementById('word-popup'), 
+        editInput: document.getElementById('edit-word-input'), 
+        confirmBtn: document.getElementById('confirm-word-btn'),
+        toggleHarvestBtn: document.getElementById('toggleHarvestBtn'), 
+        harvestPanel: document.getElementById('harvest-panel'),
+        closeHarvestBtn: document.getElementById('closeHarvestBtn'),
+        exportBtn: document.getElementById('exportBtn'),
+        harvestBody: document.getElementById('harvest-body')
     };
 
-    let workerStore = { vad: null, whisper: null };
-    let audioCtx, stream, isCoreLoaded = false, isRecording = false;
+    let workerStore = { vad: null, whisper: null, refining: null, healing: null };
+    let audioCtx, stream, isCoreLoaded = false, isRecording = false, activeToken = null;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
-    function createWorker(code) {
+    function createWorker(code, type = 'module') {
         const blob = new Blob([code], { type: 'application/javascript' });
-        return new Worker(URL.createObjectURL(blob), { type: 'module' });
+        const url = URL.createObjectURL(blob);
+        return { worker: new Worker(url, { type }), url };
     }
 
     function initWorkers() {
         workerStore.vad = createWorker(vadWorkerCode);
         workerStore.whisper = createWorker(whisperWorkerCode);
+        workerStore.refining = createWorker(refiningWorkerCode, 'classic');
+        workerStore.healing = createWorker(healingWorkerCode, 'classic');
 
         const channel = new MessageChannel();
-        workerStore.vad.postMessage({ type: 'init_whisper_port', port: channel.port1 }, [channel.port1]);
-        workerStore.whisper.postMessage({ type: 'init_vad_port', port: channel.port2 }, [channel.port2]);
+        workerStore.vad.worker.postMessage({ type: 'init_whisper_port', port: channel.port1 }, [channel.port1]);
+        workerStore.whisper.worker.postMessage({ type: 'init_vad_port', port: channel.port2 }, [channel.port2]);
 
-        workerStore.whisper.onmessage = (e) => {
-            const d = e.data;
-            if (d.type === 'progress') {
-                UI.progressContainer.style.display = 'block'; UI.progressText.innerText = 'FETCHING: ' + Math.round(d.p) + '%';
-                const b = Math.floor(d.p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
-            } else if (d.type === 'READY_TO_PROCESS') {
-                UI.progressContainer.style.display = 'none'; isCoreLoaded = true; isRecording = true;
-                UI.sysPowerBtn.innerText = "STOP_RECORDING()"; UI.status.innerText = "ONLINE"; UI.status.style.color = "var(--term-ok)";
-            } else if (d.type === 'final') {
-                const s = document.createElement('span'); s.className = 'word-token'; s.innerText = " " + d.text;
-                UI.output.insertBefore(s, interimSpan); interimSpan.innerText = ""; UI.output.scrollTop = UI.output.scrollHeight;
-            } else if (d.type === 'partial') { interimSpan.innerText = " " + d.text.trim() + "..."; }
+        workerStore.refining.worker.onmessage = (e) => {
+            if (e.data.type === 'REFINED') {
+                const txt = e.data.text.trim();
+                if (!txt) { interimSpan.innerText = ""; return; }
+                const batchId = e.data.batchId;
+                pendingTokens[batchId] = txt.split(/ +/).map((w, i) => ({ id: `${batchId}_${i}`, original: w, isLowConf: e.data.isLowConf, healed: false }));
+                workerStore.healing.worker.postMessage({
+                    batchId,
+                    wordsToCorrect: pendingTokens[batchId],
+                    priorityPool: Array.from(window.experienceDict),
+                    referenceDict: Array.from(window.referenceDict)
+                });
+            }
         };
 
-        workerStore.vad.onmessage = (e) => {
-            if (e.data.type === 'ready') {
-                const model = UI.precisionSelect.value;
-                // FIX MEMORIA: Turbo DEVE essere fp16, gli altri fp32
-                const dtype = (model === 'turbo') ? 'fp16' : 'fp32';
-                workerStore.whisper.postMessage({ type: 'load', precision: model, dtype, language: UI.languageSelect.value });
-            } else if (e.data.type === 'vad_ui_update') {
+        workerStore.healing.worker.onmessage = (e) => {
+            if (e.data.type === 'HEALING_DONE') {
+                const batch = pendingTokens[e.data.batchId];
+                if (!batch) return;
+                e.data.corrections.forEach(c => {
+                    const target = batch.find(t => t.id === c.id);
+                    if (target) { target.original = c.newText; target.healed = true; target.isLowConf = false; }
+                });
+                batch.forEach(t => {
+                    const s = document.createElement('span');
+                    s.className = 'word-token' + (t.isLowConf ? ' low-conf' : '') + (t.healed ? ' validated' : '');
+                    s.innerText = " " + t.original;
+                    UI.output.insertBefore(s, interimSpan);
+                });
+                delete pendingTokens[e.data.batchId];
+                interimSpan.innerText = "";
+                UI.output.scrollTop = UI.output.scrollHeight;
+            }
+        };
+
+        workerStore.whisper.worker.onmessage = (e) => {
+            const d = e.data;
+            if (d.type === 'progress') {
+                UI.progressContainer.style.display = 'block'; UI.progressText.innerText = 'BOOTING: ' + Math.round(d.p || 0) + '%';
+                const b = Math.floor(d.p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
+            } else if (d.type === 'READY_TO_PROCESS') { 
+                UI.progressContainer.style.display = 'none'; 
+                isCoreLoaded = true; 
+                isRecording = true;
+                UI.sysPowerBtn.innerText = "STOP_RECORDING()"; 
+                UI.sysPowerBtn.style.color = "var(--term-warn)"; 
+                UI.sysPowerBtn.disabled = false;
+                UI.status.innerText = "ONLINE"; 
+                UI.status.style.color = "var(--term-ok)";
+            } else if (d.type === 'final') {
+                const batchId = Date.now().toString();
+                workerStore.refining.worker.postMessage({ batchId, text: d.text, isLowConf: d.isLowConf });
+            } else if (d.type === 'partial') { 
+                interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; 
+            }
+        };
+
+        workerStore.vad.worker.onmessage = (e) => {
+            if (e.data.type === 'ready') workerStore.whisper.worker.postMessage({ type: 'load', precision: UI.precisionSelect.value });
+            else if (e.data.type === 'vad_ui_update') {
                 UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2);
                 let b = Math.round(e.data.prob * 20); UI.vadAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
                 UI.vadLed.classList.toggle('active', e.data.isSpeaking);
-                let vol = Math.min(20, Math.floor(e.data.rms * 150)); UI.volAscii.innerText = '[' + '#'.repeat(vol) + '-'.repeat(20 - vol) + ']';
+                let volLevel = Math.min(20, Math.floor(e.data.rms * 150));
+                UI.volAscii.innerText = '[' + '#'.repeat(volLevel) + '-'.repeat(20 - volLevel) + ']';
             }
         };
     }
 
+    async function loadStopWords(languageVal) {
+        const langCodes = { "italian": "it", "english": "en", "spanish": "es", "french": "fr", "german": "de" };
+        const code = langCodes[languageVal] || "it";
+        try {
+            const res = await fetch(`https://raw.githubusercontent.com/stopwords-iso/stopwords-${code}/master/stopwords-${code}.txt`);
+            if (!res.ok) throw new Error("Fetch failed");
+            const text = await res.text();
+            window.dynamicStopWords = new Set(text.split('\n').map(w => w.trim().toLowerCase()).filter(w => w.length > 0));
+            UI.zeitgeistLog.innerText += `\n> STOPWORDS_${code.toUpperCase()}_LOADED [${window.dynamicStopWords.size} RULES]`;
+        } catch (e) {
+            console.warn("Impossibile caricare stop-words, uso fallback vuoto.");
+            window.dynamicStopWords = new Set();
+        }
+    }
+
+    function extractValuableTokens(text) {
+        if (!text) return;
+        const words = text.match(/[a-zA-ZÀ-ÿ]{4,}/g);
+        if (words) {
+            words.forEach(w => {
+                const lower = w.toLowerCase();
+                if (!window.dynamicStopWords.has(lower)) {
+                    window.referenceDict.add(lower);
+                }
+            });
+        }
+    }
+
+    async function fetchZeitgeist(domain) {
+        if (domain === 'custom') return;
+        UI.zeitgeistLog.innerText += `\n> SYNCING_ZEITGEIST...`;
+        const FEEDS = { 
+            "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", 
+            "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it",
+            "finance": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it",
+            "medical": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it",
+            "sport": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=it&gl=IT&ceid=IT:it",
+            "art": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=it&gl=IT&ceid=IT:it"
+        };
+        try {
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(FEEDS[domain] || FEEDS.general)}`;
+            const resp = await fetch(proxyUrl);
+            if (!resp.ok) throw new Error("Proxy error");
+            const data = await resp.json();
+            
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(data.contents, "text/xml");
+            const items = xmlDoc.querySelectorAll("item");
+            
+            if (items.length > 0) {
+                items.forEach(i => {
+                    const title = i.querySelector("title")?.textContent || "";
+                    const desc = (i.querySelector("description")?.textContent || "").replace(/<[^>]*>?/gm, ''); 
+                    extractValuableTokens(title + " " + desc);
+                });
+                UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${window.referenceDict.size}]`;
+            } else {
+                throw new Error("No items");
+            }
+        } catch (e) { 
+            UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_FAIL: USA LOCAL_FILE (.TXT)`; 
+        }
+    }
+
+    function updateHarvestTable(lemma, type) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${lemma}</td><td>${type}</td><td style="color:var(--term-ok)">STORED</td>`;
+        UI.harvestBody.prepend(tr);
+    }
+
     async function startListening() {
         audioCtx = new AudioContext({ sampleRate: 16000 });
-        stream = await navigator.mediaDevices.getUserMedia({audio:true});
+        stream = UI.audioSource.value === 'system' ? await navigator.mediaDevices.getDisplayMedia({audio:true, video:true}) : await navigator.mediaDevices.getUserMedia({audio:true});
         await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
             class P extends AudioWorkletProcessor {
                 constructor() { super(); this.buf = new Float32Array(512); this.ptr = 0; this.vPort = null; this.port.onmessage = (e) => { if(e.data.port) this.vPort = e.data.port; }; }
@@ -244,17 +528,22 @@
                     const input = inputs[0][0]; if(!input || !this.vPort) return true;
                     for(let i=0; i<input.length; i++) {
                         this.buf[this.ptr++] = input[i];
-                        if(this.ptr >= 512) { const c = new Float32Array(this.buf); this.vPort.postMessage({type:'vad', data:c.buffer}, [c.buffer]); this.ptr = 0; }
+                        if(this.ptr >= 512) {
+                            const copy = new Float32Array(this.buf);
+                            this.vPort.postMessage({type:'vad', data:copy.buffer}, [copy.buffer]);
+                            this.ptr = 0;
+                        }
                     }
                     return true;
                 }
             }
             registerProcessor('p', P);
         `], {type:'application/javascript'})));
+
         const worklet = new AudioWorkletNode(audioCtx, 'p');
-        const chan = new MessageChannel();
-        workerStore.vad.postMessage({ type: 'init_worklet_port', port: chan.port1 }, [chan.port1]);
-        worklet.port.postMessage({ port: chan.port2 }, [chan.port2]);
+        const audioChannel = new MessageChannel();
+        workerStore.vad.worker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
+        worklet.port.postMessage({ port: audioChannel.port2 }, [audioChannel.port2]);
         audioCtx.createMediaStreamSource(stream).connect(worklet);
         UI.output.appendChild(interimSpan);
     }
@@ -262,24 +551,114 @@
     UI.sysPowerBtn.onclick = async () => { 
         if (!isCoreLoaded) {
             UI.sysPowerBtn.disabled = true;
-            initWorkers();
-            await startListening();
-            workerStore.vad.postMessage({ type: 'load' });
+            try {
+                initWorkers();
+                
+                workerStore.whisper.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value, precision: UI.precisionSelect.value });
+                workerStore.refining.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
+                workerStore.vad.worker.postMessage({ type: 'update_params', precision: UI.precisionSelect.value });
+                
+                UI.zeitgeistLog.innerText = "";
+                await loadStopWords(UI.languageSelect.value);
+                
+                await startListening();
+                workerStore.vad.worker.postMessage({ type: 'load' });
+                await fetchZeitgeist(UI.domainSelect.value);
+            } catch (err) {
+                UI.sysPowerBtn.disabled = false;
+                UI.status.innerText = "MIC_ERROR";
+                UI.status.style.color = "var(--term-err)";
+            }
         } else if (isRecording) {
-            stream?.getTracks().forEach(t => t.stop()); audioCtx?.close();
-            isRecording = false; UI.sysPowerBtn.innerText = "RESUME()"; UI.status.innerText = "PAUSED";
+            if (stream) stream.getTracks().forEach(t => t.stop());
+            if (audioCtx) audioCtx.close();
+            workerStore.vad.worker.postMessage({ type: 'force_flush' });
+            isRecording = false;
+            
+            UI.sysPowerBtn.innerText = "RESUME_RECORDING()";
+            UI.sysPowerBtn.style.color = "var(--term-main)";
+            UI.status.innerText = "PAUSED";
+            UI.status.style.color = "var(--term-dim)";
+            UI.vadLed.classList.remove('active');
+            UI.volAscii.innerText = '[--------------------]';
+            UI.vadAscii.innerText = '[--------------------]';
         } else {
-            await startListening(); isRecording = true; UI.sysPowerBtn.innerText = "STOP()"; UI.status.innerText = "ONLINE";
+            await startListening();
+            isRecording = true;
+            UI.sysPowerBtn.innerText = "STOP_RECORDING()";
+            UI.sysPowerBtn.style.color = "var(--term-warn)";
+            UI.status.innerText = "ONLINE";
+            UI.status.style.color = "var(--term-ok)";
         }
     };
 
+    UI.languageSelect.onchange = (e) => {
+        if (workerStore.whisper) workerStore.whisper.worker.postMessage({ type: 'update_params', language: e.target.value });
+        if (workerStore.refining) workerStore.refining.worker.postMessage({ type: 'update_params', language: e.target.value });
+        loadStopWords(e.target.value);
+    };
+
+    UI.precisionSelect.onchange = (e) => {
+        if (workerStore.vad) workerStore.vad.worker.postMessage({ type: 'update_params', precision: e.target.value });
+        if (workerStore.whisper) workerStore.whisper.worker.postMessage({ type: 'update_params', precision: e.target.value });
+    };
+
+    UI.domainSelect.onchange = (e) => { if (e.target.value === 'custom') UI.dictFileInput.click(); };
+    UI.dictFileInput.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            extractValuableTokens(ev.target.result);
+            UI.zeitgeistLog.innerText += `\n> CUSTOM_DICT_LOADED [TOKENS: ${window.referenceDict.size}]`;
+        };
+        reader.readAsText(file);
+    };
+
+    UI.output.addEventListener('click', (e) => {
+        if (e.target.classList.contains('word-token')) {
+            activeToken = e.target;
+            UI.editInput.value = activeToken.innerText.trim();
+            UI.popup.style.display = 'block';
+            UI.popup.style.left = `${e.pageX}px`;
+            UI.popup.style.top = `${e.pageY + 10}px`;
+            UI.editInput.focus();
+        }
+    });
+
+    UI.confirmBtn.onclick = () => {
+        if (activeToken) {
+            const newVal = UI.editInput.value.trim();
+            activeToken.innerText = " " + newVal;
+            activeToken.className = 'word-token validated';
+            window.experienceDict.add(newVal.toLowerCase());
+            updateHarvestTable(newVal, 'MANUAL_VALIDATION');
+        }
+        UI.popup.style.display = 'none';
+        activeToken = null;
+    };
+
+    document.addEventListener('click', (e) => { if (!UI.popup.contains(e.target) && !e.target.classList.contains('word-token')) UI.popup.style.display = 'none'; });
+
     UI.clearBtn.onclick = () => { UI.output.innerHTML = ""; UI.output.appendChild(interimSpan); };
     UI.copyBtn.onclick = () => navigator.clipboard.writeText(UI.output.innerText);
+    UI.toggleHarvestBtn.onclick = () => { UI.harvestPanel.style.display = UI.harvestPanel.style.display === 'block' ? 'none' : 'block'; };
+    UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
+    
+    UI.exportBtn.onclick = () => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([UI.output.innerText], {type: 'text/plain'}));
+        a.download = 'WHISP_TRANSCRIPT.txt';
+        a.click();
+    };
 
     (() => {
         const langs = { "italian": "ITA", "english": "ENG", "spanish": "ESP", "french": "FRA", "german": "GER" };
+        UI.languageSelect.innerHTML = "";
         for (const [val, label] of Object.entries(langs)) {
-            const opt = document.createElement("option"); opt.value = val; opt.text = label; UI.languageSelect.appendChild(opt);
+            const opt = document.createElement("option");
+            opt.value = val; opt.text = label;
+            UI.languageSelect.appendChild(opt);
         }
     })();
 </script>
