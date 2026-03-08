@@ -55,9 +55,9 @@
 <div class="header">
     <div class="settings-panel">
         <select id="precisionSelect">
-            <option value="turbo" selected>ENG: LARGE_TURBO (FP16_GPU)</option>
-            <option value="base">ENG: STANDARD_BASE (FP16_GPU)</option>
-            <option value="tiny">ENG: MOBILE_TINY (FP16_GPU)</option>
+            <option value="turbo" selected>MOD: LARGE_TURBO (FP16_GPU)</option>
+            <option value="base">MOD: STANDARD_BASE (FP32_GPU)</option>
+            <option value="tiny">MOD: MOBILE_TINY (FP32_GPU)</option>
         </select>
         <select id="languageSelect"></select>
         <select id="audioSource">
@@ -199,7 +199,15 @@
             if (isBusy || queue.length === 0 || !transcriber) return;
             isBusy = true; const item = queue.shift();
             try {
-                let config = { language: currentLanguage, task: 'transcribe', temperature: 0.0, prompt: initialPrompt };
+                let config = { 
+                    language: currentLanguage, 
+                    task: 'transcribe', 
+                    temperature: 0.0, 
+                    prompt: initialPrompt,
+                    return_timestamps: true, 
+                    condition_on_previous_text: false,
+                    repetition_penalty: 1.1 
+                };
                 const res = await transcriber(new Float32Array(item.buffer), config);
                 if (res.text && res.text.trim().length > 0) {
                     const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
@@ -216,8 +224,9 @@
             if (type === 'load') {
                 currentPrecision = precision;
                 let model = precision === 'base' ? 'onnx-community/whisper-base' : precision === 'tiny' ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
+                let safeDtype = (precision === 'turbo') ? 'fp16' : 'fp32';
                 transcriber = await pipeline('automatic-speech-recognition', model, { 
-                    device: 'webgpu', dtype: 'fp16', 
+                    device: 'webgpu', dtype: safeDtype, 
                     progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
                 });
                 self.postMessage({ type: 'READY_TO_PROCESS' });
@@ -478,6 +487,8 @@
             UI.sysPowerBtn.disabled = true;
             try {
                 initWorkers();
+                // Send current language immediately
+                workerStore.whisper.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
                 await startListening();
                 workerStore.vad.worker.postMessage({ type: 'load' });
                 await fetchZeitgeist(UI.domainSelect.value);
@@ -506,6 +517,12 @@
             UI.sysPowerBtn.style.color = "var(--term-warn)";
             UI.status.innerText = "ONLINE";
             UI.status.style.color = "var(--term-ok)";
+        }
+    };
+
+    UI.languageSelect.onchange = (e) => {
+        if (workerStore.whisper) {
+            workerStore.whisper.worker.postMessage({ type: 'update_params', language: e.target.value });
         }
     };
 
