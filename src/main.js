@@ -5,7 +5,9 @@ import { AudioProcessor } from './audio.js';
 let workerStore = { vad: null, whisper: null, nlp: null };
 let audioProcessor = new AudioProcessor();
 let isCoreLoaded = false;
+let isBootingUp = false; // Guard against rapid double-click
 let activeToken = null;
+let transcriptBuffer = []; // In-memory transcript — avoids O(n) DOM re-query every export
 
 // Funzione helper per risolvere i worker in modo compatibile con sottocartelle (GitHub Pages)
 function getWorkerUrl(scriptName) {
@@ -17,9 +19,22 @@ function getWorkerUrl(scriptName) {
 }
 
 function initWorkers() {
+    if (workerStore.vad?.worker) return; // Idempotency: abort if already initialized
+    
     workerStore.vad = { worker: new Worker(getWorkerUrl('vad.worker.js'), { type: 'module' }) };
     workerStore.whisper = { worker: new Worker(getWorkerUrl('whisper.worker.js'), { type: 'module' }) };
     workerStore.nlp = { worker: new Worker(getWorkerUrl('nlp.worker.js')) };
+
+    // Worker crash handlers — surface errors to the UI instead of silent failure
+    const onWorkerError = (name) => (e) => {
+        console.error(`[APEX] ${name} Worker crashed:`, e.message || e);
+        setStatus(`${name}_FAULT`, 'var(--term-err)');
+        setPowerBtn('▶', undefined, false);
+        isBootingUp = false;
+    };
+    workerStore.vad.worker.onerror = onWorkerError('VAD');
+    workerStore.whisper.worker.onerror = onWorkerError('WHISPER');
+    workerStore.nlp.worker.onerror = onWorkerError('NLP');
 
     const channel = new MessageChannel();
     workerStore.vad.worker.postMessage({ type: 'init_whisper_port', port: channel.port1 }, [channel.port1]);
@@ -33,6 +48,7 @@ function initWorkers() {
                 s.className = 'word-token' + (t.isLowConf ? ' low-conf' : '') + (t.healed ? ' validated' : '');
                 s.innerText = " " + t.text;
                 frag.appendChild(s);
+                transcriptBuffer.push(" " + t.text); // Keep in-memory copy
             });
             UI.output.insertBefore(frag, interimSpan);
             interimSpan.innerText = "";
@@ -122,10 +138,22 @@ async function runBootSequence() {
 
 // Event Bindings
 UI.sysPowerBtn.onclick = async () => { 
-    if (!isCoreLoaded) {
+    // Feature detection — fail fast on incompatible browsers
+    if (!navigator.mediaDevices?.getUserMedia) {
+        setStatus('MEDIA_API_UNSUPPORTED', 'var(--term-err)');
+        return;
+    }
+    if (!crossOriginIsolated) {
+        setStatus('ISOLATION_REQUIRED', 'var(--term-err)');
+        console.error('[APEX] Page must be cross-origin isolated (COOP/COEP headers missing).');
+        return;
+    }
+    
+    if (!isCoreLoaded && !isBootingUp) {
+        isBootingUp = true;
         setPowerBtn("...", undefined, true);
         try {
-            // Run boot animation AND worker init in parallel - don't block workers behind animation
+            // Boot animation and worker init run in parallel
             const bootAnim = runBootSequence();
             
             initWorkers();
@@ -143,11 +171,13 @@ UI.sysPowerBtn.onclick = async () => {
             
             // Wait for animation to finish if still running
             await bootAnim;
+            isBootingUp = false;
             
         } catch (err) { 
             setPowerBtn("▶", undefined, false);
             setStatus("MIC_ERROR", "var(--term-err)"); 
             console.error("Boot Error:", err);
+            isBootingUp = false;
         }
     } else if (audioProcessor.isRecording) {
         audioProcessor.stop();
@@ -219,14 +249,11 @@ document.addEventListener('click', (e) => {
 });
 
 function getWatermarkedTranscript() {
-    let text = "";
-    document.querySelectorAll('.word-token').forEach(el => text += el.innerText);
-    text += interimSpan.innerText;
-    
-    if (!text.trim()) return "";
-
+    // Use in-memory buffer — O(1) instead of O(n) DOM traversal
+    const text = (transcriptBuffer.join('') + interimSpan.innerText).trim();
+    if (!text) return "";
     const watermark = `\n\n=========================================\n TRANSCRIBED VIA WHISP APEX ENGINE v5.1\n > DESIGN BY MATTIA DAVIDE AMICO\n=========================================\n`;
-    return text.trim() + watermark;
+    return text + watermark;
 }
 
 UI.clearBtn.onclick = () => { 
@@ -234,6 +261,7 @@ UI.clearBtn.onclick = () => {
     UI.output.innerHTML = ""; 
     logs.forEach(l => UI.output.appendChild(l));
     UI.output.appendChild(interimSpan); 
+    transcriptBuffer = []; // Clear the in-memory buffer too
     const cursor = document.createElement('span'); cursor.className = 'terminal-cursor'; UI.output.appendChild(cursor);
 };
 UI.copyBtn.onclick = () => {
