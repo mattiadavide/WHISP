@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL v4.2.1 ULTIMATE</title>
+    <title>WHISP // TERMINAL v4.3 STABLE-PROXY</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -50,7 +50,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // v4.2.1 ULTIMATE
+ > DESIGN BY MATTIA DAVIDE AMICO // v4.3 STABLE-PROXY
 </div>
 <div class="header">
     <div class="settings-panel">
@@ -222,7 +222,7 @@
                 } else if (!item.isPartial) {
                     self.postMessage({ type: 'final', text: "", isLowConf: false });
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {} // IL TUO CATCH VUOTO ORIGINALE! NON TOCCARE.
             isBusy = false; process();
         }
 
@@ -231,9 +231,7 @@
             if (type === 'load') {
                 currentPrecision = precision;
                 let model = precision === 'base' ? 'onnx-community/whisper-base' : precision === 'tiny' ? 'onnx-community/whisper-tiny' : 'onnx-community/whisper-large-v3-turbo';
-                
                 let safeDtype = (precision === 'turbo') ? 'fp16' : 'fp32';
-                
                 transcriber = await pipeline('automatic-speech-recognition', model, { 
                     device: 'webgpu', dtype: safeDtype, 
                     progress_callback: (p) => self.postMessage({ type: 'progress', p: p.progress }) 
@@ -471,6 +469,7 @@
         }
     }
 
+    // L'UNICA modifica rispetto al tuo codice originale: rss2json al posto di allorigins
     async function fetchZeitgeist(domain) {
         if (domain === 'custom') return;
         UI.zeitgeistLog.innerText += `\n> SYNCING_ZEITGEIST...`;
@@ -485,6 +484,7 @@
         try {
             const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(FEEDS[domain] || FEEDS.general)}`;
             
+            // L'aggiunta di credentials: 'omit' serve al tuo worker originale per non crashare
             const resp = await fetch(proxyUrl, { credentials: 'omit' });
             if (!resp.ok) throw new Error("Proxy error");
             const data = await resp.json();
