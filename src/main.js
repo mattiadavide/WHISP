@@ -86,6 +86,7 @@ function initWorkers() {
         } else if (d.type === 'final') {
             workerStore.nlp.worker.postMessage({
                 type: 'PROCESS_TEXT', text: d.text, isLowConf: d.isLowConf,
+                wordConf: d.wordConf || null,
                 priorityPool: Array.from(experienceDict), referenceDict: Array.from(referenceDict)
             });
         } else if (d.type === 'partial') { 

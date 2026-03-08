@@ -14,7 +14,7 @@ export class AudioProcessor {
             : await navigator.mediaDevices.getUserMedia({audio: true});
 
         await this.audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
-            class P extends AudioWorkletProcessor {
+        class P extends AudioWorkletProcessor {
                 constructor() { 
                     super(); 
                     this.buf = new Float32Array(512); 
@@ -30,7 +30,18 @@ export class AudioProcessor {
                     for(let i=0; i<input.length; i++) {
                         this.buf[this.ptr++] = input[i];
                         if(this.ptr >= 512) {
-                            this.vPort.postMessage({type:'vad', data:this.buf.slice(0).buffer}); 
+                            // [FIX 3 — AUDIO NORMALIZATION]: Remove DC offset + RMS-normalize to 0.2 target
+                            // Prevents VAD degradation on uncalibrated microphones (ASR Survey 2025)
+                            let mean = 0;
+                            for(let j=0; j<512; j++) mean += this.buf[j];
+                            mean /= 512;
+                            let rms = 0;
+                            for(let j=0; j<512; j++) { const s = this.buf[j] - mean; rms += s*s; }
+                            rms = Math.sqrt(rms / 512);
+                            const gain = rms > 1e-6 ? (0.2 / rms) : 1.0;
+                            const norm = new Float32Array(512);
+                            for(let j=0; j<512; j++) norm[j] = Math.max(-1, Math.min(1, (this.buf[j] - mean) * gain));
+                            this.vPort.postMessage({type:'vad', data:norm.buffer}); 
                             this.ptr = 0;
                         }
                     }

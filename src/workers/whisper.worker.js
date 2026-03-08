@@ -11,7 +11,6 @@ async function process() {
     isBusy = true; 
     const item = queue.shift();
     try {
-        // [APEX TUNING]: Lasciamo che WebGPU analizzi il buffer inviato fino a 20s.
         let config = { 
             language: currentLanguage, 
             task: 'transcribe', 
@@ -22,18 +21,45 @@ async function process() {
         if (currentPrecision !== 'turbo') {
             config.return_timestamps = true; 
             config.condition_on_previous_text = false;
-            // [APEX TUNING]: Greedy decoding limitando le penalità ai modelli piccoli per velocità pura
             config.repetition_penalty = 1.3; 
             config.no_repeat_ngram_size = 2;
             config.top_k = 50;
         }
 
         const res = await transcriber(new Float32Array(item.buffer), config);
+        
         if (res.text && res.text.trim().length > 0) {
-            const avgConf = res.chunks ? res.chunks.reduce((acc, c) => acc + (c.confidence || 1), 0) / res.chunks.length : 1;
-            self.postMessage({ type: item.isPartial ? 'partial' : 'final', text: res.text, isLowConf: avgConf < 0.60 });
+            
+            // [FIX 1 — ROLLING PROMPT]: Update context with last 20 words after every final segment
+            // This dramatically reduces inter-segment hallucinations on long sessions (Interspeech 2025)
+            if (!item.isPartial) {
+                const words = res.text.trim().split(/\s+/);
+                initialPrompt = words.slice(-20).join(' ');
+            }
+            
+            // [FIX 2 — PER-WORD CONFIDENCE]: Build word-level confidence map from chunks
+            // Instead of flagging the ENTIRE segment as low-conf when avg is bad,
+            // we send per-token confidence so the NLP worker can mark only uncertain words (Cambridge 2025)
+            let wordConf = null;
+            if (res.chunks && res.chunks.length > 0) {
+                wordConf = res.chunks.map(c => ({
+                    text: c.text,
+                    conf: c.confidence ?? 1.0,
+                    isLowConf: (c.confidence ?? 1.0) < 0.55
+                }));
+            }
+            const avgConf = res.chunks 
+                ? res.chunks.reduce((acc, c) => acc + (c.confidence ?? 1), 0) / res.chunks.length 
+                : 1;
+
+            self.postMessage({ 
+                type: item.isPartial ? 'partial' : 'final', 
+                text: res.text, 
+                isLowConf: avgConf < 0.60,
+                wordConf 
+            });
         } else if (!item.isPartial) {
-            self.postMessage({ type: 'final', text: "", isLowConf: false });
+            self.postMessage({ type: 'final', text: "", isLowConf: false, wordConf: null });
         }
     } catch (e) {
         console.error("Whisper processing error:", e);

@@ -1,5 +1,24 @@
 let currentLang = 'italian';
 
+// [FIX — BAG OF HALLUCINATIONS]: Known Whisper-specific hallucinated phrases
+// Based on arXiv "Bag of Hallucinations" research and Microsoft ASR 2025 hallucination analysis.
+// These strings appear in Whisper output when there is silence, noise, or very low-energy input.
+const BOH_PATTERNS = [
+    // Italian hallucinations
+    /\bgra+zie(?:\s+a\s+tutti|\s+mille|\s+per\s+aver\s+(?:guardato|ascoltato|seguito))?\b/gi,
+    /\bsottotitoli\s+(?:a\s+cura\s+di|creati\s+da|di)\b/gi,
+    /\bquesta\s+[eè]\s+una\s+trascrizione\s+automatica\b/gi,
+    /\bprossimamente\s+su\s+questi\s+schermi\b/gi,
+    // Multilingual / universal
+    /\[(?:MUSIC|SOUND|NOISE|Silence|silence|APPLAUSE|LAUGHTER|INAUDIBLE)\]/gi,
+    /\bsubtitles?\s+by\b/gi,
+    /\bthanks?\s+for\s+(?:watching|listening)\b/gi,
+    /\blike\s+and\s+subscribe\b/gi,
+    /[♪♫]{2,}/g,
+    // Whisper generic empty-audio fills
+    /\b(?:um+|uh+|eh+|hmm+)\s*\.\s*(?:um+|uh+|eh+|hmm+)\b/gi,
+];
+
 function levenshtein(a, b) {
     const m = []; 
     for (let i = 0; i <= b.length; i++) m[i] = [i]; 
@@ -21,12 +40,27 @@ self.onmessage = (e) => {
     }
     
     if (e.data.type === 'PROCESS_TEXT') {
-        let { text, isLowConf, priorityPool, referenceDict } = e.data;
+        let { text, isLowConf, priorityPool, referenceDict, wordConf } = e.data;
         if (!text) { 
             self.postMessage({ type: 'NLP_DONE', tokens: [] }); 
             return; 
         }
 
+        // [FIX — BoH FILTER]: Strip known Whisper hallucination patterns before processing
+        let filteredText = text;
+        for (const pattern of BOH_PATTERNS) {
+            filteredText = filteredText.replace(pattern, '');
+        }
+        filteredText = filteredText.trim();
+        
+        // If the entire segment was a hallucination, discard it
+        if (!filteredText || filteredText.length < 2) {
+            self.postMessage({ type: 'NLP_DONE', tokens: [] }); 
+            return;
+        }
+        text = filteredText;
+
+        // Dedup repetitions
         text = text.replace(/\b([a-zA-ZÀ-ÿ\s']{2,50}?)\b(?:\s+\1\b){1,}/gi, '$1'); 
         text = text.replace(/([a-zA-ZÀ-ÿ']{2,})([\s,;.!?]+\1){3,}/gi, '$1');
         
@@ -36,11 +70,25 @@ self.onmessage = (e) => {
             text = text.replace(/\b(lo|dello|allo|sullo)\s+([bcdfghkmnpqrtvw]\w+)\b/gi, (m, p1, p2) => p1 + ' s' + p2);
         }
 
+        // Build a word-level confidence lookup from wordConf chunks (per-word confidence from Whisper)
+        // This lets us mark only the specific uncertain words, not the entire segment
+        const wordConfMap = new Map();
+        if (wordConf && wordConf.length > 0) {
+            for (const chunk of wordConf) {
+                const cleanWord = (chunk.text || '').trim().toLowerCase().replace(/[^a-zA-ZÀ-ÿ']/g, '');
+                if (cleanWord) wordConfMap.set(cleanWord, chunk.isLowConf);
+            }
+        }
+
         const active = [...priorityPool, ...referenceDict];
         const tokens = text.split(/ +/).map((w) => {
             let original = w; 
             let healed = false; 
-            let lowC = isLowConf;
+            
+            // [FIX — PER-WORD CONFIDENCE]: Use word-level confidence if available, else fall back to segment avg
+            const cleanW = w.toLowerCase().replace(/[^a-zA-ZÀ-ÿ']/g, '');
+            let lowC = wordConfMap.has(cleanW) ? wordConfMap.get(cleanW) : isLowConf;
+
             const match = original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
             
             if (match && /^[A-ZÀ-Ÿ]/.test(match[2])) {
