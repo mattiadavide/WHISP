@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL v4.5 BASE-BOOST</title>
+    <title>WHISP // TERMINAL v4.6 TURBO-OPTIMIZED</title>
     <style>
         :root { --term-bg: #000; --term-main: #fff; --term-dim: #777; --term-err: #f44; --term-ok: #0f0; --term-warn: #ff0; --term-accent: #0af; --term-shield: #a3f; }
         body { background: var(--term-bg); color: var(--term-main); font-family: 'Courier New', Courier, monospace; max-width: 1100px; margin: 10px auto; padding: 20px; text-transform: uppercase; overflow-x: hidden; }
@@ -50,7 +50,7 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > DESIGN BY MATTIA DAVIDE AMICO // v4.5 BASE-BOOST
+ > DESIGN BY MATTIA DAVIDE AMICO // v4.6 TURBO-OPTIMIZED
 </div>
 <div class="header">
     <div class="settings-panel">
@@ -159,7 +159,9 @@
 
                         if (isSpeaking) { 
                             audioChunks.push(chunk); 
-                            if (audioChunks.length % 60 === 0) flush(true); 
+                            // OPTIMIZATION: Flush ogni ~3 secondi per il Turbo, evita ingorghi GPU
+                            const flushInterval = (currentPrecision === 'turbo') ? 100 : 60;
+                            if (audioChunks.length % flushInterval === 0) flush(true); 
                         } else { 
                             preRoll.push(chunk); if (preRoll.length > 25) preRoll.shift(); 
                         }
@@ -208,13 +210,13 @@
                     prompt: initialPrompt
                 };
 
+                // OPTIMIZATION: Zavorra rimossa per il Turbo. Vola in Greedy Decoding.
                 if (currentPrecision !== 'turbo') {
-                    // ANTI-LOOP E BEAM SEARCH PER IL MODELLO BASE/TINY
                     config.return_timestamps = true; 
                     config.condition_on_previous_text = false;
                     config.repetition_penalty = 1.5; 
                     config.no_repeat_ngram_size = 3;
-                    config.num_beams = 4; // Aggiunge 4 percorsi di deduzione logica
+                    config.num_beams = 3; 
                 }
 
                 const res = await transcriber(new Float32Array(item.buffer), config);
@@ -224,7 +226,7 @@
                 } else if (!item.isPartial) {
                     self.postMessage({ type: 'final', text: "", isLowConf: false });
                 }
-            } catch (e) {} // Catch vuoto per tollerare warning asincroni senza bloccarsi
+            } catch (e) {} 
             isBusy = false; process();
         }
 
