@@ -41,9 +41,7 @@ self.onmessage = async (e) => {
         port.onmessage = async (we) => {
             if (we.data.type === 'vad' && vadModel) {
                 const chunk = new Float32Array(we.data.data);
-                let sumSq = 0;
-                for(let i=0; i<chunk.length; i++) sumSq += chunk[i]*chunk[i];
-                const rms = Math.sqrt(sumSq / chunk.length);
+                const rawRms = we.data.rawRms || 0;
 
                 if (isSpeaking) { 
                     audioChunks.push(chunk); 
@@ -79,7 +77,7 @@ self.onmessage = async (e) => {
                     isSpeaking = false; flush(false); state = new Tensor('float32', ZERO_STATE.slice(), [2, 1, 128]);
                 }
 
-                self.postMessage({ type: 'vad_ui_update', prob, isSpeaking, rms });
+                self.postMessage({ type: 'vad_ui_update', prob, isSpeaking, rms: rawRms });
             }
         };
     }

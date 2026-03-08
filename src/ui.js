@@ -68,6 +68,7 @@ export function resetMeters() {
 // per impedire che i messaggi IPC dei WebWorker blocchino il main thread.
 export const renderState = {
     prob: 0,
+    asrProb: 0,
     rms: 0,
     isSpeaking: false,
     needsRender: false
@@ -76,14 +77,14 @@ export const renderState = {
 export function startRenderLoop() {
     function loop() {
         if (renderState.needsRender) {
-            if(UI.probVal) UI.probVal.innerText = renderState.prob.toFixed(2);
+            if(UI.probVal) UI.probVal.innerText = renderState.asrProb.toFixed(2);
             
             // Single Thin Continuous Line Logic (Dynamically Lengthening Dots)
             const maxDots = 25;
             
-            // Reactivity: Combine Neural VAD probability (speech gating) with RMS (physical volume bounce)
+            // Reactivity: Combine Neural VAD probability (speech gating) with true physical RMS bounce (multiplied for visibility)
             // We subtract a small noise floor (-0.1) so background hum drops the meter to exactly zero dots.
-            let rawVol = Math.max(0, Math.min(1, (renderState.prob * 0.8) + (renderState.rms * 0.5) - 0.1)); 
+            let rawVol = Math.max(0, Math.min(1, (renderState.prob * 0.8) + (renderState.rms * 5.0) - 0.1)); 
 
             let dotCount = Math.floor(rawVol * maxDots);
             // "una linea continua sottile in ascii anche puntini che si allunga"

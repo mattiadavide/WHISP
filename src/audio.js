@@ -41,7 +41,7 @@ export class AudioProcessor {
                             const gain = rms > 1e-6 ? (0.2 / rms) : 1.0;
                             const norm = new Float32Array(512);
                             for(let j=0; j<512; j++) norm[j] = Math.max(-1, Math.min(1, (this.buf[j] - mean) * gain));
-                            this.vPort.postMessage({type:'vad', data:norm.buffer}); 
+                            this.vPort.postMessage({type:'vad', data:norm.buffer, rawRms: rms}); 
                             this.ptr = 0;
                         }
                     }

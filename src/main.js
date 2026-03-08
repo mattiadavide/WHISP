@@ -117,12 +117,14 @@ function initWorkers() {
             errDiv.innerText = `[APEX] GPU CONTEXT LOST: ${d.reason || 'unknown'}. RELOAD PAGE TO RECOVER.`;
             UI.output.appendChild(errDiv);
         } else if (d.type === 'final') {
+            if (d.avgConf !== undefined) renderState.asrProb = d.avgConf;
             workerStore.nlp.worker.postMessage({
                 type: 'PROCESS_TEXT', text: d.text, isLowConf: d.isLowConf,
                 wordConf: d.wordConf || null,
                 priorityPool: Array.from(experienceDict), referenceDict: Array.from(referenceDict)
             });
         } else if (d.type === 'partial') {
+            if (d.avgConf !== undefined) renderState.asrProb = d.avgConf;
             // [STREAM]: Word-diff interim streaming — only animate NEW words arriving
             // Compares current word list with previous to find appended words only
             const newWords = d.text.trim().split(/\s+/).filter(Boolean);

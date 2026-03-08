@@ -59,7 +59,8 @@ async function process() {
                 type: item.isPartial ? 'partial' : 'final', 
                 text: res.text, 
                 isLowConf: avgConf < 0.60,
-                wordConf 
+                wordConf,
+                avgConf
             });
         } else if (!item.isPartial) {
             self.postMessage({ type: 'final', text: "", isLowConf: false, wordConf: null });
