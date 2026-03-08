@@ -143,12 +143,15 @@
             } else if (type === 'init_whisper_port') {
                 whisperPort = port; whisperPort.onmessage = (ev) => { if (ev.data.type === 'WHISPER_ONLINE') isWhisperOnline = true; };
             } else if (type === 'force_flush') {
-                if (isSpeaking) { isSpeaking = false; flush(false); state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); }
+                if (isSpeaking || audioChunks.length > 0) { 
+                    isSpeaking = false; 
+                    flush(false); 
+                    state = new Tensor('float32', new Float32Array(ZERO_STATE), [2, 1, 128]); 
+                }
             } else if (type === 'init_worklet_port') {
                 port.onmessage = async (we) => {
                     if (we.data.type === 'vad' && vadModel) {
                         const chunk = new Float32Array(we.data.data);
-                        
                         let sumSq = 0;
                         for(let i=0; i<chunk.length; i++) sumSq += chunk[i]*chunk[i];
                         const rms = Math.sqrt(sumSq / chunk.length);
@@ -242,7 +245,6 @@
                 { rx: /\\b(lo|dello|allo|sullo)\\s+([bcdfghkmnpqrtvw]\\w+)\\b/gi, rep: (m, p1, p2) => p1 + ' s' + p2 }
             ];
             rules.forEach(r => text = text.replace(r.rx, r.rep));
-            
             self.postMessage({ type: 'REFINED', batchId: e.data.batchId, text, isLowConf: e.data.isLowConf });
         };
     `;
@@ -311,7 +313,7 @@
     };
 
     let workerStore = { vad: null, whisper: null, refining: null, healing: null };
-    let audioCtx, stream, isCoreLoaded = false, activeToken = null;
+    let audioCtx, stream, isCoreLoaded = false, isRecording = false, activeToken = null;
     const interimSpan = document.createElement('span'); interimSpan.className = 'interim-text';
 
     function createWorker(code, type = 'module') {
@@ -333,10 +335,7 @@
         workerStore.refining.worker.onmessage = (e) => {
             if (e.data.type === 'REFINED') {
                 const txt = e.data.text.trim();
-                if (!txt) {
-                    interimSpan.innerText = "";
-                    return;
-                }
+                if (!txt) { interimSpan.innerText = ""; return; }
                 const batchId = e.data.batchId;
                 pendingTokens[batchId] = txt.split(/ +/).map((w, i) => ({ id: `${batchId}_${i}`, original: w, isLowConf: e.data.isLowConf, healed: false }));
                 workerStore.healing.worker.postMessage({
@@ -374,15 +373,17 @@
                 UI.progressContainer.style.display = 'block'; UI.progressText.innerText = 'BOOTING: ' + Math.round(d.p || 0) + '%';
                 const b = Math.floor(d.p/5); UI.asciiBar.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
             } else if (d.type === 'READY_TO_PROCESS') { 
-                UI.progressContainer.style.display = 'none'; isCoreLoaded = true; UI.sysPowerBtn.innerText = "SHUTDOWN_SYSTEM()"; UI.sysPowerBtn.style.color = "var(--term-err)"; UI.sysPowerBtn.disabled = false;
-                UI.status.innerText = "ONLINE"; UI.status.style.color = "var(--term-ok)";
+                UI.progressContainer.style.display = 'none'; 
+                isCoreLoaded = true; 
+                isRecording = true;
+                UI.sysPowerBtn.innerText = "STOP_RECORDING()"; 
+                UI.sysPowerBtn.style.color = "var(--term-warn)"; 
+                UI.sysPowerBtn.disabled = false;
+                UI.status.innerText = "ONLINE"; 
+                UI.status.style.color = "var(--term-ok)";
             } else if (d.type === 'final') {
                 const batchId = Date.now().toString();
-                workerStore.refining.worker.postMessage({
-                    batchId,
-                    text: d.text,
-                    isLowConf: d.isLowConf
-                });
+                workerStore.refining.worker.postMessage({ batchId, text: d.text, isLowConf: d.isLowConf });
             } else if (d.type === 'partial') { 
                 interimSpan.innerText = " " + d.text.trim() + "..."; UI.output.scrollTop = UI.output.scrollHeight; 
             }
@@ -394,7 +395,6 @@
                 UI.probVal.innerText = "PROB: " + e.data.prob.toFixed(2);
                 let b = Math.round(e.data.prob * 20); UI.vadAscii.innerText = '[' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
                 UI.vadLed.classList.toggle('active', e.data.isSpeaking);
-                
                 let volLevel = Math.min(20, Math.floor(e.data.rms * 150));
                 UI.volAscii.innerText = '[' + '#'.repeat(volLevel) + '-'.repeat(20 - volLevel) + ']';
             }
@@ -404,16 +404,37 @@
     async function fetchZeitgeist(domain) {
         if (domain === 'custom') return;
         UI.zeitgeistLog.innerText = `> SYNCING_ZEITGEIST...`;
-        const FEEDS = { "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it" };
+        const FEEDS = { 
+            "general": "https://news.google.com/rss?hl=it&gl=IT&ceid=IT:it", 
+            "tech": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it",
+            "finance": "https://news.google.com/rss/headlines/section/topic/BUSINESS?hl=it&gl=IT&ceid=IT:it",
+            "medical": "https://news.google.com/rss/headlines/section/topic/HEALTH?hl=it&gl=IT&ceid=IT:it",
+            "sport": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=it&gl=IT&ceid=IT:it",
+            "art": "https://news.google.com/rss/headlines/section/topic/ENTERTAINMENT?hl=it&gl=IT&ceid=IT:it"
+        };
         try {
-            const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(FEEDS[domain] || FEEDS.general)}&count=50`;
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(FEEDS[domain] || FEEDS.general)}`;
             const resp = await fetch(proxyUrl);
+            if (!resp.ok) throw new Error("Proxy error");
             const data = await resp.json();
-            if (data?.items) {
-                data.items.forEach(i => (i.title + " " + i.description).match(/[a-zA-ZÀ-ÿ]{4,}/g)?.forEach(w => window.referenceDict.add(w.toLowerCase())));
+            
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(data.contents, "text/xml");
+            const items = xmlDoc.querySelectorAll("item");
+            
+            if (items.length > 0) {
+                items.forEach(i => {
+                    const title = i.querySelector("title")?.textContent || "";
+                    const desc = (i.querySelector("description")?.textContent || "").replace(/<[^>]*>?/gm, ''); 
+                    (title + " " + desc).match(/[a-zA-ZÀ-ÿ]{4,}/g)?.forEach(w => window.referenceDict.add(w.toLowerCase()));
+                });
                 UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_OK [TOKENS: ${window.referenceDict.size}]`;
+            } else {
+                throw new Error("No items");
             }
-        } catch (e) { UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: [OFFLINE]`; }
+        } catch (e) { 
+            UI.zeitgeistLog.innerText = `> ZEITGEIST_SYNC_FAIL: USA LOCAL_FILE (.TXT)`; 
+        }
     }
 
     function updateHarvestTable(lemma, type) {
@@ -465,8 +486,26 @@
                 UI.status.innerText = "MIC_ERROR";
                 UI.status.style.color = "var(--term-err)";
             }
+        } else if (isRecording) {
+            if (stream) stream.getTracks().forEach(t => t.stop());
+            if (audioCtx) audioCtx.close();
+            workerStore.vad.worker.postMessage({ type: 'force_flush' });
+            isRecording = false;
+            
+            UI.sysPowerBtn.innerText = "RESUME_RECORDING()";
+            UI.sysPowerBtn.style.color = "var(--term-main)";
+            UI.status.innerText = "PAUSED";
+            UI.status.style.color = "var(--term-dim)";
+            UI.vadLed.classList.remove('active');
+            UI.volAscii.innerText = '[--------------------]';
+            UI.vadAscii.innerText = '[--------------------]';
         } else {
-            location.reload(); 
+            await startListening();
+            isRecording = true;
+            UI.sysPowerBtn.innerText = "STOP_RECORDING()";
+            UI.sysPowerBtn.style.color = "var(--term-warn)";
+            UI.status.innerText = "ONLINE";
+            UI.status.style.color = "var(--term-ok)";
         }
     };
 
