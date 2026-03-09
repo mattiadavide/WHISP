@@ -1,0 +1,17 @@
+# Ignoring Python Virtual Environment and Local Server
+.venv/
+__pycache__/
+server.py
+
+# Ignoring macOS system files
+.DS_Store
+
+# Ignoring IDE and Editor configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Add any other local test files or data you don't want to push here:
+# *.wav
+# *.txt (unless you have specific txt files you want to host like the dictionary)

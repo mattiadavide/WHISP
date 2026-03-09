@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
     <title>WHISP // TERMINAL v1.0</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <div id="app-container">
@@ -15,46 +15,52 @@
     </div>
     
     <header id="top-bar">
-        <div class="settings-panel">
-            <!-- TKN moved to footer -->
-            <div class="grid-cell">
-                <span class="label">MOD</span>
-                <select id="precisionSelect" class="cmd-input">
-                    <option value="turbo" selected>TRB</option>
-                    <option value="base">BAS</option>
-                    <option value="tiny">TNY</option>
-                </select>
-            </div>
-            <div class="grid-cell">
-                <span class="label">LNG</span>
-                <select id="languageSelect"></select>
-            </div>
-            <div class="grid-cell">
-                <span class="label">SRC</span>
-                <select id="audioSource">
-                    <option value="mic">MIC</option>
-                    <option value="system">SYS</option>
-                </select>
-            </div>
-            <div class="grid-cell">
-                <span class="label">RAG</span>
-                <select id="domainSelect">
-                    <option value="global">GLB</option>
-                    <option value="custom">TXT</option>
-                </select>
-            </div>
-            <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
-            <button id="sysPowerBtn" class="power-btn btn-cell" style="font-size: 1.5em; color: var(--term-main); border-color: var(--term-main); background: rgba(255, 176, 0, 0.05);">&#9658;</button>
-        </div>
-        <div class="logo-container" style="display: flex; justify-content: center; align-items: center; width: 384px; flex: 0 0 384px;">
-            <div class="ascii-art" style="text-align: left;">
- ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
- ██║    ██║██║  ██║██║██╔════╝██╔══██╗
- ██║ █╗ ██║███████║██║███████║██████╔╝
- ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
- ╚███╔███╔╝██║  ██║██║███████║██║     
-  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
+        <div class="header-grid">
+            <div class="logo-container">
+                <div class="ascii-art">
+ ··      ··  ··      ··  ··  ··········  ········· 
+ ··      ··  ··      ··  ··  ··          ··      ··
+ ··      ··  ··      ··  ··  ··          ··      ··
+ ··  ··  ··  ··········  ··  ··········  ········· 
+ ··  ··  ··  ··      ··  ··          ··  ··        
+ ··  ··  ··  ··      ··  ··          ··  ··        
+  ········   ··      ··  ··  ··········  ··        
  > MATTIA DAVIDE AMICO
+                </div>
+            </div>
+            
+            <div class="header-spacer"></div>
+
+            <div class="settings-panel">
+                <!-- TKN moved to footer -->
+                <div class="grid-cell">
+                    <span class="label">MOD</span>
+                    <select id="precisionSelect" class="cmd-input">
+                        <option value="turbo" selected>TRB</option>
+                        <option value="base">BAS</option>
+                        <option value="tiny">TNY</option>
+                    </select>
+                </div>
+                <div class="grid-cell">
+                    <span class="label">LNG</span>
+                    <select id="languageSelect"></select>
+                </div>
+                <div class="grid-cell">
+                    <span class="label">SRC</span>
+                    <select id="audioSource">
+                        <option value="mic">MIC</option>
+                        <option value="system">SYS</option>
+                    </select>
+                </div>
+                <div class="grid-cell">
+                    <span class="label">RAG</span>
+                    <select id="domainSelect">
+                        <option value="global">GLB</option>
+                        <option value="custom">TXT</option>
+                    </select>
+                </div>
+                <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
+                <button id="sysPowerBtn" class="power-btn btn-cell">&#9658;</button>
             </div>
         </div>
     </header>

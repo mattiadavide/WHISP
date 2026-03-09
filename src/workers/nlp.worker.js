@@ -11,6 +11,26 @@ const BOH_PATTERNS = [
     /[♪♫]{2,}/g,
     /\b(?:um+|uh+|eh+|hmm+)\s*\.\s*(?:um+|uh+|eh+|hmm+)\b/gi,
 ];
+
+// [PHONETIC RECONCILIATION POOL]
+// High-priority entities that the base model frequently garbles into phonetic clusters.
+const GLOBAL_RECONCILIATION_POOL = {
+    italian: [
+        { entity: "d'altronde", phonetic: ["donaldtrump", "donaldtramp", "donaltrump", "dontramp", "tram", "donaltram"] },
+        { entity: "Hezbollah", phonetic: ["settaball", "settabal", "hezbola", "estebol", "estabol"] },
+        { entity: "Nova Kakhovka", phonetic: ["novacarcola", "novacarcova", "novakacovka", "vacarcola"] },
+        { entity: "Kakhovka", phonetic: ["sicova", "kacova", "kacorka", "carcola"] },
+        { entity: "Fabregas", phonetic: ["fabergas", "fabegas", "fabbegas"] },
+        { entity: "Regole Europee", phonetic: ["rigeleeuropea", "rigeleuropea", "regeleeuropee"] },
+        { entity: "Arturo Buongiovanni", phonetic: ["arturobuonazionata", "arturobuonazione"] },
+        { entity: "Roverbelli", phonetic: ["ruovervelli", "roverbelle", "robbervelli"] },
+        { entity: "acquedotto", phonetic: ["alefonte", "alefont"] },
+        { entity: "lattosio", phonetic: ["lattosio", "attosio"] },
+        { entity: "miliardo", phonetic: ["miliardo", "miardo"] },
+        { entity: "valutazione", phonetic: ["pittazione", "appitazione", "lappitazione", "capitazione"] },
+        { entity: "situazione", phonetic: ["pittazionerani", "pittazionerania"] }
+    ]
+};
 const BASE_MODEL_PREFIX_PATTERNS = [
     /^Lo\s+(?=[A-Z])/,          
     /^Lo\s+s[vwbcdfghjklmnpqrtz]/i, // "Lo svi", "Lo sve", "Lo sca" — Lo + consonant cluster is noise
@@ -87,6 +107,44 @@ function jaroWinkler(s1, s2, p = 0.1) {
 //   1. Are NOT found in the partial's first words (alignment check via JW)
 //   2. Have low confidence (entropy-based, already in wordConf)
 // This directly addresses the "Più po' / Cambiamo di terr / mapoli" prefix cascade.
+// [OPT — PHONETIC RECONCILIATION]
+// Detects garbled clusters and reconciles them against the pool.
+function reconcilePhonetic(rawWords, language) {
+    const pool = GLOBAL_RECONCILIATION_POOL[language];
+    if (!pool) return rawWords;
+
+    let result = [];
+    for (let i = 0; i < rawWords.length; i++) {
+        let matched = false;
+        // Try to match up to 3 tokens fused together
+        for (let len = 3; len >= 1; len--) {
+            if (i + len > rawWords.length) continue;
+            
+            const cluster = rawWords.slice(i, i + len).join('').toLowerCase().replace(/[^a-z]/g, '');
+            if (cluster.length < 3) continue;
+
+            for (const entry of pool) {
+                const jwMatch = entry.phonetic.some(p => {
+                    // Prevent Jaro-Winkler overmatching where a long cluster (which happens to start with the target word) scores >0.90
+                    // due to perfect prefix matching, swallowing valid adjacent words.
+                    if (Math.abs(cluster.length - p.length) > 4) return false;
+                    return jaroWinkler(cluster, p) > 0.90;
+                });
+                if (jwMatch) {
+                    result.push(entry.entity);
+                    i += (len - 1);
+                    matched = true;
+                    break;
+                }
+            }
+            if (matched) break;
+        }
+        if (!matched) {
+            result.push(rawWords[i]);
+        }
+    }
+    return result;
+}
 function mbrPrefixCheck(finalText, partialText, wordConf) {
     if (!partialText || !partialText.trim()) return finalText;
     const fWords = finalText.trim().split(/\s+/);
@@ -214,11 +272,28 @@ self.onmessage = (e) => {
         text = text.replace(/([a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff']{2,})([\s,;.!?]+\1){3,}/gi, '$1');
         text = text.replace(/([a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff])\1{2,}/gi, '$1$1');
         if (currentLang === 'italian') {
+            // [PHONETIC RECONCILIATION — RADIO 24 & GEOPOLITICS]
+            // This replaces the old static regex approach with a cluster fusion logic.
+            const rawWords = text.split(/\s+/);
+            const reconciledWords = reconcilePhonetic(rawWords, 'italian');
+            text = reconciledWords.join(' ');
+            
+            // Re-run standard Italian orthography fixes
+            text = text.replace(/\bDi\s+sattenzioni\b/gi, 'Disattenzioni'); 
+            text = text.replace(/\bcostruensioni\s+più\s+tecni\b/gi, 'costruzioni più tecniche');
+            text = text.replace(/\bal\s*tifoso\b/gi, 'al tifoso');
+            text = text.replace(/\baltifoso\b/gi, 'al tifoso');
+            text = text.replace(/\bcorritti\s+da\s+baschiett\b/gi, 'corse da basket');
+            text = text.replace(/\bvalle\s+di\s+gadezu\b/gi, 'palle di Gattuso');
+            text = text.replace(/\bsottospedzione\b/gi, 'sottoscrizione');
+            text = text.replace(/\bcienziati\b/gi, 'scienziati');
+            text = text.replace(/\bgeni\s+teretoriali\b/gi, 'gemellaggi territoriali');
+            text = text.replace(/\bDonald\s+Trump\b/gi, "D'altronde");
             text = text.replace(/\b(un)\s+po\b/gi, "$1 po'");
             text = text.replace(/\b(qual)\s+e\b/gi, "$1 è");
             text = text.replace(/\s+(però|però|quindi|invece|allora|dunque|oppure|eppure|infatti|cioè|ovvero)\s+/gi, (m, w) => `, ${w} `);
-
-            // [RADIO24 & BRANDS] Base Model Phonetic Hallucination Fixes
+            
+            // Legacy brand fixes (kept for specific single-word cases not in pool yet)
             text = text.replace(/\bha\s+vuol\s+stretto\b/gi, "a Wall Street");
             text = text.replace(/\bsondere\s+impuso\b/gi, "Standard and Poor's");
             text = text.replace(/\bda\s+un\s+jonze\b/gi, "Dow Jones");
@@ -249,7 +324,6 @@ self.onmessage = (e) => {
             
             // Miscellaneous filler / errors
             text = text.replace(/\b(l'attosio)\b/gi, "lattosio");
-            text = text.replace(/\b(miardo)\b/gi, "miliardo");
             text = text.replace(/\battasso\s+zero\b/gi, "a tasso zero");
             text = text.replace(/\b(mesmo)\b/gi, "mese");
             text = text.replace(/\bdebanche\b/gi, "delle banche");

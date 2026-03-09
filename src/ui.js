@@ -101,8 +101,10 @@ export function startRenderLoop(workerStore) {
                 // Fixed char width for equidistant grid (approx 8px)
                 const charWidth = 8.0;
                 
-                // Leave a generous padding margin (40px) so it never touches or pushes the side panels.
-                const availableWidth = UI.kittCenter.parentElement.clientWidth - 40;
+                // On desktop, leave a generous padding margin (40px) so it never touches the side panels.
+                // On mobile (<= 768px), it's full width, so margin is 0 to perfectly match the button edges.
+                const margin = window.innerWidth <= 768 ? 0 : 40;
+                const availableWidth = UI.kittCenter.parentElement.clientWidth - margin;
                 maxCols = Math.max(minCols, Math.floor(availableWidth / charWidth));
             }
             

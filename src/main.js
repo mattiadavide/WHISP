@@ -330,13 +330,15 @@ async function runBootSequence() {
         "MOUNTING WORKER THREADS [OK]",
         "SYNCING LOCAL DICTIONARY [OK]",
         "WAKING NEURAL ENGINE...",
-        " ",
-        "  ██╗    ██╗██╗  ██╗██╗███████╗██████╗ ",
-        "  ██║    ██║██║  ██║██║██╔════╝██╔══██╗",
-        "  ██║ █╗ ██║███████║██║███████╗██████╔╝",
-        "  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ ",
-        "  ╚███╔███╔╝██║  ██║██║███████║██║     ",
-        "   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     ",
+        "..............................",
+        " ··      ··  ··      ··  ··  ··········  ········· ",
+        " ··      ··  ··      ··  ··  ··          ··      ·· ",
+        " ··      ··  ··      ··  ··  ··          ··      ·· ",
+        " ··  ··  ··  ··········  ··  ··········  ········· ",
+        " ··  ··  ··  ··      ··  ··          ··  ··         ",
+        " ··  ··  ··  ··      ··  ··          ··  ··         ",
+        "  ········   ··      ··  ··  ··········  ··         ",
+        "..............................",
         "> MATTIA DAVIDE AMICO",
         " ",
         "SYSTEM ONLINE. AWAITING AUDIO FLOW..."
@@ -346,11 +348,10 @@ async function runBootSequence() {
         div.className = i >= 6 && i <= 12 ? 'sys-log brand' : 'sys-log';
         div.innerText = lines[i];
         
-        // Add the terminal cursor permanently to the last line of the boot text
-        if (i === lines.length - 1) {
+        // Add the terminal cursor permanently to the line containing the name
+        if (i === 12) {
             const cursor = document.createElement('span');
             cursor.className = 'terminal-cursor';
-            cursor.innerText = '▋';
             div.appendChild(cursor);
         }
         
@@ -473,7 +474,7 @@ document.addEventListener('click', (e) => {
 function getWatermarkedTranscript() {
     const text = (transcriptBuffer.join('') + interimSpan.innerText).trim();
     if (!text) return "";
-    const watermark = `\n\n=========================================\n TRANSCRIBED VIA WHISP v1.0\n > DESIGN BY MATTIA DAVIDE AMICO\n=========================================\n`;
+    const watermark = `\n\n.........................................\n TRANSCRIBED VIA WHISP v1.0\n > DESIGN BY MATTIA DAVIDE AMICO\n.........................................\n`;
     return text + watermark;
 }
 UI.clearBtn.onclick = () => { 
