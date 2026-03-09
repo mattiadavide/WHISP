@@ -84,20 +84,21 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 }
 
 .footer-grid {
-    display: flex;
-    justify-content: space-between;
+    display: grid;
+    /* [GOLDEN RATIO COMPOSITION]: 1:1.618:1 Layout */
+    grid-template-columns: 1fr 1.618fr 1fr;
     align-items: center;
-    gap: 30px;
+    gap: 15px;
     height: 100%;
     width: 100%;
 }
 
-/* LEFT: Status Grid (2x2 matching controls) */
+/* LEFT: Status Row */
 .status-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 110px);
-    gap: 10px;
+    display: flex;
+    gap: 8px;
     align-items: center;
+    justify-content: flex-start;
 }
 .cli-btn-static {
     background: rgba(255, 176, 0, 0.03);
@@ -127,31 +128,32 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     align-items: center;
     gap: 15px;
     flex-grow: 1;
-    height: 40px;
+    height: 24px;
 }
 
 
 
 .ascii-kitt {
-    font-family: 'Courier New', Courier, monospace;
-    font-weight: 800;
-    color: var(--term-err); /* KITT Red */
-    letter-spacing: 2px;
+    font-family: Menlo, Monaco, 'Courier New', monospace;
+    font-weight: 400;
+    color: var(--term-main);
+    letter-spacing: 1.5px;
+    line-height: 0.5;
     white-space: pre;
-    transition: all 0.1s ease-out;
-    filter: brightness(var(--kitt-intensity, 0.5)) drop-shadow(0 0 5px rgba(255, 176, 0, var(--kitt-intensity, 0.5)));
-    font-size: 1.4em;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    font-size: 7px;
+    display: block;
+    text-align: center;
+    opacity: var(--vad-opacity, 0.35);
+    transition: opacity 0.08s ease-out;
+    cursor: default;
+    user-select: none;
 }
 
-/* RIGHT: Controls Grid (2x2) */
+/* RIGHT: Controls Row */
 .controls-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 110px);
-    gap: 10px;
-    justify-content: end;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
 }
 
 .cli-btn { padding: 4px 10px; width: auto; font-size: 0.9em; }
@@ -229,7 +231,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 
 
 /* RESPONSIVITY RULES */
-@media screen and (max-width: 950px) {
+@media screen and (max-width: 768px) {
     /* HEADER STACKING */
     #top-bar {
         flex-direction: column;
@@ -244,20 +246,18 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
         gap: 8px;
     }
 
-    /* FOOTER STACKING */
+    /* FOOTER STACKING FOR MOBILE */
     .footer-grid { 
+        display: flex;
         flex-direction: column;
         gap: 20px;
     }
-    .status-grid {
-        justify-content: center;
+    .status-grid, .controls-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
         width: 100%;
         max-width: 400px;
-    }
-    .controls-grid {
-        justify-content: center;
-        width: 100%;
-        max-width: 400px;
+        margin: 0 auto;
     }
     .kitt-meters-container {
         width: 100%;

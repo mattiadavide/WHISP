@@ -23,6 +23,21 @@ function getWorkerUrl(scriptName) {
 function initWorkers() {
     if (workerStore.vad?.worker) return; // Idempotency: abort if already initialized
     
+    // [APEX TUNING]: Compiles the TF-IDF Map and Experience Set into a mathematically optimal, comma-separated Attention Prompt
+    window.buildOptimizedPrompt = function() {
+        // 1. Sort global RSS vocabulary by TF-IDF score and extract top 80 entities
+        const sortedRss = Array.from(referenceDict.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 80)
+            .map(e => e[0]);
+        
+        // 2. Manual Custom TXT words have absolute priority override
+        const manualWords = Array.from(experienceDict);
+        
+        // 3. Whisper prefers lists separated by punctuation to avoid hallucinatory word-fusion
+        return [...manualWords, ...sortedRss].join(', ');
+    };
+    
     workerStore.vad = { worker: new Worker(getWorkerUrl('vad.worker.js'), { type: 'module' }) };
     workerStore.whisper = { worker: new Worker(getWorkerUrl('whisper.worker.js'), { type: 'module' }) };
     workerStore.nlp = { worker: new Worker(getWorkerUrl('nlp.worker.js')) };
@@ -44,7 +59,12 @@ function initWorkers() {
 
     workerStore.nlp.worker.onmessage = (e) => {
         if (e.data.type === 'NLP_DONE') {
-            if (e.data.tokens.length === 0) return;
+            if (e.data.tokens.length === 0) {
+                // If text was entirely hallucinated/filtered, clear the ghost interim preview!
+                interimSpan.innerHTML = '';
+                lastInterimWords = [];
+                return;
+            }
 
             const now = Date.now();
             const silenceGap = lastSegmentTime > 0 ? now - lastSegmentTime : 0;
@@ -118,13 +138,22 @@ function initWorkers() {
             UI.output.appendChild(errDiv);
         } else if (d.type === 'final') {
             if (d.avgConf !== undefined) renderState.asrProb = d.avgConf;
+            if (d.queueLength !== undefined) { renderState.queue = d.queueLength; renderState.needsRender = true; }
             workerStore.nlp.worker.postMessage({
                 type: 'PROCESS_TEXT', text: d.text, isLowConf: d.isLowConf,
                 wordConf: d.wordConf || null,
-                priorityPool: Array.from(experienceDict), referenceDict: Array.from(referenceDict)
+                // [OPT — HEAP CAP]: Send only top-150 Zeitgeist tokens by BM25 score.
+                // Full referenceDict can grow to 1000+ entries → O(N) healing loop per word.
+                // Top-150 covers the most domain-relevant vocabulary with 6.7x less computation.
+                priorityPool: Array.from(experienceDict),
+                referenceDict: Array.from(referenceDict.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 150)
+                    .map(e => e[0])
             });
         } else if (d.type === 'partial') {
             if (d.avgConf !== undefined) renderState.asrProb = d.avgConf;
+            if (d.queueLength !== undefined) { renderState.queue = d.queueLength; renderState.needsRender = true; }
             // [STREAM]: Word-diff interim streaming — only animate NEW words arriving
             // Compares current word list with previous to find appended words only
             const newWords = d.text.trim().split(/\s+/).filter(Boolean);
@@ -172,7 +201,7 @@ function initWorkers() {
 async function runBootSequence() {
     UI.output.innerHTML = "";
     const lines = [
-        "INITIALIZING APEX KERNEL...",
+        "INITIALIZING KERNEL...",
         "ALLOCATING AUDIO BUFFERS [OK]",
         "MOUNTING WORKER THREADS [OK]",
         "SYNCING LOCAL DICTIONARY [OK]",
@@ -184,7 +213,7 @@ async function runBootSequence() {
         "  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ ",
         "  ╚███╔███╔╝██║  ██║██║███████║██║     ",
         "   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     ",
-        "> MATTIA DAVIDE AMICO // APEX ENGINE",
+        "> MATTIA DAVIDE AMICO",
         " ",
         "SYSTEM ONLINE. AWAITING AUDIO FLOW..."
     ];
@@ -218,12 +247,11 @@ UI.sysPowerBtn.onclick = async () => {
             // Run boot animation sequentially FIRST to guarantee 60fps without WASM compilation interrupting
             await runBootSequence();
             
+            UI.zeitgeistLog.innerText = "";
             initWorkers();
             workerStore.whisper.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value, precision: UI.precisionSelect.value });
             workerStore.nlp.worker.postMessage({ type: 'update_params', language: UI.languageSelect.value });
             workerStore.vad.worker.postMessage({ type: 'update_params', precision: UI.precisionSelect.value });
-            
-            UI.zeitgeistLog.innerText = "";
             
             // [OPT 2026]: Non-blocking background dictionary sync. Do not halt the critical boot path.
             loadStopWords(UI.languageSelect.value).then(() => {
@@ -279,12 +307,19 @@ UI.dictFileInput.onchange = (e) => {
     reader.onload = (ev) => { 
         extractValuableTokens(ev.target.result); 
         UI.zeitgeistLog.innerText += `\n> CUSTOM_DICT_LOADED [TOKENS: ${referenceDict.size}]`; 
+        window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size } }));
         if (workerStore.whisper && workerStore.whisper.worker) {
-            workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: Array.from(referenceDict).join(' ') });
+            workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: window.buildOptimizedPrompt() });
         }
     };
     reader.readAsText(file);
 };
+
+window.addEventListener('zeitgeist_sync_done', () => {
+    if (workerStore.whisper && workerStore.whisper.worker) {
+        workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: window.buildOptimizedPrompt() });
+    }
+});
 
 UI.output.addEventListener('click', (e) => {
     if (e.target.classList.contains('word-token')) {
@@ -319,7 +354,7 @@ function getWatermarkedTranscript() {
     // Use in-memory buffer — O(1) instead of O(n) DOM traversal
     const text = (transcriptBuffer.join('') + interimSpan.innerText).trim();
     if (!text) return "";
-    const watermark = `\n\n=========================================\n TRANSCRIBED VIA WHISP APEX ENGINE v5.1\n > DESIGN BY MATTIA DAVIDE AMICO\n=========================================\n`;
+    const watermark = `\n\n=========================================\n TRANSCRIBED VIA WHISP v1.0\n > DESIGN BY MATTIA DAVIDE AMICO\n=========================================\n`;
     return text + watermark;
 }
 
@@ -349,6 +384,20 @@ UI.exportBtn.onclick = () => {
 // Bootstrap
 initLanguages();
 startRenderLoop(workerStore);
+
+// [UX — EARLY ZEITGEIST PRE-LOAD]: Fetch the domain vocabulary immediately on page load
+// so it is ready by the time the user presses the power button and the model finishes loading.
+// This runs silently in the background — errors are caught and do not affect the boot sequence.
+(async () => {
+    try {
+        const lang = UI.languageSelect?.value || 'italian';
+        const domain = UI.domainSelect?.value;
+        await loadStopWords(lang);
+        await fetchZeitgeist(domain);
+    } catch (e) {
+        console.warn('[APEX] Background Zeitgeist pre-load failed silently:', e);
+    }
+})();
 
 // Listen to Zeitgeist dictionary sync completion to inject prompt words
 window.addEventListener('zeitgeist_sync_done', () => {

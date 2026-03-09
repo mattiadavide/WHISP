@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
-    <title>WHISP // TERMINAL v5.1 APEX FULLSCREEN</title>
+    <title>WHISP // TERMINAL v1.0</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -22,16 +22,20 @@
  ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
  ╚███╔███╔╝██║  ██║██║███████║██║     
   ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > MATTIA DAVIDE AMICO // APEX ENGINE
+ > MATTIA DAVIDE AMICO
         </div>
         <div class="settings-panel">
             <div class="grid-cell">
+                <span class="label">TKN</span>
+                <span id="zgtVal" style="font-size: 0.9em; font-weight: bold; color: var(--term-ok); padding: 4px; display: inline-block; min-width: 40px; text-align: center;">0</span>
+            </div>
+            <div class="grid-cell">
                 <span class="label">MOD</span>
-                            <select id="precisionSelect" class="cmd-input">
-                                <option value="turbo" selected>APEX LARGE (TURBO)</option>
-                                <option value="base">APEX LITE (FAST)</option>
-                                <option value="tiny">APEX EDGE (ULTRA-FAST)</option>
-                            </select>
+                <select id="precisionSelect" class="cmd-input">
+                    <option value="turbo" selected>TRB</option>
+                    <option value="base">BAS</option>
+                    <option value="tiny">TNY</option>
+                </select>
             </div>
             <div class="grid-cell">
                 <span class="label">LNG</span>
@@ -45,7 +49,7 @@
                 </select>
             </div>
             <div class="grid-cell">
-                <span class="label">DOM</span>
+                <span class="label">RAG</span>
                 <select id="domainSelect">
                     <option value="global">GLB</option>
                     <option value="custom">TXT</option>
@@ -94,7 +98,7 @@
 
         <!-- CENTER: Specular Outward ASCII Meter -->
         <div class="kitt-meters-container">
-            <span id="kittCenter" class="ascii-kitt">............</span>
+            <span id="kittCenter" class="ascii-kitt"></span>
         </div>
 
         <!-- RIGHT: symmetric 2x2 grid for controls -->

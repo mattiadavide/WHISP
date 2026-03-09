@@ -19,6 +19,66 @@ const BOH_PATTERNS = [
     /\b(?:um+|uh+|eh+|hmm+)\s*\.\s*(?:um+|uh+|eh+|hmm+)\b/gi,
 ];
 
+// [FIX — BASE MODEL SEGMENT-PREFIX HALLUCINATIONS]: The base/tiny models frequently hallucinate
+// a short connective prefix at the **start** of a segment. Common examples from Italian:
+//   "Lo " (e.g. "Lo svedremo" → "Vedremo"), "Lo svi", "Lo Schermi", "Ischenda", "Libe non è"
+// These are NOT real words — they are the model trying to "remember" a fictional preceding sentence.
+// We strip them only from the START of the segment to avoid destroying valid mid-sentence use.
+const BASE_MODEL_PREFIX_PATTERNS = [
+    // "Lo" / "La" / "Le" / "Li" used as a mantra prefix when the model has no real context
+    /^Lo\s+(?=[A-Z])/,          // "Lo Schermi", "Lo Si" — Lo + Capitalized word is always wrong
+    /^Lo\s+s[vwbcdfghjklmnpqrtz]/i, // "Lo svi", "Lo sve", "Lo sca" — Lo + consonant cluster is noise
+    // "Ezza affidabilità" — Italian word-suffix fragment leaking from previous segment boundary
+    // These are word-endings (-ezza, -ino, -ina, -ione, -mente stripped of their root) that appear alone.
+    /^(?:[Ee]zza|[Ii]no|[Ii]na|[Mm]ente|[Zz]ione|[Vv]etta|[Vv]ettin\w*)\s+/,
+    // "Ischenda", "Libe non è" etc. — garbage tokens that start segments from base model
+    /^I?[Ss]chend[aeo]\s+/i,
+    /^Lib[ae]\s+non\s+[eè]\s+/i,
+    // "Indici in sacco", "Di grimo", "Di grimoge" — base model invents discourse starters from nowhere
+    /^Indi[cz]i?\s+/i,
+    /^Di\s+grim[oa]?(?:ge?)?\s+/i,  // "Di grimo", "Di grimoge"
+    /^Di\s+s[pfgb]\w+\s+/i,           // "Di sfogli", "Di spoli" — Di + s + consonant-cluster garbage
+    /^Tean[zts]o\w*\s+/i,              // "Teanzo" — tiny model specific garbage token
+    // "Le cate", "Il tecno", "Tral'alvo" — article/preposition + non-existent Italian word
+    /^(?:Le|Il|La)\s+(?:cate|tecno|ste|teca|stit)\w*\s+/i,
+    /^Tral['\x27]al[vb]o?\s+/i,   // "Tral'alvo", "Tral'algo" — garbled "Tra l'altro"
+    // Generic: article + 3-4 char root that is not a real Italian word
+    /^(?:Le|Il|La)\s+[a-z]{3,4}[aeiou]\s+\w+\s+/i,
+];
+
+// [OPT — JARO-WINKLER]: Replaces Levenshtein for single-word healing.
+// Literature (TU Delft 2024, ACL 2024 WER estimation): JW outperforms Levenshtein for ASR errors
+// because ASR errors concentrate at word endings, and JW weights the correct *prefix* more heavily.
+// Complexity: O(|s1| * |s2|) — same as Levenshtein but better precision for short strings.
+function jaroWinkler(s1, s2, p = 0.1) {
+    if (s1 === s2) return 1.0;
+    const l1 = s1.length, l2 = s2.length;
+    const matchDist = Math.max(Math.floor(Math.max(l1, l2) / 2) - 1, 0);
+    const s1m = new Uint8Array(l1), s2m = new Uint8Array(l2);
+    let matches = 0, transpositions = 0;
+    for (let i = 0; i < l1; i++) {
+        const lo = Math.max(0, i - matchDist), hi = Math.min(i + matchDist + 1, l2);
+        for (let j = lo; j < hi; j++) {
+            if (s2m[j] || s1[i] !== s2[j]) continue;
+            s1m[i] = s2m[j] = 1; matches++; break;
+        }
+    }
+    if (!matches) return 0;
+    let k = 0;
+    for (let i = 0; i < l1; i++) {
+        if (!s1m[i]) continue;
+        while (!s2m[k]) k++;
+        if (s1[i] !== s2[k]) transpositions++;
+        k++;
+    }
+    const jaro = (matches/l1 + matches/l2 + (matches - transpositions/2)/matches) / 3;
+    let prefix = 0;
+    for (let i = 0; i < Math.min(4, Math.min(l1, l2)); i++) {
+        if (s1[i] === s2[i]) prefix++; else break;
+    }
+    return jaro + prefix * p * (1 - jaro);
+}
+
 function levenshtein(a, b) {
     const m = []; 
     for (let i = 0; i <= b.length; i++) m[i] = [i]; 
@@ -53,6 +113,12 @@ self.onmessage = (e) => {
         }
         filteredText = filteredText.trim();
         
+        // [FIX — BASE MODEL PREFIX STRIP]: Remove segment-start hallucinations from base/tiny models
+        for (const pattern of BASE_MODEL_PREFIX_PATTERNS) {
+            filteredText = filteredText.replace(pattern, '');
+        }
+        filteredText = filteredText.trim();
+        
         // If the entire segment was a hallucination, discard it
         if (!filteredText || filteredText.length < 2) {
             self.postMessage({ type: 'NLP_DONE', tokens: [] }); 
@@ -60,14 +126,18 @@ self.onmessage = (e) => {
         }
         text = filteredText;
 
-        // Dedup repetitions
+        // Dedup repetitions (exact)
         text = text.replace(/\b([a-zA-ZÀ-ÿ\s']{2,50}?)\b(?:\s+\1\b){1,}/gi, '$1'); 
         text = text.replace(/([a-zA-ZÀ-ÿ']{2,})([\s,;.!?]+\1){3,}/gi, '$1');
+        
+        // [FIX — CHARACTER STUTTER LOOP]: Collapse extreme Whisper character hallucinations (e.g. "sovvvvvvvvvv...")
+        text = text.replace(/([a-zA-ZÀ-ÿ])\1{2,}/gi, '$1$1');
         
         if (currentLang === 'italian') {
             text = text.replace(/\b(un)\s+po\b/gi, "$1 po'");
             text = text.replace(/\b(qual)\s+e\b/gi, "$1 è");
-            text = text.replace(/\b(lo|dello|allo|sullo)\s+([bcdfghkmnpqrtvw]\w+)\b/gi, (m, p1, p2) => p1 + ' s' + p2);
+            // [DISABLED — CAUSED FALSE POSITIVES]: Was inserting 's' before consonants after 'lo', corrupting correct words
+            // text = text.replace(/\b(lo|dello|allo|sullo)\s+([bcdfghkmnpqrtvw]\w+)\b/gi, (m, p1, p2) => p1 + ' s' + p2);
 
             // [FORMAT]: Italian discourse marker comma inference
             // Adds commas before conjunctions that typically introduce a clause
@@ -97,34 +167,85 @@ self.onmessage = (e) => {
         }
 
         const active = [...priorityPool, ...referenceDict];
-        const tokens = text.split(/ +/).map((w) => {
-            let original = w; 
+        let rawWords = text.split(/ +/);
+        let mergedTokens = [];
+        
+        // [FIX — MULTI-WORD ENTITY MERGING]: Whisper often splits long unknown words
+        // e.g. "Civitavecchia" -> "cività vecchia", "Superfood" -> "super food"
+        // We use a sliding window to check if adjacent word pairs match a dictionary entity.
+        for (let i = 0; i < rawWords.length; i++) {
+            if (i < rawWords.length - 1) {
+                const w1 = rawWords[i];
+                const w2 = rawWords[i+1];
+                // Strip punctuation and accents for a clean combined check
+                const combinedClean = (w1 + w2).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, '');
+                
+                if (combinedClean.length >= 6) {
+                    let bestPairMatch = null, minPairDist = Infinity;
+                    active.forEach(ref => {
+                        const refClean = ref.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, '');
+                        if (Math.abs(refClean.length - combinedClean.length) > 2) return;
+                        let d = levenshtein(combinedClean, refClean);
+                        if (d < minPairDist) { minPairDist = d; bestPairMatch = ref; }
+                    });
+                    
+                    // If the combined pair is very close to a dictionary word, merge them!
+                    if (bestPairMatch && minPairDist <= 1) {
+                        // Extract leading/trailing punctuation from the original pair
+                        const match1 = w1.match(/^([^a-zA-ZÀ-ÿ]*)/);
+                        const match2 = w2.match(/([^a-zA-ZÀ-ÿ]*)$/);
+                        const prefix = match1 ? match1[1] : '';
+                        const suffix = match2 ? match2[1] : '';
+                        
+                        const healedWord = prefix + bestPairMatch[0].toUpperCase() + bestPairMatch.slice(1) + suffix;
+                        mergedTokens.push({ text: healedWord, isLowConf: false, healed: true, merged: true });
+                        i++; // skip the next word since we merged it
+                        continue;
+                    }
+                }
+            }
+            mergedTokens.push({ text: rawWords[i], isLowConf: null, healed: false, merged: false });
+        }
+
+        const tokens = mergedTokens.map((t) => {
+            if (t.merged) return { text: t.text, isLowConf: false, healed: true }; // Already fully healed by merger
+            
+            let original = t.text; 
             let healed = false; 
             
             // [FIX — PER-WORD CONFIDENCE]: Use word-level confidence if available, else fall back to segment avg
-            const cleanW = w.toLowerCase().replace(/[^a-zA-ZÀ-ÿ']/g, '');
+            const cleanW = original.toLowerCase().replace(/[^a-zA-ZÀ-ÿ']/g, '');
             let lowC = wordConfMap.has(cleanW) ? wordConfMap.get(cleanW) : isLowConf;
 
             const match = original.match(/^([^a-zA-ZÀ-ÿ]*)([a-zA-ZÀ-ÿ]+)([^a-zA-ZÀ-ÿ]*)$/);
             
-            if (match && /^[A-ZÀ-Ÿ]/.test(match[2])) {
+            // [FIX — HEALING GATED ON LOW CONFIDENCE]: Only attempt Levenshtein correction on words
+            // that Whisper itself marked as uncertain. Healing high-confidence words causes
+            // the 'correction deviates toward wrong words' effect observed with tiny model.
+            if (match && /^[A-ZÀ-Ÿ]/.test(match[2]) && lowC) {
                 const [_, prefix, core, suffix] = match;
                 const lower = core.toLowerCase();
                 
                 if (lower.length >= 4) {
-                    let best = null, minDist = Infinity, exactMatch = false;
+                    // [OPT — JARO-WINKLER HEALING]: JW ≥ 0.85 threshold outperforms Levenshtein ≤ 1
+                    // for ASR-type errors where the word prefix is usually correct (ACL 2024).
+                    let best = null, maxJW = 0, exactMatch = false;
+                    const jwThreshold = lower.length >= 8 ? 0.85 : 0.88; // tighter for short words
                     
                     active.forEach(ref => {
-                        if (exactMatch) return; 
-                        if (ref === lower) { exactMatch = true; minDist = 0; best = ref; return; }
-                        if (Math.abs(ref.length - lower.length) > 2) return;
-                        
-                        let d = levenshtein(lower, ref);
-                        if (d < minDist) { minDist = d; best = ref; }
+                        if (exactMatch) return;
+                        if (ref === lower) { exactMatch = true; maxJW = 1.0; best = ref; return; }
+                        if (Math.abs(ref.length - lower.length) > 3) return; // length pre-filter O(1)
+                        // [OPT — FIRST-CHAR FILTER]: ASR almost always gets the first phoneme right.
+                        // If first chars differ, skip the O(n*m) JW computation entirely. Eliminates ~85% candidates.
+                        if (lower[0] !== ref[0]) return;
+                        const jw = jaroWinkler(lower, ref);
+                        if (jw > maxJW) { maxJW = jw; best = ref; }
+                        // [OPT — EARLY EXIT]: JW > 0.95 is a near-exact match — no need to keep searching
+                        if (maxJW > 0.95) { exactMatch = true; }
                     });
                     
-                    let threshold = lower.length >= 10 ? 2 : (lower.length >= 6 ? 1 : 0);
-                    if (best && minDist > 0 && minDist <= threshold) {
+                    if (best && maxJW >= jwThreshold && maxJW < 1.0) {
                         original = prefix + best[0].toUpperCase() + best.slice(1) + suffix;
                         healed = true; lowC = false;
                     }

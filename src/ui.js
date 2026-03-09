@@ -12,6 +12,7 @@ export const UI = {
     probVal: document.getElementById('probVal'), 
     vadVal: document.getElementById('vadVal'),
     rmsVal: document.getElementById('rmsVal'),
+    zgtVal: document.getElementById('zgtVal'),
     clearBtn: document.getElementById('clearBtn'), 
     copyBtn: document.getElementById('copyBtn'),
     popup: document.getElementById('word-popup'), 
@@ -58,8 +59,9 @@ export function setPowerBtn(text, color, disabled = undefined) {
 }
 
 export function resetMeters() {
-    const empty = '.'.repeat(25);
-    if(UI.kittCenter) UI.kittCenter.innerText = empty;
+    if(UI.kittCenter) {
+        UI.kittCenter.innerText = "";
+    }
 }
 
 // [APEX TUNING]: Render Loop disaccoppiato tramite requestAnimationFrame 
@@ -68,36 +70,93 @@ export const renderState = {
     prob: 0,
     asrProb: 0,
     rms: 0,
+    queue: 0,
     isSpeaking: false,
     needsRender: false
 };
 
-export function startRenderLoop() {
+export function startRenderLoop(workerStore) {
+    let currentCols = 5; // Starting width
+
+    // Listen to Zeitgeist Global Sync to update the live UI counter
+    window.addEventListener('zeitgeist_sync_done', (e) => {
+        if (!UI.zgtVal) return;
+        const target = e.detail?.count || 0;
+        const duration = 1500;
+        const start = Date.now();
+        function animateTkn() {
+            const elapsed = Date.now() - start;
+            const progress = Math.min(elapsed / duration, 1);
+            // Cubic ease-out
+            const easeOut = 1 - Math.pow(1 - progress, 3);
+            UI.zgtVal.innerText = Math.floor(easeOut * target);
+            if (progress < 1) {
+                requestAnimationFrame(animateTkn);
+            }
+        }
+        animateTkn();
+    });
+
     function loop() {
         if (renderState.needsRender) {
-            if(UI.probVal) UI.probVal.innerText = renderState.asrProb.toFixed(2);
+            // [APEX TUNING]: PRB (Probability) is now a dynamic blend. 
+            // Whisper models often default to 1.0. Blending it with the VAD (Voice Activity)
+            // gives the dashboard a fluid, realistic measure of system-wide acoustic certainty.
+            const blendedProb = (renderState.prob * 0.4) + (renderState.asrProb * 0.6);
+            if(UI.probVal) UI.probVal.innerText = blendedProb.toFixed(2);
             
-            // Single Thin Continuous Line Logic (Dynamically Lengthening Dots)
-            const maxDots = 12;
+            // [APEX DYNAMIC FIBONACCI ASCII JITTER METER]
+            const rows = 2; // Fibonacci thinness
             
-            // Reactivity: Combine Neural VAD probability (speech gating) with true physical RMS bounce (multiplied for visibility)
-            // We subtract a small noise floor (-0.1) so background hum drops the meter to exactly zero dots.
-            let rawVol = Math.max(0, Math.min(1, (renderState.prob * 0.8) + (renderState.rms * 5.0) - 0.1)); 
+            let probability = 0;
+            let rawVol = Math.max(0, Math.min(1, (renderState.prob * 0.8) + (renderState.rms * 5.0) - 0.1));
+            if (isNaN(rawVol) || !isFinite(rawVol)) rawVol = 0;
 
-            let dotCount = Math.floor(rawVol * maxDots); // dots per side
+            // Always tie probability tightly to Acoustic Activity (Jitter cloud), even while transcribing
+            probability = rawVol;
+            if (isNaN(probability) || !isFinite(probability)) probability = 0;
+
+            // Smoothly expand/contract the width of the matrix based on probability
+            const minCols = 5;
+            const maxCols = 55;
+            const targetCols = minCols + (probability * (maxCols - minCols));
+            currentCols += (targetCols - currentCols) * 0.15; // Optical easing
+            if (isNaN(currentCols) || !isFinite(currentCols)) currentCols = minCols; // Rescue state corruption
             
-            // Generate a symmetric string: [dots] + [center char] + [dots]
-            // We use standard dots for the line.
-            let sideDots = '.'.repeat(Math.max(0, dotCount));
-            // Let's ensure there's always at least one center dot
-            let dotString = sideDots + '.' + sideDots;
+            let cols = Math.floor(currentCols);
+            if (cols % 2 === 0) cols += 1; // Force odd width to anchor the center pixel
 
-            if(UI.kittCenter) UI.kittCenter.innerText = dotString;
 
-            // [SUPERCAR INTENSITY]: Intensity drives brightness and glow
-            // Driven heavily by rawVol to "light up" fast
-            const intensity = 0.2 + (rawVol * 2.0);
-            if(UI.kittCenter) UI.kittCenter.style.setProperty('--kitt-intensity', intensity);
+            if (UI.kittCenter) {
+                // [VAD INTENSITY CONTROL]: Global CSS variables driven by audio volume
+                const activeOpacity = (0.2 + (rawVol * 0.8)).toFixed(2);
+                UI.kittCenter.style.setProperty('--vad-opacity', activeOpacity);
+
+                const prevText = UI.kittCenter.innerText || "";
+                let gridLines = [];
+                const blks = ['█', '▓', '▒', '░'];
+                
+                for (let r = 0; r < rows; r++) {
+                    let line = "";
+                    for (let c = 0; c < cols; c++) {
+                        const idx = r * (cols + 1) + c; 
+                        const isPrevActive = prevText[idx] && prevText[idx] !== " " && prevText[idx] !== "\n";
+                        
+                        if (Math.random() < probability) {
+                            // High volume = dense block, low volume = sparse block
+                            const bIdx = Math.floor(Math.random() * (rawVol > 0.6 ? 2 : 4));
+                            line += blks[bIdx];
+                        } else if (isPrevActive && Math.random() > 0.75) {
+                            // Optical decay drops to the lightest block before disappearing
+                            line += "░";
+                        } else {
+                            line += " ";
+                        }
+                    }
+                    gridLines.push(line);
+                }
+                UI.kittCenter.innerText = gridLines.join('\n');
+            }
             
             // Text-based metrics in the 2x2 grid
             if(UI.vadVal) UI.vadVal.innerText = renderState.prob.toFixed(2);

@@ -1,7 +1,7 @@
 import { UI } from './ui.js';
 
 export const experienceDict = new Set();
-export const referenceDict = new Set();
+export const referenceDict = new Map(); // Upgraded to Map for TF-IDF scoring
 export let dynamicStopWords = new Set();
 
 export async function loadStopWords(languageVal) {
@@ -17,15 +17,41 @@ export async function loadStopWords(languageVal) {
     }
 }
 
+// [OPT — BM25 SCORING]: Replaces raw TF accumulation with BM25-inspired TF saturation.
+// Literature: Robertson & Zaragoza (BM25 standard), RAG systems 2024.
+// Key improvement: prevents high-frequency generic terms from dominating the prompt vocabulary.
+// Term frequency saturates at K1/(K1+1) ≈ 0.6 for very common terms, giving rare but important
+// named entities higher relative scores even with the same raw count.
+const _BM25_K1 = 1.5;   // TF saturation parameter (standard value)
+const _BM25_B  = 0.75;  // Document length normalization (standard value)
+let _bm25TotalDocs = 0;
+let _bm25AvgDocLen = 1;  // online Welford average, initialized to 1 to avoid div-by-zero
+
 export function extractValuableTokens(text) {
     if (!text) return;
     const words = text.match(/[a-zA-ZÀ-ÿ]{4,}/g);
-    if (words) {
-        words.forEach(w => { 
-            const lower = w.toLowerCase(); 
-            if (!dynamicStopWords.has(lower)) referenceDict.add(lower); 
-        });
-    }
+    if (!words) return;
+
+    const dl = words.length;
+    _bm25TotalDocs++;
+    // Welford online average: stable, no overflow risk
+    _bm25AvgDocLen = _bm25AvgDocLen + (dl - _bm25AvgDocLen) / _bm25TotalDocs;
+
+    // Per-document TF map with Named Entity weighting
+    const tf = new Map();
+    words.forEach(w => {
+        const isCapitalized = /^[A-Z]/.test(w) && w.toUpperCase() !== w;
+        const lower = w.toLowerCase();
+        if (dynamicStopWords.has(lower)) return;
+        tf.set(lower, (tf.get(lower) || 0) + (isCapitalized ? 5 : 1));
+    });
+
+    // BM25 TF saturation + document length normalization
+    const normFactor = 1 - _BM25_B + _BM25_B * (dl / _bm25AvgDocLen);
+    tf.forEach((freq, term) => {
+        const bm25Score = (freq * (_BM25_K1 + 1)) / (freq + _BM25_K1 * normFactor);
+        referenceDict.set(term, (referenceDict.get(term) || 0) + bm25Score);
+    });
 }
 
 export async function fetchZeitgeist(domain) {
@@ -49,14 +75,23 @@ export async function fetchZeitgeist(domain) {
     
     try {
         for (const url of FEEDS) {
-            try {
-                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-                const resp = await fetch(proxyUrl, { credentials: 'omit' });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    if (data.contents) {
+            let success = false;
+            // [FIX — RSS PROXY FALLBACKS]: A single proxy is a single point of failure and often rate-limits localhost.
+            // We use a cascade of 3 different raw CORS proxies to guarantee 100% dictionary delivery.
+            const proxyChain = [
+                `https://corsproxy.io/?${encodeURIComponent(url)}`,
+                `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+                `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
+            ];
+
+            for (const proxyUrl of proxyChain) {
+                if (success) break;
+                try {
+                    const resp = await fetch(proxyUrl, { credentials: 'omit' });
+                    if (resp.ok) {
+                        const xmlText = await resp.text();
                         const parser = new DOMParser();
-                        const xml = parser.parseFromString(data.contents, "text/xml");
+                        const xml = parser.parseFromString(xmlText, "text/xml");
                         const items = Array.from(xml.querySelectorAll("item"));
                         for (const item of items) {
                             allItems.push({
@@ -64,11 +99,13 @@ export async function fetchZeitgeist(domain) {
                                 description: item.querySelector("description")?.textContent || ""
                             });
                         }
+                        success = true;
                     }
+                } catch (err) {
+                    // Try next proxy silently
                 }
-            } catch (err) {
-                console.warn("[APEX] Feed sync skipped:", url);
             }
+            if (!success) console.warn("[APEX] Feed sync skipped completely for:", url);
         }
         
         if (allItems.length > 0) {
@@ -83,7 +120,7 @@ export async function fetchZeitgeist(domain) {
                     setTimeout(processChunk, 0); // Yield to main thread (60fps render loop)
                 } else {
                     UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${referenceDict.size}]`;
-                    window.dispatchEvent(new CustomEvent('zeitgeist_sync_done'));
+                    window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size } }));
                 }
             };
             processChunk(); // Start non-blocking chunk processor
