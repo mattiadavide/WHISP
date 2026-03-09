@@ -10,6 +10,7 @@ let activeToken = null;
 let transcriptBuffer = [];
 let lastSegmentTime = 0;
 let lastInterimWords = []; 
+let _tokenIdCounter = 0; // unique ID for each rendered word-token span
 
 // [CLOSED-LOOP PROMPT RE-SYNC]
 // Debounced scheduler: after new low-conf tokens are boosted into referenceDict,
@@ -24,6 +25,29 @@ function schedulePromptReSync(debounceMs = 8000) {
             const newPrompt = window.buildOptimizedPrompt();
             workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: newPrompt });
         }
+        // [RETROACTIVE HEALING]: alongside the prompt re-sync, collect all
+        // low-conf tokens still in the DOM and ask NLP to re-heal them
+        // with the now-richer referenceDict.
+        if (workerStore.nlp?.worker) {
+            const lowConfSpans = Array.from(UI.output.querySelectorAll('.word-token.low-conf'));
+            if (lowConfSpans.length > 0) {
+                const tokens = lowConfSpans.map(s => ({
+                    id: s.dataset.tokenId,
+                    word: s.innerText.trim()
+                })).filter(t => t.id && t.word.length > 2);
+                if (tokens.length > 0) {
+                    workerStore.nlp.worker.postMessage({
+                        type: 'REHEAL_TOKENS',
+                        tokens,
+                        priorityPool: Array.from(experienceDict),
+                        referenceDict: Array.from(referenceDict.entries())
+                            .sort((a, b) => b[1] - a[1])
+                            .slice(0, 200)
+                            .map(e => e[0])
+                    });
+                }
+            }
+        }
     }, debounceMs);
 }
 function getWorkerUrl(scriptName) {
@@ -35,12 +59,41 @@ function getWorkerUrl(scriptName) {
 function initWorkers() {
     if (workerStore.vad?.worker) return; 
     window.buildOptimizedPrompt = function() {
-        const sortedRss = Array.from(referenceDict.entries())
+        const BUDGET = 90; // ~224 Whisper tokens - anti-halluc instruction - tail
+        
+        // Tier 1: manually validated words — gold standard, always first
+        const manual = Array.from(experienceDict);
+        const seen = new Set(manual.map(w => w.toLowerCase()));
+        
+        // Tier 2: recently boosted low-conf words (score >= 12 means boosted at least once)
+        // These are the model's current "pain points" for this session/source
+        const boosted = Array.from(referenceDict.entries())
+            .filter(([w, s]) => s >= 12 && w.length >= 5 && !seen.has(w))
             .sort((a, b) => b[1] - a[1])
-            .slice(0, 80)
-            .map(e => e[0]);
-        const manualWords = Array.from(experienceDict);
-        return [...manualWords, ...sortedRss].join(', ');
+            .map(([w]) => { seen.add(w); return w; });
+        
+        // Tier 3: discriminative fill from BM25 referenceDict
+        // Rules: min 5 chars (short words = high ambiguity, low utility)
+        //        4-char prefix dedup (skip "balistica" if "balistico" already in list)
+        //        prefer capitalized words (proper nouns = rarer, higher ASR risk)
+        const seenPrefixes = new Set([...manual, ...boosted].map(w => w.slice(0, 4).toLowerCase()));
+        const fill = Array.from(referenceDict.entries())
+            .filter(([w]) => w.length >= 5 && !seen.has(w))
+            .sort((a, b) => {
+                // Boost capitalized words (proper nouns) in the sort 
+                const aIsProper = /^[A-Z\u00c0-\u00d6\u00d8-\u00de]/.test(a[0]) ? 1.5 : 1;
+                const bIsProper = /^[A-Z\u00c0-\u00c6\u00d8-\u00de]/.test(b[0]) ? 1.5 : 1;
+                return (b[1] * bIsProper) - (a[1] * aIsProper);
+            })
+            .filter(([w]) => {
+                const prefix = w.slice(0, 4).toLowerCase();
+                if (seenPrefixes.has(prefix)) return false;
+                seenPrefixes.add(prefix);
+                return true;
+            })
+            .map(([w]) => w);
+        
+        return [...manual, ...boosted, ...fill].slice(0, BUDGET).join(', ');
     };
     workerStore.vad = { worker: new Worker(getWorkerUrl('vad.worker.js'), { type: 'module' }) };
     workerStore.whisper = { worker: new Worker(getWorkerUrl('whisper.worker.js'), { type: 'module' }) };
@@ -86,6 +139,7 @@ function initWorkers() {
                 s.className = 'word-token' + (t.isLowConf ? ' low-conf' : '') + (t.healed ? ' validated' : '');
                 s.innerText = ' ' + t.text;
                 s.style.animationDelay = `${i * STREAM_DELAY_MS}ms`;
+                s.dataset.tokenId = String(++_tokenIdCounter); // unique ID for retroactive healing
                 frag.appendChild(s);
                 transcriptBuffer.push(' ' + t.text);
             });
@@ -93,6 +147,19 @@ function initWorkers() {
             interimSpan.innerHTML = ''; 
             UI.output.appendChild(interimSpan);
             UI.output.scrollTop = UI.output.scrollHeight;
+        }
+        if (e.data.type === 'REHEAL_DONE') {
+            // [RETROACTIVE HEALING]: update DOM spans that were successfully corrected
+            for (const { id, corrected } of e.data.healed) {
+                const span = UI.output.querySelector(`[data-token-id="${id}"]`);
+                if (span && span.classList.contains('low-conf')) {
+                    span.innerText = ' ' + corrected;
+                    span.classList.remove('low-conf');
+                    span.classList.add('validated', 'heal-flash');
+                    // Update transcriptBuffer too (find and replace by position is hard,
+                    // so we keep buffer as-is — COPY/EXPORT uses DOM text directly)
+                }
+            }
         }
     };
 // Reusable handler for all worker progress events (Whisper, VAD, NLP)
@@ -146,21 +213,12 @@ function handleProgressEvent(d) {
             }
             isCoreLoaded = true; 
             
-            // Force the button to turn red (Stop) if we are actively recording, 
-            // otherwise set it to green (Ready)
             if (audioProcessor.isRecording) {
                 setPowerBtn("■", "var(--term-warn)", false);
             } else {
                 setPowerBtn("▶", "var(--term-main)", false);
             }
             setStatus("READY", "var(--term-ok)");
-            UI.output.appendChild(interimSpan);
-            if (!document.getElementById('termCursor')) {
-                const cursor = document.createElement('span');
-                cursor.className = 'terminal-cursor';
-                cursor.id = 'termCursor';
-                UI.output.appendChild(cursor);
-            }
         } else if (d.type === 'GPU_LOST') {
             setStatus('GPU_FAULT', 'var(--term-err)');
             setPowerBtn('▶', undefined, false);
@@ -174,6 +232,15 @@ function handleProgressEvent(d) {
         } else if (d.type === 'final') {
             if (d.avgConf !== undefined) renderState.asrProb = d.avgConf;
             if (d.queueLength !== undefined) { renderState.queue = d.queueLength; renderState.needsRender = true; }
+
+            // [SELF-LEARNING LOOP]: Feed the transcribed text back into Zeitgeist.
+            // High-confidence words accumulate BM25 score naturally — so the vocabulary
+            // that keeps appearing in this broadcast rises to the top of the prompt,
+            // making the model progressively better at this specific audio source
+            // without any manual domain selection.
+            if (d.text && d.text.trim().length > 2) {
+                extractValuableTokens(d.text);
+            }
 
             // [CLOSED-LOOP FEEDBACK]: Boost low-confidence tokens back into Zeitgeist.
             // Whisper's per-chunk confidence (wordConf) tells us exactly which words
@@ -201,6 +268,18 @@ function handleProgressEvent(d) {
                     .slice(0, 150)
                     .map(e => e[0])
             });
+        } else if (d.type === 'transcribing') {
+            // [BASE MODEL UX] — Show animated placeholder when inference is in progress
+            // and no real partial text is available yet. Only update if not already showing.
+            if (!interimSpan.querySelector('.transcribing-indicator')) {
+                interimSpan.innerHTML = '';
+                lastInterimWords = [];
+                const ind = document.createElement('span');
+                ind.className = 'transcribing-indicator interim-text';
+                ind.innerText = ' ⠿ analisi in corso...';
+                interimSpan.appendChild(ind);
+                UI.output.scrollTop = UI.output.scrollHeight;
+            }
         } else if (d.type === 'partial') {
             if (d.avgConf !== undefined) renderState.asrProb = d.avgConf;
             if (d.queueLength !== undefined) { renderState.queue = d.queueLength; renderState.needsRender = true; }
@@ -266,6 +345,15 @@ async function runBootSequence() {
         const div = document.createElement('div');
         div.className = i >= 6 && i <= 12 ? 'sys-log brand' : 'sys-log';
         div.innerText = lines[i];
+        
+        // Add the terminal cursor permanently to the last line of the boot text
+        if (i === lines.length - 1) {
+            const cursor = document.createElement('span');
+            cursor.className = 'terminal-cursor';
+            cursor.innerText = '▋';
+            div.appendChild(cursor);
+        }
+        
         UI.output.appendChild(div);
         UI.output.scrollTop = UI.output.scrollHeight;
         await new Promise(r => setTimeout(r, i >= 6 && i <= 11 ? 30 : 150));
@@ -326,11 +414,6 @@ UI.sysPowerBtn.onclick = async () => {
     } else {
         await audioProcessor.init(UI.audioSource.value, workerStore.vad.worker);
         setPowerBtn("■", "var(--term-warn)");
-        setStatus("ONLINE", "var(--term-ok)");
-        UI.output.appendChild(interimSpan);
-        if (!document.getElementById('termCursor')) {
-             const cursor = document.createElement('span'); cursor.className = 'terminal-cursor'; cursor.id = 'termCursor'; UI.output.appendChild(cursor);
-        }
     }
 };
 UI.languageSelect.onchange = (e) => {
@@ -399,7 +482,6 @@ UI.clearBtn.onclick = () => {
     logs.forEach(l => UI.output.appendChild(l));
     UI.output.appendChild(interimSpan); 
     transcriptBuffer = []; 
-    const cursor = document.createElement('span'); cursor.className = 'terminal-cursor'; UI.output.appendChild(cursor);
 };
 UI.copyBtn.onclick = () => {
     const txt = getWatermarkedTranscript();

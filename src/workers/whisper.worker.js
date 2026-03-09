@@ -193,6 +193,12 @@ self.onmessage = async (e) => {
             if (ev.data.type === 'transcribe') { 
                 queue = queue.filter(item => !item.isPartial);
                 queue.push({buffer: ev.data.audioBuffer, isPartial: ev.data.isPartial}); 
+                // [BASE MODEL UX] — If a partial arrives while we're busy transcribing,
+                // post a lightweight 'transcribing' signal so the UI can show an
+                // animated indicator instead of a blank interim span.
+                if (isBusy && ev.data.isPartial) {
+                    self.postMessage({ type: 'transcribing' });
+                }
                 process(); 
             } 
         };

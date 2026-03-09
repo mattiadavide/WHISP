@@ -15,20 +15,8 @@
     </div>
     
     <header id="top-bar">
-        <div class="ascii-art">
- ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
- ██║    ██║██║  ██║██║██╔════╝██╔══██╗
- ██║ █╗ ██║███████║██║███████║██████╔╝
- ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
- ╚███╔███╔╝██║  ██║██║███████║██║     
-  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
- > MATTIA DAVIDE AMICO
-        </div>
         <div class="settings-panel">
-            <div class="grid-cell">
-                <span class="label">TKN</span>
-                <span id="zgtVal" style="font-size: 0.9em; font-weight: bold; color: var(--term-ok); padding: 4px; display: inline-block; min-width: 40px; text-align: center;">0</span>
-            </div>
+            <!-- TKN moved to footer -->
             <div class="grid-cell">
                 <span class="label">MOD</span>
                 <select id="precisionSelect" class="cmd-input">
@@ -58,6 +46,17 @@
             <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
             <button id="sysPowerBtn" class="power-btn btn-cell" style="font-size: 1.5em; color: var(--term-main); border-color: var(--term-main); background: rgba(255, 176, 0, 0.05);">&#9658;</button>
         </div>
+        <div class="logo-container" style="display: flex; justify-content: center; align-items: center; width: 384px; flex: 0 0 384px;">
+            <div class="ascii-art" style="text-align: left;">
+ ██╗    ██╗██╗  ██╗██╗███████╗██████╗ 
+ ██║    ██║██║  ██║██║██╔════╝██╔══██╗
+ ██║ █╗ ██║███████║██║███████║██████╔╝
+ ██║███╗██║██╔══██║██║╚════██║██╔═══╝ 
+ ╚███╔███╔╝██║  ██║██║███████║██║     
+  ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝     
+ > MATTIA DAVIDE AMICO
+            </div>
+        </div>
     </header>
 
 
@@ -82,8 +81,8 @@
     <div class="footer-grid">
         
         <div class="status-grid">
-            <div class="status-item cli-btn-static">
-                <span class="label">PRB</span> <span id="probVal">0.00</span>
+            <div class="status-item cli-btn-static" title="Zeitgeist Tokens">
+                <span class="label">TKN</span> <span id="zgtVal" style="color: var(--term-ok); font-weight: bold;">0</span>
             </div>
             <div class="status-item cli-btn-static">
                 <span id="sysStatus">IDLE</span>

@@ -51,16 +51,16 @@ body {
 
 .ascii-art { white-space: pre; font-size: clamp(5px, 0.8vw, 8px); line-height: 1.1; font-weight: bold; color: var(--term-main); flex-shrink: 0; }
 
-.settings-panel { display: flex; align-items: center; justify-content: flex-end; gap: 4px; flex-wrap: nowrap; flex-grow: 1; }
+.settings-panel { display: flex; align-items: stretch; justify-content: space-between; gap: 6px; flex-wrap: nowrap; flex: 0 0 384px; width: 384px; }
 .ascii-sep { display: none; }
 
-.grid-cell { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 58px; height: 48px; padding: 0 5px; border: 1px solid rgba(153, 98, 0, 0.4); background: rgba(255, 176, 0, 0.05); border-radius: 3px; transition: all 0.2s ease; flex-shrink: 0; }
+.grid-cell { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; height: 48px; padding: 0 5px; border: 1px solid rgba(153, 98, 0, 0.4); background: rgba(255, 176, 0, 0.05); border-radius: 3px; transition: all 0.2s ease; }
 .grid-cell:hover { border-color: var(--term-main); background: rgba(255, 176, 0, 0.1); }
 .grid-cell .label { font-size: 0.65em; color: var(--term-dim); font-weight: bold; letter-spacing: 1.5px; margin-bottom: 2px; flex-shrink: 0; }
 .grid-cell select { background: transparent; color: var(--term-main); border: none; font-size: 0.9em; font-family: inherit; font-weight: bold; cursor: pointer; appearance: none; -moz-appearance: none; -webkit-appearance: none; text-align: center; outline: none; padding: 0; width: 100%; box-shadow: none; background-image: none; letter-spacing: 1px; }
 .grid-cell select:focus { border: none; box-shadow: none; color: var(--term-accent); }
 
-.btn-cell { width: auto; min-width: 65px; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; line-height: 1.2; text-align: center; font-size: 0.8em; padding: 0 10px; border: 1px solid var(--term-err); background: rgba(255, 51, 51, 0.05); color: var(--term-err); font-weight: bold; font-family: inherit; cursor: pointer; border-radius: 3px; text-transform: uppercase; transition: all 0.2s ease;}
+.btn-cell { flex: 1; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2; text-align: center; font-size: 0.8em; padding: 0 10px; border: 1px solid var(--term-err); background: rgba(255, 51, 51, 0.05); color: var(--term-err); font-weight: bold; font-family: inherit; cursor: pointer; border-radius: 3px; text-transform: uppercase; transition: all 0.2s ease;}
 .btn-cell:hover { background: var(--term-err); color: var(--term-bg); }
 
 
@@ -85,8 +85,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 
 .footer-grid {
     display: grid;
-    
-    grid-template-columns: 1fr 1.618fr 1fr;
+    grid-template-columns: 384px minmax(0, 1fr) 384px;
     align-items: center;
     gap: 15px;
     height: 100%;
@@ -98,22 +97,28 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     display: flex;
     gap: 8px;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: space-between;
+    width: 384px;
 }
 .cli-btn-static {
     background: rgba(255, 176, 0, 0.03);
     border: 1px solid rgba(255, 176, 0, 0.2);
     color: var(--term-main);
-    padding: 6px 10px;
-    font-size: 0.8em;
+    padding: 0 5px;
+    height: 48px;
+    width: 78px;
+    box-sizing: border-box;
+    font-size: 0.75em;
     font-family: inherit;
     text-align: center;
     cursor: default;
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
+    justify-content: center;
     align-items: center;
     border-radius: 2px;
 }
+#sysStatus { font-size: 0.8em; letter-spacing: 0px; word-break: break-all; line-height: 1; }
 .cli-btn-static .label {
     color: var(--term-dim);
     font-size: 0.75em;
@@ -126,9 +131,11 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 15px;
-    flex-grow: 1;
-    height: 24px;
+    padding: 0 15px;
+    width: 100%;
+    max-width: 100%;
+    height: 48px;
+    overflow: hidden;
 }
 
 
@@ -137,8 +144,8 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     font-family: Menlo, Monaco, 'Courier New', monospace;
     font-weight: 400;
     color: var(--term-main);
-    letter-spacing: 1.5px;
-    line-height: 0.5;
+    letter-spacing: 5px;
+    line-height: 1.5;
     white-space: pre;
     font-size: 7px;
     display: block;
@@ -153,10 +160,11 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 .controls-grid {
     display: flex;
     gap: 8px;
-    justify-content: flex-end;
+    justify-content: space-between;
+    width: 384px;
 }
 
-.cli-btn { padding: 4px 10px; width: auto; font-size: 0.9em; }
+.cli-btn { padding: 0 5px; width: 78px; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 0.85em; box-sizing: border-box; margin: 0; line-height: 1.1; font-weight: bold; }
 .cli-btn.alt-btn { color: var(--term-err); border-color: rgba(255, 51, 51, 0.5); }
 .cli-btn.alt-btn:hover { background: rgba(255, 51, 51, 0.15); border-color: var(--term-err); color: var(--term-err); }
 
@@ -181,6 +189,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     scroll-behavior: smooth; outline: none; white-space: pre-wrap; 
     font-size: 1.1em;
     text-shadow: 0 0 2px rgba(255, 176, 0, 0.4);
+    caret-color: transparent; /* hide native browser caret — we use our own ▋ */
 }
 
 
@@ -223,49 +232,78 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 
 
 .interim-text { color: var(--term-dim); font-style: italic; animation: lowConfPulse 1.4s ease-in-out infinite; }
+.transcribing-indicator { color: var(--term-accent); font-style: italic; letter-spacing: 1px; animation: lowConfPulse 0.7s ease-in-out infinite; }
 
 .sys-log { color: var(--term-dim); font-size: 0.9em; margin-bottom: 2px; font-family: 'Space Mono', monospace; }
 .sys-log.brand { color: var(--term-main); font-weight: bold; white-space: pre; margin-top: 5px; margin-bottom: 5px; font-size: 0.7em; line-height: 1.1; }
-.terminal-cursor { display: inline-block; width: 0.6em; height: 1.1em; background-color: var(--term-main); vertical-align: text-bottom; animation: blink 1s step-end infinite; margin-left: 4px; }
+.terminal-cursor { display: inline; color: var(--term-main); animation: blink 1s step-end infinite; margin-left: 2px; font-style: normal; }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes healFlash { 0% { color: var(--term-ok); text-shadow: 0 0 8px var(--term-ok); } 100% { color: inherit; text-shadow: none; } }
+.heal-flash { animation: wordStreamIn 0.2s ease-out both, healFlash 1.2s ease-out forwards; }
 
 
 
 @media screen and (max-width: 768px) {
     
     #top-bar {
-        flex-direction: column;
         align-items: center;
-        text-align: center;
-        gap: 15px;
+        gap: 10px;
         padding-top: 10px;
+        flex-direction: row;
+        justify-content: space-between;
     }
     .settings-panel {
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 8px;
+        flex: 1;
+        width: auto;
+        gap: 4px;
+        flex-wrap: nowrap;
+        justify-content: flex-start;
+    }
+    .grid-cell, .btn-cell {
+        flex: 1;
+        min-width: 35px; /* Squeeze tightly to fit 5 buttons side-by-side */
+        height: 40px; 
+        padding: 0 2px;
+    }
+    .grid-cell .label { font-size: 0.55em; letter-spacing: 0.5px; }
+    .btn-cell { font-size: 0.7em; }
+    
+    .logo-container {
+        flex: 0 0 auto;
+        width: auto;
+        margin: 0;
+        justify-content: flex-end;
+    }
+    .ascii-art {
+        text-align: right !important;
+        margin: 0;
+        font-size: clamp(2.5px, 0.6vw, 4px); /* Very small to act as a side-badge on mobile */
     }
 
     
     .footer-grid { 
         display: flex;
         flex-direction: column;
-        gap: 20px;
+        gap: 10px;
+        width: 100%;
     }
     .status-grid, .controls-grid {
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(4, 1fr); /* 4 buttons in a clean horizontal strip */
+        gap: 6px;
         width: 100%;
-        max-width: 400px;
-        margin: 0 auto;
+        margin: 0;
     }
     .kitt-meters-container {
         width: 100%;
-        transform: scale(0.9);
+        height: 38px;
+        padding: 0;
+        transform: none; /* remove distortion */
     }
-    .cli-btn { 
+    .cli-btn, .cli-btn-static { 
         width: 100%; 
-        height: 44px; 
+        height: 44px; /* match top bar height for consistency */
+        padding: 0;
     }
 }
 

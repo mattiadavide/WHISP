@@ -3,14 +3,37 @@ export const experienceDict = new Set();
 export const referenceDict = new Map(); 
 export let dynamicStopWords = new Set();
 
+// [IDF FILTERING] — Words that appear in many documents across all contexts
+// are common/structural words with no discriminative power for Whisper priming.
+// These are separated into commonPool and excluded from the top-N prompt.
+// Threshold: words appearing in >30% of all scraped articles go to commonPool.
+export const commonPool = new Set();
+const _IDF_DOC_THRESHOLD = 0.30;  
+const docFrequency = new Map(); // term → number of documents it appeared in
+
+export function filterCommonTokens() {
+    if (_bm25TotalDocs < 5) return; // not enough docs yet to compute reliable IDF
+    const movedToCommon = [];
+    referenceDict.forEach((score, term) => {
+        const df = docFrequency.get(term) || 0;
+        const dfRatio = df / _bm25TotalDocs;
+        if (dfRatio > _IDF_DOC_THRESHOLD) {
+            commonPool.add(term);
+            referenceDict.delete(term);
+            movedToCommon.push(term);
+        }
+    });
+    if (movedToCommon.length > 0) {
+        UI.zeitgeistLog.innerText += `\n> COMMON_POOL [${movedToCommon.length} TERMS FILTERED — ${referenceDict.size} DISCRIMINATIVE REMAIN]`;
+    }
+}
+
 // [CLOSED-LOOP FEEDBACK] — Boost a token that Whisper emitted with low confidence.
-// By elevating its score in referenceDict, it rises in the top-N sort used to build
-// the Whisper prompt on the next re-sync, priming the Cross-Attention layer to 
-// recognise it correctly in subsequent audio segments.
+// Respects commonPool: boosting a structurally-common word is wasteful.
 export function boostToken(word, weight = 12) {
     if (!word || word.length < 3) return;
     const lower = word.toLowerCase().replace(/[^a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]/g, '');
-    if (!lower || dynamicStopWords.has(lower)) return;
+    if (!lower || dynamicStopWords.has(lower) || commonPool.has(lower)) return;
     referenceDict.set(lower, (referenceDict.get(lower) || 0) + weight);
 }
 export async function loadStopWords(languageVal) {
@@ -37,14 +60,21 @@ export function extractValuableTokens(text) {
     _bm25TotalDocs++;
     _bm25AvgDocLen = _bm25AvgDocLen + (dl - _bm25AvgDocLen) / _bm25TotalDocs;
     const tf = new Map();
+    // Track unique terms per document for IDF computation
+    const seenInThisDoc = new Set();
     words.forEach(w => {
         const isCapitalized = /^[A-Z]/.test(w) && w.toUpperCase() !== w;
         const lower = w.toLowerCase();
         if (dynamicStopWords.has(lower)) return;
         tf.set(lower, (tf.get(lower) || 0) + (isCapitalized ? 8 : 1));
+        if (!seenInThisDoc.has(lower)) {
+            seenInThisDoc.add(lower);
+            docFrequency.set(lower, (docFrequency.get(lower) || 0) + 1);
+        }
     });
     const normFactor = 1 - _BM25_B + _BM25_B * (dl / _bm25AvgDocLen);
     tf.forEach((freq, term) => {
+        if (commonPool.has(term)) return; // already classified as common, skip
         const bm25Score = (freq * (_BM25_K1 + 1)) / (freq + _BM25_K1 * normFactor);
         referenceDict.set(term, (referenceDict.get(term) || 0) + bm25Score);
     });
@@ -126,9 +156,13 @@ export async function fetchZeitgeist(domain, languageVal = 'italian') {
                 window.dispatchEvent(new CustomEvent('zeitgeist_progress', { detail: { p: progress, status: 'SYNCING' } }));
 
                 if (i < allItems.length) {
-                    setTimeout(processChunk, 15); // Slightly more delay to keep UI smooth during heavy parsing
+                    setTimeout(processChunk, 15);
                 } else {
-                    UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${referenceDict.size}]`;
+                    // [IDF FILTER]: Run after all articles are parsed.
+                    // Moves tokens that appear in >30% of documents to commonPool,
+                    // leaving only discriminative domain vocabulary in referenceDict.
+                    filterCommonTokens();
+                    UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${referenceDict.size} DISCRIMINATIVE / ${commonPool.size} COMMON]`;
                     window.dispatchEvent(new CustomEvent('zeitgeist_progress', { detail: { p: 100, status: 'DONE' } }));
                     window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size } }));
                 }

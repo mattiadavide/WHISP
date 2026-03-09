@@ -148,6 +148,40 @@ self.onmessage = (e) => {
         }
         return;
     }
+    // [RETROACTIVE HEALING] — Re-run JW healing on low-conf DOM tokens using the
+    // current (grown) referenceDict. Called from main.js on each prompt re-sync.
+    // Returns only healed tokens to minimize DOM updates.
+    if (e.data.type === 'REHEAL_TOKENS') {
+        const { tokens, priorityPool, referenceDict: refDict } = e.data;
+        if (!tokens || tokens.length === 0) return;
+        const active = [...priorityPool, ...refDict];
+        const healed = [];
+        for (const { id, word } of tokens) {
+            const match = word.match(/^([^a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]*)([a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]+)([^a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]*)$/);
+            if (!match) continue;
+            const [_, prefix, core, suffix] = match;
+            const lower = core.toLowerCase();
+            if (lower.length < 4) continue;
+            let best = null, maxJW = 0;
+            const jwThreshold = lower.length >= 8 ? 0.85 : 0.88;
+            for (const ref of active) {
+                if (ref === lower) { best = ref; maxJW = 1.0; break; }
+                if (Math.abs(ref.length - lower.length) > 3) continue;
+                if (lower[0] !== ref[0]) continue;
+                const jw = jaroWinkler(lower, ref);
+                if (jw > maxJW) { maxJW = jw; best = ref; }
+                if (maxJW > 0.95) break;
+            }
+            if (best && maxJW >= jwThreshold && maxJW < 1.0) {
+                const corrected = prefix + best[0].toUpperCase() + best.slice(1) + suffix;
+                healed.push({ id, corrected });
+            }
+        }
+        if (healed.length > 0) {
+            self.postMessage({ type: 'REHEAL_DONE', healed });
+        }
+        return;
+    }
     if (e.data.type === 'PROCESS_TEXT') {
         let { text, isLowConf, priorityPool, referenceDict, wordConf } = e.data;
         if (!text) { 

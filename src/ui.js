@@ -87,37 +87,52 @@ export function startRenderLoop(workerStore) {
         if (renderState.needsRender) {
             const blendedProb = (renderState.prob * 0.4) + (renderState.asrProb * 0.6);
             if(UI.probVal) UI.probVal.innerText = blendedProb.toFixed(2);
-            const rows = 2; 
-            let probability = 0;
-            let rawVol = Math.max(0, Math.min(1, (renderState.prob * 0.8) + (renderState.rms * 5.0) - 0.1));
-            if (isNaN(rawVol) || !isFinite(rawVol)) rawVol = 0;
-            probability = rawVol;
+            const rows = 4; // User requested 4 rows, equidistant
+            
+            // Revert back to using pure VAD probability as requested
+            let probability = renderState.prob;
             if (isNaN(probability) || !isFinite(probability)) probability = 0;
+            
             const minCols = 5;
-            const maxCols = 55;
+            
+            // Calculate maxCols dynamically based on the full available width of the footer gap
+            let maxCols = 80; // Fallback
+            if (UI.kittCenter && UI.kittCenter.parentElement) {
+                // Fixed char width for equidistant grid (approx 8px)
+                const charWidth = 8.0;
+                
+                // Leave a generous padding margin (40px) so it never touches or pushes the side panels.
+                const availableWidth = UI.kittCenter.parentElement.clientWidth - 40;
+                maxCols = Math.max(minCols, Math.floor(availableWidth / charWidth));
+            }
+            
+            // Allow the probability to scale from minCols across the entire available container width
             const targetCols = minCols + (probability * (maxCols - minCols));
             currentCols += (targetCols - currentCols) * 0.15; 
             if (isNaN(currentCols) || !isFinite(currentCols)) currentCols = minCols; 
             let cols = Math.floor(currentCols);
             if (cols % 2 === 0) cols += 1; 
             if (UI.kittCenter) {
-                const activeOpacity = (0.2 + (rawVol * 0.8)).toFixed(2);
+                // Opacity can still mildly react to pure VAD to flicker slightly
+                const activeOpacity = (0.2 + (probability * 0.8)).toFixed(2);
                 UI.kittCenter.style.setProperty('--vad-opacity', activeOpacity);
                 const prevText = UI.kittCenter.innerText || "";
                 let gridLines = [];
-                const blks = ['█', '▓', '▒', '░'];
+                // Four rows of small equidistant dots
+                const activeDot  = '·';   
+                const glowDot    = '˙';   
+                const silentDot  = ' ';   
                 for (let r = 0; r < rows; r++) {
                     let line = "";
                     for (let c = 0; c < cols; c++) {
-                        const idx = r * (cols + 1) + c; 
-                        const isPrevActive = prevText[idx] && prevText[idx] !== " " && prevText[idx] !== "\n";
+                        const idx = r * (cols + 1) + c;
+                        const isPrevActive = prevText[idx] === activeDot || prevText[idx] === glowDot;
                         if (Math.random() < probability) {
-                            const bIdx = Math.floor(Math.random() * (rawVol > 0.6 ? 2 : 4));
-                            line += blks[bIdx];
-                        } else if (isPrevActive && Math.random() > 0.75) {
-                            line += "░";
+                            line += activeDot;
+                        } else if (isPrevActive && Math.random() > 0.6) {
+                            line += glowDot;  // fading residual after signal drops
                         } else {
-                            line += " ";
+                            line += silentDot;
                         }
                     }
                     gridLines.push(line);
