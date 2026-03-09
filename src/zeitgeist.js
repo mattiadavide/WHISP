@@ -2,6 +2,17 @@ import { UI } from './ui.js';
 export const experienceDict = new Set();
 export const referenceDict = new Map(); 
 export let dynamicStopWords = new Set();
+
+// [CLOSED-LOOP FEEDBACK] — Boost a token that Whisper emitted with low confidence.
+// By elevating its score in referenceDict, it rises in the top-N sort used to build
+// the Whisper prompt on the next re-sync, priming the Cross-Attention layer to 
+// recognise it correctly in subsequent audio segments.
+export function boostToken(word, weight = 12) {
+    if (!word || word.length < 3) return;
+    const lower = word.toLowerCase().replace(/[^a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]/g, '');
+    if (!lower || dynamicStopWords.has(lower)) return;
+    referenceDict.set(lower, (referenceDict.get(lower) || 0) + weight);
+}
 export async function loadStopWords(languageVal) {
     const langCodes = { "italian": "it", "english": "en", "spanish": "es", "french": "fr", "german": "de" };
     try {

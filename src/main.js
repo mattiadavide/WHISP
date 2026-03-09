@@ -1,5 +1,5 @@
 import { UI, initLanguages, setStatus, setPowerBtn, resetMeters, updateHarvestTable, interimSpan, renderState, startRenderLoop } from './ui.js';
-import { loadStopWords, fetchZeitgeist, extractValuableTokens, experienceDict, referenceDict } from './zeitgeist.js';
+import { loadStopWords, fetchZeitgeist, extractValuableTokens, experienceDict, referenceDict, boostToken } from './zeitgeist.js';
 import { AudioProcessor } from './audio.js';
 let workerStore = { vad: null, whisper: null, nlp: null };
 let audioProcessor = new AudioProcessor();
@@ -10,6 +10,22 @@ let activeToken = null;
 let transcriptBuffer = [];
 let lastSegmentTime = 0;
 let lastInterimWords = []; 
+
+// [CLOSED-LOOP PROMPT RE-SYNC]
+// Debounced scheduler: after new low-conf tokens are boosted into referenceDict,
+// we wait a short idle window before pushing the updated top-N prompt to Whisper.
+// This avoids spamming postMessage on every single segment.
+let _promptSyncTimer = null;
+function schedulePromptReSync(debounceMs = 8000) {
+    if (_promptSyncTimer) return; // already pending
+    _promptSyncTimer = setTimeout(() => {
+        _promptSyncTimer = null;
+        if (workerStore.whisper?.worker) {
+            const newPrompt = window.buildOptimizedPrompt();
+            workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: newPrompt });
+        }
+    }, debounceMs);
+}
 function getWorkerUrl(scriptName) {
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     const p = window.location.pathname;
@@ -158,6 +174,23 @@ function handleProgressEvent(d) {
         } else if (d.type === 'final') {
             if (d.avgConf !== undefined) renderState.asrProb = d.avgConf;
             if (d.queueLength !== undefined) { renderState.queue = d.queueLength; renderState.needsRender = true; }
+
+            // [CLOSED-LOOP FEEDBACK]: Boost low-confidence tokens back into Zeitgeist.
+            // Whisper's per-chunk confidence (wordConf) tells us exactly which words
+            // it was uncertain about. Elevating those tokens in referenceDict ensures
+            // they appear in the next Whisper prompt re-sync, priming cross-attention
+            // to favour them in future audio that contains the same vocabulary.
+            if (d.wordConf && d.wordConf.length > 0) {
+                let hadLowConf = false;
+                for (const chunk of d.wordConf) {
+                    if (chunk.isLowConf) {
+                        boostToken(chunk.text);
+                        hadLowConf = true;
+                    }
+                }
+                if (hadLowConf) schedulePromptReSync();
+            }
+
             workerStore.nlp.worker.postMessage({
                 type: 'PROCESS_TEXT', text: d.text, isLowConf: d.isLowConf,
                 wordConf: d.wordConf || null,

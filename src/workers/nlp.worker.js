@@ -183,6 +183,42 @@ self.onmessage = (e) => {
             text = text.replace(/\b(un)\s+po\b/gi, "$1 po'");
             text = text.replace(/\b(qual)\s+e\b/gi, "$1 è");
             text = text.replace(/\s+(però|però|quindi|invece|allora|dunque|oppure|eppure|infatti|cioè|ovvero)\s+/gi, (m, w) => `, ${w} `);
+
+            // [RADIO24 & BRANDS] Base Model Phonetic Hallucination Fixes
+            text = text.replace(/\bha\s+vuol\s+stretto\b/gi, "a Wall Street");
+            text = text.replace(/\bsondere\s+impuso\b/gi, "Standard and Poor's");
+            text = text.replace(/\bda\s+un\s+jonze\b/gi, "Dow Jones");
+            text = text.replace(/\bjonze\b/gi, "Jones");
+            text = text.replace(/\bnada\s+che\b/gi, "Nasdaq");
+            text = text.replace(/\beurocraccia\b/gi, "Euro-crash"); 
+            text = text.replace(/\bbucera\s+divendite\b/gi, "bufera di vendite");
+            text = text.replace(/\b(infernata)\b/gi, "impennata");
+            text = text.replace(/\b(innotata)\b/gi, "innescata");
+            text = text.replace(/\bl'erico\s+minciare\b/gi, "le ricominciare");
+            text = text.replace(/\baumentarità\b/gi, "aumentare i tassi");
+            text = text.replace(/\b(marissimo)\b/gi, "malissimo");
+            text = text.replace(/\bpiazza\s+forza\b/gi, "piattaforma");
+            text = text.replace(/\brapportaziende\b/gi, "ReportAziende");
+            
+            // Grana Padano / Brands
+            text = text.replace(/\bgran\s+a\s+padanno\b/gi, "Grana Padano");
+            text = text.replace(/\bgrana\s+[f]adano\b/gi, "Grana Padano");
+            text = text.replace(/\bgrama\s+radano\b/gi, "Grana Padano");
+            text = text.replace(/\b[ps]inge\s+grana\b/gi, "Sempre Grana");
+            text = text.replace(/\nil\s+amore\s+è\s+gran\s+a\s+padanno\b/gi, "il sapore è Grana Padano");
+            
+            // Citroen
+            text = text.replace(/\bsitro\b/gi, "Citroen");
+            text = text.replace(/\bCitroen\s+è\s+na\s+zero\s+tutto\b/gi, "Citroen a zero tutto");
+            text = text.replace(/\bCitroen\s+nel\s+Lising\b/gi, "Citroen in Leasing");
+            text = text.replace(/\binfosso\s+Citroen\s+in\s+punto\s+e\b/gi, "Info su citroen.it");
+            
+            // Miscellaneous filler / errors
+            text = text.replace(/\b(l'attosio)\b/gi, "lattosio");
+            text = text.replace(/\b(miardo)\b/gi, "miliardo");
+            text = text.replace(/\battasso\s+zero\b/gi, "a tasso zero");
+            text = text.replace(/\b(mesmo)\b/gi, "mese");
+            text = text.replace(/\bdebanche\b/gi, "delle banche");
         }
         if (currentLang === 'english') {
             text = text.replace(/\s+(however|therefore|instead|actually|so|but|yet|indeed|namely)\s+/gi, (m, w) => `, ${w} `);
