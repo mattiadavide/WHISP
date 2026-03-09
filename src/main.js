@@ -1,6 +1,14 @@
 import { UI, initLanguages, setStatus, setPowerBtn, resetMeters, updateHarvestTable, interimSpan, renderState, startRenderLoop } from './ui.js';
 import { loadStopWords, fetchZeitgeist, extractValuableTokens, experienceDict, referenceDict, boostToken } from './zeitgeist.js';
+import { ASCII_LOGO, SIGNATURE } from './logo_header.js';
+import { BOOT_LOGO } from './logo_boot.js';
 import { AudioProcessor } from './audio.js';
+
+// Populate header logo
+document.addEventListener('DOMContentLoaded', () => {
+    const headerLogo = document.querySelector('.ascii-art');
+    if (headerLogo) headerLogo.innerText = `${ASCII_LOGO}\n${SIGNATURE}`;
+});
 let workerStore = { vad: null, whisper: null, nlp: null };
 let audioProcessor = new AudioProcessor();
 let isCoreLoaded = false;
@@ -9,7 +17,7 @@ let hasBooted = false;
 let activeToken = null;
 let transcriptBuffer = [];
 let lastSegmentTime = 0;
-let lastInterimWords = []; 
+let lastInterimWords = [];
 let _tokenIdCounter = 0; // unique ID for each rendered word-token span
 
 // [CLOSED-LOOP PROMPT RE-SYNC]
@@ -57,21 +65,21 @@ function getWorkerUrl(scriptName) {
     return `${dir}/src/workers/${scriptName}`;
 }
 function initWorkers() {
-    if (workerStore.vad?.worker) return; 
-    window.buildOptimizedPrompt = function() {
+    if (workerStore.vad?.worker) return;
+    window.buildOptimizedPrompt = function () {
         const BUDGET = 90; // ~224 Whisper tokens - anti-halluc instruction - tail
-        
+
         // Tier 1: manually validated words — gold standard, always first
         const manual = Array.from(experienceDict);
         const seen = new Set(manual.map(w => w.toLowerCase()));
-        
+
         // Tier 2: recently boosted low-conf words (score >= 12 means boosted at least once)
         // These are the model's current "pain points" for this session/source
         const boosted = Array.from(referenceDict.entries())
             .filter(([w, s]) => s >= 12 && w.length >= 5 && !seen.has(w))
             .sort((a, b) => b[1] - a[1])
             .map(([w]) => { seen.add(w); return w; });
-        
+
         // Tier 3: discriminative fill from BM25 referenceDict
         // Rules: min 5 chars (short words = high ambiguity, low utility)
         //        4-char prefix dedup (skip "balistica" if "balistico" already in list)
@@ -92,7 +100,7 @@ function initWorkers() {
                 return true;
             })
             .map(([w]) => w);
-        
+
         return [...manual, ...boosted, ...fill].slice(0, BUDGET).join(', ');
     };
     workerStore.vad = { worker: new Worker(getWorkerUrl('vad.worker.js'), { type: 'module' }) };
@@ -144,7 +152,7 @@ function initWorkers() {
                 transcriptBuffer.push(' ' + t.text);
             });
             UI.output.insertBefore(frag, interimSpan);
-            interimSpan.innerHTML = ''; 
+            interimSpan.innerHTML = '';
             UI.output.appendChild(interimSpan);
             UI.output.scrollTop = UI.output.scrollHeight;
         }
@@ -162,57 +170,63 @@ function initWorkers() {
             }
         }
     };
-// Reusable handler for all worker progress events (Whisper, VAD, NLP)
-function handleProgressEvent(d) {
-    if (d.type === 'progress') {
-        const fileName = d.file || d.name || 'unknown';
-        if (!fileName) return; 
+    // Reusable handler for all worker progress events (Whisper, VAD, NLP)
+    function handleProgressEvent(d) {
+        if (d.type === 'progress') {
+            const fileName = d.file || d.name || 'unknown';
+            if (!fileName) return;
 
-        let safeId = 'dl-' + fileName.replace(/[^a-zA-Z0-9-]/g, '-');
-        let progDiv = document.getElementById(safeId);
-        
-        if (!progDiv) {
-            progDiv = document.createElement('div');
-            progDiv.id = safeId;
-            progDiv.className = 'sys-log';
-            if (interimSpan.parentNode === UI.output) {
-                UI.output.insertBefore(progDiv, interimSpan);
-            } else {
-                UI.output.appendChild(progDiv);
+            let safeId = 'dl-' + fileName.replace(/[^a-zA-Z0-9-]/g, '-');
+            let progDiv = document.getElementById(safeId);
+
+            if (!progDiv) {
+                progDiv = document.createElement('div');
+                progDiv.id = safeId;
+                progDiv.className = 'sys-log';
+                if (interimSpan.parentNode === UI.output) {
+                    UI.output.insertBefore(progDiv, interimSpan);
+                } else {
+                    UI.output.appendChild(progDiv);
+                }
             }
+
+            if (d.status === 'done' || d.status === 'ready') {
+                progDiv.innerText = `  CORE_[${fileName.toUpperCase()}]: 100% [####################] - DONE`;
+            } else if (d.status === 'initiate') {
+                progDiv.innerText = `  CORE_[${fileName.toUpperCase()}]: INITIATING...`;
+            } else {
+                const p = d.p || 0;
+                const pText = `  CORE_[${fileName.substring(0, 20).toUpperCase()}]: ` + Math.round(p) + '%';
+                const b = Math.floor(p / 5);
+                progDiv.innerText = pText + ' [' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
+            }
+            // Move cursor to the current progress line if it exists
+            const cursor = document.querySelector('.terminal-cursor');
+            if (cursor) progDiv.appendChild(cursor);
+            UI.output.scrollTop = UI.output.scrollHeight;
         }
-        
-        if (d.status === 'done' || d.status === 'ready') {
-            progDiv.innerText = `CORE_[${fileName.toUpperCase()}]: 100% [####################] - DONE`;
-        } else if (d.status === 'initiate') {
-            progDiv.innerText = `CORE_[${fileName.toUpperCase()}]: INITIATING...`;
-        } else {
-            const p = d.p || 0;
-            const pText = `CORE_[${fileName.substring(0,20).toUpperCase()}]: ` + Math.round(p) + '%';
-            const b = Math.floor(p/5); 
-            progDiv.innerText = pText + ' [' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
-        }
-        UI.output.scrollTop = UI.output.scrollHeight;
     }
-}
 
     workerStore.whisper.worker.onmessage = (e) => {
         const d = e.data;
         if (d.type === 'progress') {
             handleProgressEvent(d);
-        } else if (d.type === 'READY_TO_PROCESS') { 
+        } else if (d.type === 'READY_TO_PROCESS') {
             const finalNode = document.createElement('div');
             finalNode.className = 'sys-log';
             finalNode.style.color = 'var(--term-ok)';
             finalNode.style.fontWeight = 'bold';
-            finalNode.innerText = 'CORE_ENGINE: 100% [####################] - ONLINE';
+            finalNode.innerText = '  CORE_ENGINE: 100% [####################] - ONLINE';
+            
+            const cursor = document.querySelector('.terminal-cursor');
+            if (cursor) finalNode.appendChild(cursor);
             if (interimSpan.parentNode === UI.output) {
                 UI.output.insertBefore(finalNode, interimSpan);
             } else {
                 UI.output.appendChild(finalNode);
             }
-            isCoreLoaded = true; 
-            
+            isCoreLoaded = true;
+
             if (audioProcessor.isRecording) {
                 setPowerBtn("■", "var(--term-warn)", false);
             } else {
@@ -324,44 +338,82 @@ function handleProgressEvent(d) {
 }
 async function runBootSequence() {
     UI.output.innerHTML = "";
+    const logoLines = BOOT_LOGO.split('\n');
     const lines = [
-        "INITIALIZING KERNEL...",
-        "ALLOCATING AUDIO BUFFERS [OK]",
-        "MOUNTING WORKER THREADS [OK]",
-        "SYNCING LOCAL DICTIONARY [OK]",
-        "WAKING NEURAL ENGINE...",
-        "..............................",
-        " ··      ··  ··      ··  ··  ··········  ········· ",
-        " ··      ··  ··      ··  ··  ··          ··      ·· ",
-        " ··      ··  ··      ··  ··  ··          ··      ·· ",
-        " ··  ··  ··  ··········  ··  ··········  ········· ",
-        " ··  ··  ··  ··      ··  ··          ··  ··         ",
-        " ··  ··  ··  ··      ··  ··          ··  ··         ",
-        "  ········   ··      ··  ··  ··········  ··         ",
-        "..............................",
-        "> MATTIA DAVIDE AMICO",
-        " ",
+        "AMIBIOS (C) 2026 American Megatrends, Inc.",
+        "WHISP KERNEL v1.0.2 - BUILD 0x3F2A",
+        "",
+        "CPU: NEURAL_ENGINE @ 6.4 TFLOPS",
+        "MEMORY TEST: 65536KB OK",
+        "",
+        "SATA PORT 1: WHISP_STORAGE_UNIT [ONLINE]",
+        "SATA PORT 2: DICTIONARY_VAD_CORE [ONLINE]",
+        "SATA PORT 3: WHISPER_ONNX_ENGINE [ONLINE]",
+        "",
+        "",
+        "",
+        ...logoLines,
+        SIGNATURE,
+        "",
+        "BOOTING FROM LOCAL SECTOR...",
         "SYSTEM ONLINE. AWAITING AUDIO FLOW..."
     ];
+
+    const cursor = document.createElement('span');
+    cursor.className = 'terminal-cursor';
+
+    // Dynamic range for centering (Logo + Signature)
+    let logoStartIndex = 0;
+    // Find the first non-empty line of the logo to avoid matching leading/trailing empty lines in 'lines'
+    const logoAnchor = logoLines.find(l => l.trim().length > 0);
+    while (logoStartIndex < lines.length && lines[logoStartIndex] !== logoAnchor) {
+        logoStartIndex++;
+    }
+    const logoEndIndex = logoStartIndex + logoLines.length - 1;
+    const signatureIndex = lines.indexOf(SIGNATURE);
+
     for (let i = 0; i < lines.length; i++) {
         const div = document.createElement('div');
-        div.className = i >= 6 && i <= 12 ? 'sys-log brand' : 'sys-log';
-        div.innerText = lines[i];
         
-        // Add the terminal cursor permanently to the line containing the name
-        if (i === 12) {
-            const cursor = document.createElement('span');
-            cursor.className = 'terminal-cursor';
-            div.appendChild(cursor);
-        }
+        // Center the Logo, the Signature, and diagnostic lines
+        const isCentered = (i >= 3 && i <= signatureIndex);
+        div.className = isCentered ? 'sys-log brand' : 'sys-log';
+        
+        // Block Spacing Logic
+        if (i === 3) div.style.marginTop = "30px"; // Before CPU/Memory
+        if (i === 7) div.style.marginTop = "20px"; // Before SATA
+        if (i === logoStartIndex) div.style.marginTop = "50px"; // Before Logo
+        if (i === signatureIndex) div.style.marginTop = "15px"; // Before Signature
+        if (i === signatureIndex + 1 && lines[i] !== "") div.style.marginTop = "40px"; // Before Final lines
         
         UI.output.appendChild(div);
-        UI.output.scrollTop = UI.output.scrollHeight;
-        await new Promise(r => setTimeout(r, i >= 6 && i <= 11 ? 30 : 150));
+
+        if (i === signatureIndex) {
+            // Typing effect for the signature
+            const text = lines[i];
+            for (let char of text) {
+                div.appendChild(document.createTextNode(char));
+                div.appendChild(cursor);
+                UI.output.scrollTop = UI.output.scrollHeight;
+                await new Promise(r => setTimeout(r, 45));
+            }
+        } else {
+            div.innerText = lines[i];
+            div.appendChild(cursor);
+            UI.output.scrollTop = UI.output.scrollHeight;
+        }
+
+        // Vintage staccato timings
+        let delay = 60;
+        if (i < logoStartIndex) delay = 120 + Math.random() * 250;
+        if (i >= logoStartIndex && i <= logoEndIndex) delay = 25;
+        if (i === signatureIndex) delay = 800;
+
+        await new Promise(r => setTimeout(r, delay));
     }
-    UI.output.appendChild(interimSpan); // Reattach safely after boot animation wipe
+    UI.output.appendChild(interimSpan);
 }
-UI.sysPowerBtn.onclick = async () => { 
+UI.sysPowerBtn.onclick = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
         setStatus('MEDIA_API_UNSUPPORTED', 'var(--term-err)');
         return;
@@ -377,7 +429,7 @@ UI.sysPowerBtn.onclick = async () => {
         try {
             await runBootSequence();
             hasBooted = true;
-            
+
             // [START INITIALIZATION AFTER BOOT LOGS START]
             const lang = UI.languageSelect?.value || 'italian';
             const domain = UI.domainSelect?.value;
@@ -387,9 +439,9 @@ UI.sysPowerBtn.onclick = async () => {
             workerStore.whisper.worker.postMessage({ type: 'update_params', language: lang, precision: precision });
             workerStore.nlp.worker.postMessage({ type: 'update_params', language: lang });
             workerStore.vad.worker.postMessage({ type: 'update_params', precision: precision });
-            
+
             // Trigger load for VAD engine (VAD will dynamically trigger Whisper once it's completely ready)
-            workerStore.vad.worker.postMessage({ type: 'load' }); 
+            workerStore.vad.worker.postMessage({ type: 'load' });
 
             // Background dictionary sync
             loadStopWords(lang).then(() => {
@@ -398,11 +450,11 @@ UI.sysPowerBtn.onclick = async () => {
 
             isBootingUp = false;
             // Note: Power button will be updated to ■ by READY_TO_PROCESS signal from whisper worker
-            
+
             await audioProcessor.init(UI.audioSource.value, workerStore.vad.worker);
-        } catch (err) { 
+        } catch (err) {
             setPowerBtn("▶", undefined, false);
-            setStatus("MIC_ERROR", "var(--term-err)"); 
+            setStatus("MIC_ERROR", "var(--term-err)");
             console.error("Boot Error:", err);
             isBootingUp = false;
         }
@@ -430,9 +482,9 @@ UI.domainSelect.onchange = (e) => { if (e.target.value === 'custom') UI.dictFile
 UI.dictFileInput.onchange = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => { 
-        extractValuableTokens(ev.target.result); 
-        UI.zeitgeistLog.innerText += `\n> CUSTOM_DICT_LOADED [TOKENS: ${referenceDict.size}]`; 
+    reader.onload = (ev) => {
+        extractValuableTokens(ev.target.result);
+        UI.zeitgeistLog.innerText += `\n> CUSTOM_DICT_LOADED [TOKENS: ${referenceDict.size}]`;
         window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size } }));
         if (workerStore.whisper && workerStore.whisper.worker) {
             workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: window.buildOptimizedPrompt() });
@@ -447,28 +499,28 @@ window.addEventListener('zeitgeist_sync_done', () => {
 });
 UI.output.addEventListener('click', (e) => {
     if (e.target.classList.contains('word-token')) {
-        activeToken = e.target; 
-        UI.editInput.value = activeToken.innerText.trim(); 
+        activeToken = e.target;
+        UI.editInput.value = activeToken.innerText.trim();
         UI.popup.style.display = 'block';
-        UI.popup.style.left = `${e.pageX}px`; 
-        UI.popup.style.top = `${e.pageY + 10}px`; 
+        UI.popup.style.left = `${e.pageX}px`;
+        UI.popup.style.top = `${e.pageY + 10}px`;
         UI.editInput.focus();
     }
 });
 UI.confirmBtn.onclick = () => {
     if (activeToken) {
-        const newVal = UI.editInput.value.trim(); 
-        activeToken.innerText = " " + newVal; 
+        const newVal = UI.editInput.value.trim();
+        activeToken.innerText = " " + newVal;
         activeToken.className = 'word-token validated';
-        experienceDict.add(newVal.toLowerCase()); 
+        experienceDict.add(newVal.toLowerCase());
         updateHarvestTable(newVal, 'MANUAL_VALIDATION');
     }
-    UI.popup.style.display = 'none'; 
+    UI.popup.style.display = 'none';
     activeToken = null;
 };
-document.addEventListener('click', (e) => { 
+document.addEventListener('click', (e) => {
     if (!UI.popup.contains(e.target) && !e.target.classList.contains('word-token')) {
-        UI.popup.style.display = 'none'; 
+        UI.popup.style.display = 'none';
     }
 });
 function getWatermarkedTranscript() {
@@ -477,12 +529,12 @@ function getWatermarkedTranscript() {
     const watermark = `\n\n.........................................\n TRANSCRIBED VIA WHISP v1.0\n > DESIGN BY MATTIA DAVIDE AMICO\n.........................................\n`;
     return text + watermark;
 }
-UI.clearBtn.onclick = () => { 
+UI.clearBtn.onclick = () => {
     const logs = UI.output.querySelectorAll('.sys-log');
-    UI.output.innerHTML = ""; 
+    UI.output.innerHTML = "";
     logs.forEach(l => UI.output.appendChild(l));
-    UI.output.appendChild(interimSpan); 
-    transcriptBuffer = []; 
+    UI.output.appendChild(interimSpan);
+    transcriptBuffer = [];
 };
 UI.copyBtn.onclick = () => {
     const txt = getWatermarkedTranscript();
@@ -490,13 +542,13 @@ UI.copyBtn.onclick = () => {
 }
 UI.toggleHarvestBtn.onclick = () => { UI.harvestPanel.style.display = UI.harvestPanel.style.display === 'block' ? 'none' : 'block'; };
 UI.closeHarvestBtn.onclick = () => { UI.harvestPanel.style.display = 'none'; };
-UI.exportBtn.onclick = () => { 
+UI.exportBtn.onclick = () => {
     const txt = getWatermarkedTranscript();
     if (!txt) return;
-    const a = document.createElement('a'); 
-    a.href = URL.createObjectURL(new Blob([txt], {type: 'text/plain'})); 
-    a.download = 'WHISP_TRANSCRIPT.txt'; 
-    a.click(); 
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([txt], { type: 'text/plain' }));
+    a.download = 'WHISP_TRANSCRIPT.txt';
+    a.click();
 };
 (async () => {
     // ONLY INITIALIZE LANGUAGES ON LOAD
