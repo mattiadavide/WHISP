@@ -147,6 +147,8 @@ function initWorkers() {
             workerStore.nlp.worker.postMessage({
                 type: 'PROCESS_TEXT', text: d.text, isLowConf: d.isLowConf,
                 wordConf: d.wordConf || null,
+                // [MBR]: Pass last partial so NLP can strip hallucinated leading words
+                lastPartialText: d.lastPartialText || '',
                 // [OPT — HEAP CAP]: Send only top-150 Zeitgeist tokens by BM25 score.
                 // Full referenceDict can grow to 1000+ entries → O(N) healing loop per word.
                 // Top-150 covers the most domain-relevant vocabulary with 6.7x less computation.

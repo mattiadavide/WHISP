@@ -9,6 +9,7 @@ env.backends.onnx.wasm.numThreads = Math.max(1, Math.floor((navigator.hardwareCo
 env.backends.onnx.wasm.simd = true;
 let transcriber = null, queue = [], isBusy = false, currentLanguage = "italian", vadPort = null, currentPrecision = "turbo", initialPrompt = "", basePrompt = "";
 let recentPrefixes = []; // [APEX]: Tracks the start of recent sentences to block prefix-stutter loops
+let lastPartialText = ''; // [MBR]: Stores last partial text for MBR prefix anchor comparison
 
 // [OPT — ANTI-HALLUCINATION PROMPT]: OpenAI (2024) and Calm-Whisper (arXiv May 2025) show that
 // explicit instructions in the initial prompt significantly reduce hallucination in non-speech/noise segments.
@@ -171,16 +172,22 @@ async function process() {
             }
 
             if (res.text.trim().length > 0) {
+                // [MBR]: Track last partial so final can compare against it
+                if (item.isPartial) lastPartialText = res.text.trim();
                 self.postMessage({ 
                     type: item.isPartial ? 'partial' : 'final', 
                     text: res.text, 
                     isLowConf: avgConf < getLowConfThreshold(),
                     wordConf,
                     avgConf,
-                    queueLength: queue.length
+                    queueLength: queue.length,
+                    // [MBR]: Include last partial text for prefix anchor comparison in NLP worker
+                    lastPartialText: item.isPartial ? '' : lastPartialText
                 });
+                if (!item.isPartial) lastPartialText = ''; // reset after final
             } else if (!item.isPartial) {
-                self.postMessage({ type: 'final', text: "", isLowConf: false, wordConf: null, queueLength: queue.length });
+                self.postMessage({ type: 'final', text: "", isLowConf: false, wordConf: null, queueLength: queue.length, lastPartialText });
+                lastPartialText = '';
             }
         } else if (!item.isPartial) {
             self.postMessage({ type: 'final', text: "", isLowConf: false, wordConf: null, queueLength: queue.length });

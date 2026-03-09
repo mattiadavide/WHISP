@@ -44,6 +44,31 @@ const BASE_MODEL_PREFIX_PATTERNS = [
     /^Tral['\x27]al[vb]o?\s+/i,   // "Tral'alvo", "Tral'algo" — garbled "Tra l'altro"
     // Generic: article + 3-4 char root that is not a real Italian word
     /^(?:Le|Il|La)\s+[a-z]{3,4}[aeiou]\s+\w+\s+/i,
+    // "Più po' salile", "Più postando", "Più poesanti" — hallucinated "Più po" prefix that the
+    // base model generates when borrowing from previous segments ending in comparative forms.
+    /^Più\s+po[^r][a-z'°]\w*\s+/i,  // excludes "Più porta..." which is valid Italian
+    // "Cambiamo di terr...", "Cambiamo di terrenza" — hallucinated sport segment transition
+    /^Cambiamo\s+di\s+terr\w*\s+/i,
+    // "Sul mapolizz...", "Ma polizia mi...", "Da Nulmapoli" — garbled Napoli prefix from football context
+    /^(?:Sul\s+m[aeo]poli|[Mm]a\s+poli[sz]|Da\s+Nulm|[Mm]apoli[sz]\w*)\s+/i,
+    // "L'Alancia", "L'ancetto d'anido" — hallucinated L' + garbled word
+    /^L'[Aa]l[a-z]*cia\s+/i,
+    /^L'[Aa]n[a-z]+(?:d'[a-z]+)?\s+/i,
+    // "Di Nui-Ork" → garbled "New York" (remove mangled geographical prefix)
+    /^Di\s+Nui[-\s][Oo]rk\s+/i,
+    // "risabe a" / "reraoma" — typical base model garbled filler fragments
+    /^(?:[Rr]isabe|[Rr]erasom|[Rr]eraoam)\s+/i,
+    // "Un stall", "Un stagio", "Un stalato" — "Un" + non-Italian word starting with st+vowel
+    // CONSERVATIVE: only st+vowel combos (stall, stagio, stalato are not Italian words)
+    // "Un mistero" / "Un'immagine" are valid and NOT caught by this
+    /^Un\s+st[aeiou]\w*\s+/i,
+    // "Anciamo al tuo", "Ci angiamo alto", "Diciamo al tuo" — garbled discourse transitions
+    // These borrow from audio fragments of "andiamo all'audio" / "Diciamo che" misheard
+    /^(?:Anciamo|[Cc]i\s+angiamo|[Cc]iangiamo)\s+\w+/i,
+    // "Di lima parte più poe" — fragment of garbled previous text leaking as segment opener
+    /^Di\s+lima\s+/i,
+    // "Siamo altro" used as a sentence-starting filler (borrowed from mid-sentence "siamo in")
+    /^Siamo\s+alt[ro]+[.,\s]/i,
 ];
 
 // [OPT — JARO-WINKLER]: Replaces Levenshtein for single-word healing.
@@ -77,6 +102,57 @@ function jaroWinkler(s1, s2, p = 0.1) {
         if (s1[i] === s2[i]) prefix++; else break;
     }
     return jaro + prefix * p * (1 - jaro);
+}
+
+// [OPT — MBR PREFIX ANCHOR]: Minimum Bayes Risk prefix reconciliation.
+// Paper: "MBR decoding consistently outperforms beam search" arXiv 2025.
+// Whisper's final (beam search) often adds hallucinated leading words not present in the
+// partial (greedy, more faithful to audio). This function strips leading final words that:
+//   1. Are NOT found in the partial's first words (alignment check via JW)
+//   2. Have low confidence (entropy-based, already in wordConf)
+// This directly addresses the "Più po' / Cambiamo di terr / mapoli" prefix cascade.
+function mbrPrefixCheck(finalText, partialText, wordConf) {
+    if (!partialText || !partialText.trim()) return finalText;
+    const fWords = finalText.trim().split(/\s+/);
+    const pWords = partialText.trim().split(/\s+/);
+    if (fWords.length === 0 || pWords.length === 0) return finalText;
+
+    // Build confidence map from word conf array
+    const confMap = new Map();
+    if (wordConf) {
+        wordConf.forEach(c => {
+            const w = (c.text || '').trim().toLowerCase().replace(/[^a-zà-ÿ]/g, '');
+            if (w) confMap.set(w, c.isLowConf);
+        });
+    }
+
+    let prefixHallucCount = 0;
+    const searchWindow = Math.min(4, fWords.length); // check up to 4 leading words
+    for (let i = 0; i < searchWindow; i++) {
+        const fw = fWords[i].toLowerCase().replace(/[^a-zà-ÿ]/g, '');
+        if (fw.length < 2) { prefixHallucCount++; continue; } // skip punctuation-only
+
+        // Check if this word appears in the partial's first words (with JW tolerance)
+        const inPartial = pWords.slice(0, Math.min(i + 4, pWords.length)).some(p => {
+            const pc = p.toLowerCase().replace(/[^a-zà-ÿ]/g, '');
+            return jaroWinkler(fw, pc) > 0.88;
+        });
+
+        if (inPartial) break; // alignment found — stop stripping
+
+        // Word is absent from partial — check confidence before stripping
+        const isLowC = confMap.has(fw) ? confMap.get(fw) : true; // default to uncertain if unknown
+        if (isLowC) {
+            prefixHallucCount++;
+        } else {
+            break; // high-confidence word not in partial — leave it (beam search found something new)
+        }
+    }
+
+    if (prefixHallucCount > 0) {
+        return fWords.slice(prefixHallucCount).join(' ');
+    }
+    return finalText;
 }
 
 function levenshtein(a, b) {
@@ -125,6 +201,17 @@ self.onmessage = (e) => {
             return;
         }
         text = filteredText;
+
+        // [OPT — MBR PREFIX ANCHOR]: Strip hallucinated leading words not present in last partial
+        // This catches prefix cascade (Più po', Cambiamo di terr, mapoli) even if not in pattern list
+        if (e.data.lastPartialText) {
+            filteredText = mbrPrefixCheck(filteredText, e.data.lastPartialText, wordConf);
+            filteredText = filteredText.trim();
+            if (!filteredText || filteredText.length < 2) {
+                self.postMessage({ type: 'NLP_DONE', tokens: [] }); return;
+            }
+            text = filteredText;
+        }
 
         // Dedup repetitions (exact)
         text = text.replace(/\b([a-zA-ZÀ-ÿ\s']{2,50}?)\b(?:\s+\1\b){1,}/gi, '$1'); 
