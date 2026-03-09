@@ -93,7 +93,12 @@ function initWorkers() {
             });
 
             UI.output.insertBefore(frag, interimSpan);
-            interimSpan.innerText = '';
+            interimSpan.innerHTML = ''; // Reset for next interim cycle
+            // [FIX — INTERIM ANCHOR]: After inserting the final tokens, always ensure interimSpan
+            // is the last child of UI.output. insertBefore() leaves it in place, but concurrent
+            // DOM ops (cursor, auto-scroll) can shift it. Re-appending guarantees partial messages
+            // from the NEXT utterance have a valid anchor to append to.
+            UI.output.appendChild(interimSpan);
             UI.output.scrollTop = UI.output.scrollHeight;
         }
     };
