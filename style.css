@@ -285,7 +285,17 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 .interim-text { color: var(--term-dim); font-style: italic; animation: lowConfPulse 1.4s ease-in-out infinite; }
 .transcribing-indicator { color: var(--term-accent); font-style: italic; letter-spacing: 1px; animation: lowConfPulse 0.7s ease-in-out infinite; }
 
-.sys-log { color: var(--term-dim); font-size: 0.9em; margin-bottom: 2px; }
+@keyframes bootLineIn {
+    from { opacity: 0; transform: translateY(2px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.sys-log { 
+    color: var(--term-dim); 
+    font-size: 0.9em; 
+    margin-bottom: 2px; 
+    animation: bootLineIn 0.15s ease-out both;
+}
 .sys-log.brand { 
     color: var(--term-main); 
     font-weight: bold; 

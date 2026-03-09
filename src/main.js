@@ -389,13 +389,13 @@ async function runBootSequence() {
         UI.output.appendChild(div);
 
         if (i === signatureIndex) {
-            // Typing effect for the signature
+            // Faster typing effect for the signature
             const text = lines[i];
             for (let char of text) {
                 div.appendChild(document.createTextNode(char));
                 div.appendChild(cursor);
                 UI.output.scrollTop = UI.output.scrollHeight;
-                await new Promise(r => setTimeout(r, 45));
+                await new Promise(r => setTimeout(r, 20));
             }
         } else {
             div.innerText = lines[i];
@@ -403,11 +403,9 @@ async function runBootSequence() {
             UI.output.scrollTop = UI.output.scrollHeight;
         }
 
-        // Vintage staccato timings
-        let delay = 60;
-        if (i < logoStartIndex) delay = 120 + Math.random() * 250;
-        if (i >= logoStartIndex && i <= logoEndIndex) delay = 25;
-        if (i === signatureIndex) delay = 800;
+        // Fluid, consistent timings
+        let delay = 30;
+        if (i === signatureIndex) delay = 300;
 
         await new Promise(r => setTimeout(r, delay));
     }
