@@ -5,14 +5,17 @@ export class AudioProcessor {
         this.worklet = null;
         this.isRecording = false;
     }
-
     async init(sourceType, vadWorker) {
         this.audioCtx = new AudioContext({ sampleRate: 16000 });
-        
         this.stream = sourceType === 'system' 
             ? await navigator.mediaDevices.getDisplayMedia({audio: true, video: true}) 
-            : await navigator.mediaDevices.getUserMedia({audio: true});
-
+            : await navigator.mediaDevices.getUserMedia({audio: {
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+                channelCount: 1,
+                sampleRate: 16000
+            }});
         try {
             await this.audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
             class P extends AudioWorkletProcessor {
@@ -56,16 +59,12 @@ export class AudioProcessor {
             console.error("[APEX] AudioWorklet initialization failed:", e);
             return;
         }
-        
-        // Collega VAD Worker e Worklet Node
         const audioChannel = new MessageChannel();
         vadWorker.postMessage({ type: 'init_worklet_port', port: audioChannel.port1 }, [audioChannel.port1]);
         this.worklet.port.postMessage({ port: audioChannel.port2 }, [audioChannel.port2]);
-        
         this.audioCtx.createMediaStreamSource(this.stream).connect(this.worklet);
         this.isRecording = true;
     }
-
     stop() {
         if (this.stream) this.stream.getTracks().forEach(t => t.stop()); 
         if (this.audioCtx) this.audioCtx.close();

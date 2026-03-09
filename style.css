@@ -1,16 +1,16 @@
 :root { 
     --term-bg: #050505; 
     --term-main: #ffb000; 
-    --term-dim: #b87c00;    /* Bumped from #996200 → 4.6:1 contrast (WCAG AA) */
+    --term-dim: #b87c00;    
     --term-err: #ff3333; 
     --term-ok: #55ff55; 
     --term-warn: #ffcc00; 
     --term-accent: #ff8c00; 
     --term-shield: #a3f; 
-    --stream-delay: 35ms; /* Per-word stream speed — lower = faster typing effect */
+    --stream-delay: 35ms; 
 }
 
-/* GUI FULLSCREEN RESET */
+
 * { box-sizing: border-box; }
 body { 
     background: var(--term-bg); color: var(--term-main); 
@@ -19,13 +19,13 @@ body {
     width: 100vw; height: 100vh;
     display: flex; flex-direction: column;
     text-transform: uppercase; overflow: hidden;
-    /* CRT outer glow — authentic terminal warmth */
+    
     box-shadow: inset 0 0 120px rgba(0, 30, 120, 0.35), inset 0 0 40px rgba(255, 176, 0, 0.04);
 }
 
 ::selection { background: var(--term-main); color: var(--term-bg); }
 
-/* TUI DASHBOARD LAYOUT */
+
 #app-container {
     display: flex;
     flex-direction: column;
@@ -63,7 +63,7 @@ body {
 .btn-cell { width: auto; min-width: 65px; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0; line-height: 1.2; text-align: center; font-size: 0.8em; padding: 0 10px; border: 1px solid var(--term-err); background: rgba(255, 51, 51, 0.05); color: var(--term-err); font-weight: bold; font-family: inherit; cursor: pointer; border-radius: 3px; text-transform: uppercase; transition: all 0.2s ease;}
 .btn-cell:hover { background: var(--term-err); color: var(--term-bg); }
 
-/* Keep global styles for other selects/buttons in the app */
+
 select, button, input { background: rgba(255, 176, 0, 0.05); color: var(--term-main); border: 1px solid rgba(153, 98, 0, 0.6); padding: 4px 10px; font-family: inherit; font-size: 0.9em; cursor: pointer; text-transform: uppercase; transition: all 0.2s ease; letter-spacing: 1px; border-radius: 2px; flex-shrink: 0;}
 select:focus, button:focus, input:focus { border-color: var(--term-main); box-shadow: 0 0 5px rgba(255, 176, 0, 0.2); outline: none; }
 select { padding-right: 22px; appearance: none; -moz-appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23ffb000%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E"); background-repeat: no-repeat; background-position: right 6px top 50%; background-size: 8px auto; }
@@ -85,7 +85,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 
 .footer-grid {
     display: grid;
-    /* [GOLDEN RATIO COMPOSITION]: 1:1.618:1 Layout */
+    
     grid-template-columns: 1fr 1.618fr 1fr;
     align-items: center;
     gap: 15px;
@@ -93,7 +93,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     width: 100%;
 }
 
-/* LEFT: Status Row */
+
 .status-grid {
     display: flex;
     gap: 8px;
@@ -121,7 +121,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     opacity: 0.8;
 }
 
-/* CENTER: KITT Specular Meters (Knight Rider) */
+
 .kitt-meters-container {
     display: flex;
     justify-content: center;
@@ -149,7 +149,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     user-select: none;
 }
 
-/* RIGHT: Controls Row */
+
 .controls-grid {
     display: flex;
     gap: 8px;
@@ -171,7 +171,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 #harvest-panel { display: none; border: 1px dashed var(--term-accent); padding: 10px; margin-bottom: 10px; background: rgba(0, 170, 255, 0.05); flex-shrink: 0; max-height: 20vh; overflow-y: auto; }
 #harvest-table { width: 100%; border-collapse: collapse; font-size: 0.8em; }
 
-/* OUTPUT LIQUIDO: Si espande riempiendo lo spazio rimasto */
+
 #output { 
     border: none; background: transparent; 
     padding: 0 20px; 
@@ -183,7 +183,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     text-shadow: 0 0 2px rgba(255, 176, 0, 0.4);
 }
 
-/* STREAMING TEXT ANIMATIONS */
+
 @keyframes wordStreamIn {
     from { opacity: 0; transform: translateY(4px); filter: blur(1px); }
     to   { opacity: 1; transform: translateY(0);   filter: blur(0); }
@@ -199,19 +199,19 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
     100% { opacity: 1; }
 }
 
-/* Word tokens: stream in one by one with a small slide+fade */
+
 .word-token { 
     cursor: pointer; 
     padding: 2px 1px; 
     border-radius: 2px; 
     display: inline-block; 
-    /* Stream-in animation: opacity + 4px slide up + blur defocus */
+    
     animation: wordStreamIn 0.22s ease-out both;
     transition: background 0.15s;
 }
 .word-token:hover { background: rgba(255, 255, 255, 0.12); }
 
-/* Uncertain words: slow elegant pulse — communicates uncertainty without jarring flicker */
+
 .low-conf { 
     color: var(--term-err); 
     text-decoration: underline dotted; 
@@ -221,7 +221,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 .validated { color: var(--term-ok) !important; text-decoration: none !important; animation: wordStreamIn 0.22s ease-out both; }
 .shielded  { color: var(--term-shield) !important; text-decoration: none !important; animation: wordStreamIn 0.22s ease-out both; }
 
-/* Interim text: slow pulse signals "still processing" — muted but alive */
+
 .interim-text { color: var(--term-dim); font-style: italic; animation: lowConfPulse 1.4s ease-in-out infinite; }
 
 .sys-log { color: var(--term-dim); font-size: 0.9em; margin-bottom: 2px; font-family: 'Space Mono', monospace; }
@@ -230,9 +230,9 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
 
-/* RESPONSIVITY RULES */
+
 @media screen and (max-width: 768px) {
-    /* HEADER STACKING */
+    
     #top-bar {
         flex-direction: column;
         align-items: center;
@@ -246,7 +246,7 @@ button:hover, select:hover { background: rgba(255, 176, 0, 0.2); border-color: v
         gap: 8px;
     }
 
-    /* FOOTER STACKING FOR MOBILE */
+    
     .footer-grid { 
         display: flex;
         flex-direction: column;

@@ -56,7 +56,7 @@
                 </select>
             </div>
             <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
-            <button id="sysPowerBtn" class="power-btn btn-cell" style="font-size: 1.5em; color: var(--term-main); border-color: var(--term-main); background: rgba(255, 176, 0, 0.05);">▶</button>
+            <button id="sysPowerBtn" class="power-btn btn-cell" style="font-size: 1.5em; color: var(--term-main); border-color: var(--term-main); background: rgba(255, 176, 0, 0.05);">&#9658;</button>
         </div>
     </header>
 
@@ -80,7 +80,7 @@
 
 <footer id="bottom-bar">
     <div class="footer-grid">
-        <!-- LEFT: symmetric 2x2 grid for status -->
+        
         <div class="status-grid">
             <div class="status-item cli-btn-static">
                 <span class="label">PRB</span> <span id="probVal">0.00</span>
@@ -96,12 +96,12 @@
             </div>
         </div>
 
-        <!-- CENTER: Specular Outward ASCII Meter -->
+        
         <div class="kitt-meters-container">
             <span id="kittCenter" class="ascii-kitt"></span>
         </div>
 
-        <!-- RIGHT: symmetric 2x2 grid for controls -->
+        
         <div class="controls-grid">
             <button id="toggleHarvestBtn" class="cli-btn alt-btn">HRVST</button>
             <button id="exportBtn" class="cli-btn">EXPORT</button>
@@ -109,7 +109,7 @@
             <button id="clearBtn" class="cli-btn alt-btn" style="color: var(--term-warn);">FLUSH</button>
         </div>
     </div>
-    <!-- [FIX]: Restoring zeitgeistLog to prevent runtime crash in main.js -->
+    
     <div id="zeitgeistLog" style="display:none"></div>
 </footer>
 </div>
