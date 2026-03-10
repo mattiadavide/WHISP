@@ -1,13 +1,42 @@
-import { UI, initLanguages, setStatus, setPowerBtn, resetMeters, updateHarvestTable, interimSpan, renderState, startRenderLoop } from './ui.js';
+import { UI, initLanguages, setStatus, setPowerBtn, resetMeters, updateHarvestTable, interimSpan, cursorSpan, renderState, startRenderLoop } from './ui.js';
 import { loadStopWords, fetchZeitgeist, extractValuableTokens, experienceDict, referenceDict, boostToken } from './zeitgeist.js';
 import { ASCII_LOGO, SIGNATURE } from './logo_header.js';
 import { BOOT_LOGO } from './logo_boot.js';
 import { AudioProcessor } from './audio.js';
 
-// Populate header logo
+// Populate header logo & signature with Audio-Reactive Particles
 document.addEventListener('DOMContentLoaded', () => {
-    const headerLogo = document.querySelector('.ascii-art');
-    if (headerLogo) headerLogo.innerText = `${ASCII_LOGO}\n${SIGNATURE}`;
+    const logoEl = document.querySelector('.ascii-art');
+    const signatureEl = document.querySelector('.ascii-signature');
+    
+    if (logoEl) {
+        const lines = ASCII_LOGO.split('\n');
+        const H = lines.length;
+        const W = Math.max(...lines.map(l => l.length));
+        const cx = W / 2;
+        const cy = H / 2;
+
+        let html = '';
+        for (let y = 0; y < H; y++) {
+            const line = lines[y];
+            for (let x = 0; x < line.length; x++) {
+                const char = line[x];
+                // Se non è uno spazio, lo trasformiamo in una particella
+                if (char.trim() !== '') {
+                    // Vettore normalizzato da -1 a 1 rispetto al centro
+                    const vx = ((x - cx) / cx).toFixed(3);
+                    const vy = ((y - cy) / cy).toFixed(3);
+                    html += `<span class="logo-particle" style="--vx: ${vx}; --vy: ${vy};">${char}</span>`;
+                } else {
+                    html += char;
+                }
+            }
+            if (y < H - 1) html += '\n';
+        }
+        logoEl.innerHTML = html;
+    }
+    
+    if (signatureEl) signatureEl.innerText = SIGNATURE;
 });
 let workerStore = { vad: null, whisper: null, nlp: null };
 let audioProcessor = new AudioProcessor();
@@ -123,9 +152,21 @@ function initWorkers() {
             handleProgressEvent(e.data);
             return;
         }
-        if (e.data.type === 'NLP_DONE') {
+        if (e.data.type === 'partial') {
+            const partial = e.data.text;
+            interimSpan.innerText = partial;
+            interimSpan.appendChild(cursorSpan);
+        } else if (e.data.type === 'transcribing') {
+            const full = e.data.text;
+            if (full) {
+                transcriptBuffer.push(full);
+            }
+            interimSpan.innerHTML = '';
+            interimSpan.appendChild(cursorSpan);
+        } else if (e.data.type === 'NLP_DONE') {
             if (e.data.tokens.length === 0) {
                 interimSpan.innerHTML = '';
+                interimSpan.appendChild(cursorSpan);
                 lastInterimWords = [];
                 return;
             }
@@ -133,7 +174,9 @@ function initWorkers() {
             const silenceGap = lastSegmentTime > 0 ? now - lastSegmentTime : 0;
             lastSegmentTime = now;
             interimSpan.innerHTML = '';
+            interimSpan.appendChild(cursorSpan);
             lastInterimWords = [];
+            
             const frag = document.createDocumentFragment();
             if (silenceGap > 2500 && UI.output.querySelector('.word-token')) {
                 const br = document.createElement('div');
@@ -141,19 +184,20 @@ function initWorkers() {
                 frag.appendChild(br);
                 transcriptBuffer.push('\n\n');
             }
+            
             const STREAM_DELAY_MS = 35;
             e.data.tokens.forEach((t, i) => {
                 const s = document.createElement('span');
                 s.className = 'word-token' + (t.isLowConf ? ' low-conf' : '') + (t.healed ? ' validated' : '');
                 s.innerText = ' ' + t.text;
                 s.style.animationDelay = `${i * STREAM_DELAY_MS}ms`;
-                s.dataset.tokenId = String(++_tokenIdCounter); // unique ID for retroactive healing
+                s.dataset.tokenId = String(++_tokenIdCounter); 
                 frag.appendChild(s);
                 transcriptBuffer.push(' ' + t.text);
             });
+            
             UI.output.insertBefore(frag, interimSpan);
-            interimSpan.innerHTML = '';
-            UI.output.appendChild(interimSpan);
+            extractValuableTokens(e.data.text);
             UI.output.scrollTop = UI.output.scrollHeight;
         }
         if (e.data.type === 'REHEAL_DONE') {
@@ -338,7 +382,6 @@ function initWorkers() {
 }
 async function runBootSequence() {
     UI.output.innerHTML = "";
-    const logoLines = BOOT_LOGO.split('\n');
     const lines = [
         "AMIBIOS (C) 2026 American Megatrends, Inc.",
         "WHISP KERNEL v1.0.2 - BUILD 0x3F2A",
@@ -351,65 +394,53 @@ async function runBootSequence() {
         "SATA PORT 3: WHISPER_ONNX_ENGINE [ONLINE]",
         "",
         "",
-        "",
-        ...logoLines,
-        SIGNATURE,
-        "",
-        "BOOTING FROM LOCAL SECTOR...",
-        "SYSTEM ONLINE. AWAITING AUDIO FLOW..."
+        ...BOOT_LOGO.split('\n'),
+        SIGNATURE
     ];
-
-    const cursor = document.createElement('span');
-    cursor.className = 'terminal-cursor';
-
-    // Dynamic range for centering (Logo + Signature)
-    let logoStartIndex = 0;
-    // Find the first non-empty line of the logo to avoid matching leading/trailing empty lines in 'lines'
-    const logoAnchor = logoLines.find(l => l.trim().length > 0);
-    while (logoStartIndex < lines.length && lines[logoStartIndex] !== logoAnchor) {
-        logoStartIndex++;
-    }
-    const logoEndIndex = logoStartIndex + logoLines.length - 1;
-    const signatureIndex = lines.indexOf(SIGNATURE);
 
     for (let i = 0; i < lines.length; i++) {
         const div = document.createElement('div');
-        
-        // Center the Logo, the Signature, and diagnostic lines
-        const isCentered = (i >= 3 && i <= signatureIndex);
+        // Calcola se la riga corrente fa parte del logo o della firma (che sono alla fine dell'array)
+        const logoLength = BOOT_LOGO.split('\n').length;
+        const isCentered = i >= (lines.length - 1 - logoLength);
         div.className = isCentered ? 'sys-log brand' : 'sys-log';
         
-        // Block Spacing Logic
-        if (i === 3) div.style.marginTop = "30px"; // Before CPU/Memory
-        if (i === 7) div.style.marginTop = "20px"; // Before SATA
-        if (i === logoStartIndex) div.style.marginTop = "50px"; // Before Logo
-        if (i === signatureIndex) div.style.marginTop = "15px"; // Before Signature
-        if (i === signatureIndex + 1 && lines[i] !== "") div.style.marginTop = "40px"; // Before Final lines
+        if (i === 3) div.style.marginTop = "30px"; 
+        if (i === 7) div.style.marginTop = "20px"; 
+        // Calculate logo start index dynamically based on BOOT_LOGO length
+        const bootLogoLinesCount = BOOT_LOGO.split('\n').length;
+        const logoStartIndexInLinesArray = lines.length - bootLogoLinesCount - 1; // -1 for SIGNATURE
+        
+        if (i >= logoStartIndexInLinesArray && i < lines.length - 1) { // Logo lines
+            if (i === logoStartIndexInLinesArray) {
+                div.style.marginTop = "50px";
+            } else {
+                div.style.marginTop = "0";
+            }
+        }
+        if (i === lines.length - 1) div.style.marginTop = "15px"; // Signature line
         
         UI.output.appendChild(div);
 
-        if (i === signatureIndex) {
-            // Faster typing effect for the signature
+        if (i === lines.length - 1) { // The last line is the Signature
             const text = lines[i];
             for (let char of text) {
                 div.appendChild(document.createTextNode(char));
-                div.appendChild(cursor);
+                div.appendChild(cursorSpan); // Move the cursor
                 UI.output.scrollTop = UI.output.scrollHeight;
                 await new Promise(r => setTimeout(r, 20));
             }
         } else {
             div.innerText = lines[i];
-            div.appendChild(cursor);
+            div.appendChild(cursorSpan);
             UI.output.scrollTop = UI.output.scrollHeight;
+            await new Promise(r => setTimeout(r, 30));
         }
-
-        // Fluid, consistent timings
-        let delay = 30;
-        if (i === signatureIndex) delay = 300;
-
-        await new Promise(r => setTimeout(r, delay));
     }
+    
+    // Attach interimSpan immediately after the signature and pass the cursor to it
     UI.output.appendChild(interimSpan);
+    interimSpan.appendChild(cursorSpan);
 }
 UI.sysPowerBtn.onclick = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
