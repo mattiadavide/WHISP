@@ -98,7 +98,27 @@ body {
     margin-bottom: 2px; flex-shrink: 0; line-height: 1; text-align: center; 
     border-bottom: 2px dotted rgba(184, 124, 0, 0.4); padding-bottom: 2px;
 }
-.grid-cell select { background: transparent; color: var(--term-main); border: none; font-size: 0.9em; font-family: inherit; font-weight: bold; cursor: pointer; appearance: none; -moz-appearance: none; -webkit-appearance: none; text-align: center; outline: none; padding: 0; width: 100%; box-shadow: none; background-image: none; letter-spacing: 1px; line-height: 1; }
+.grid-cell select { 
+    background: transparent; 
+    color: var(--term-main); 
+    border: none; 
+    font-size: 0.9em; 
+    font-family: inherit; 
+    font-weight: bold; 
+    cursor: pointer; 
+    appearance: none; 
+    -moz-appearance: none; 
+    -webkit-appearance: none; 
+    text-align: center; 
+    text-align-last: center; /* Forza la centratura del testo selezionato nei browser moderni */
+    outline: none; 
+    padding: 0 0 0 1px; /* Compensa il letter-spacing per una centratura ottica millimetrica */
+    width: 100%; 
+    box-shadow: none; 
+    background-image: none; 
+    letter-spacing: 1px; 
+    line-height: 1; 
+}
 .grid-cell select:focus { border: none; box-shadow: none; color: var(--term-accent); }
 
 
