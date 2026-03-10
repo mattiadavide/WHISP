@@ -21,12 +21,13 @@ document.addEventListener('DOMContentLoaded', () => {
             const line = lines[y];
             for (let x = 0; x < line.length; x++) {
                 const char = line[x];
-                // Se non è uno spazio, lo trasformiamo in una particella
                 if (char.trim() !== '') {
-                    // Vettore normalizzato da -1 a 1 rispetto al centro
-                    const vx = ((x - cx) / cx).toFixed(3);
-                    const vy = ((y - cy) / cy).toFixed(3);
-                    html += `<span class="logo-particle" style="--vx: ${vx}; --vy: ${vy};">${char}</span>`;
+                    // Genera vettori di dispersione casuali (da -1 a 1) per l'effetto nebulosa
+                    const rx = (Math.random() * 2 - 1).toFixed(3);
+                    const ry = (Math.random() * 2 - 1).toFixed(3);
+                    // Genera un angolo di rotazione casuale
+                    const rRot = (Math.random() * 180 - 90).toFixed(1);
+                    html += `<span class="logo-particle" style="--rx: ${rx}; --ry: ${ry}; --rRot: ${rRot};">${char}</span>`;
                 } else {
                     html += char;
                 }

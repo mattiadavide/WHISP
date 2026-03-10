@@ -87,14 +87,24 @@ body {
 
 .logo-particle {
     display: inline-block;
-    /* Espansione vettoriale: Vettore * Volume (RMS) * Forza (15px) */
+    /* Dispersione caotica e rotazione pilotate dal volume (RMS) */
     transform: translate(
-        calc(var(--vx) * var(--vad-rms) * 15px),
-        calc(var(--vy) * var(--vad-rms) * 15px)
-    );
-    text-shadow: 0 0 calc(1px + (var(--vad-rms, 0) * 120px)) var(--term-main);
-    transition: transform 0.05s ease-out, text-shadow 0.05s ease-out;
-    will-change: transform, text-shadow; /* Delega tutto alla GPU */
+        calc(var(--rx) * var(--vad-rms) * 35px),
+        calc(var(--ry) * var(--vad-rms) * 35px)
+    ) rotate(calc(var(--rRot) * var(--vad-rms) * 1deg));
+    
+    /* Effetto nebbia: le particelle sbiadiscono mentre si disperdono */
+    opacity: calc(1 - (var(--vad-rms) * 0.8));
+    
+    /* Bagliore che aumenta con la dispersione */
+    text-shadow: 0 0 calc(1px + (var(--vad-rms, 0) * 15px)) var(--term-main);
+    
+    /* Curve di transizione morbide per un "respiro" organico */
+    transition: transform 0.08s cubic-bezier(0.2, 0.8, 0.2, 1), 
+                opacity 0.08s ease-out, 
+                text-shadow 0.08s ease-out;
+    
+    will-change: transform, opacity, text-shadow; /* Zero impatto CPU */
 }
 
 .ascii-signature {
