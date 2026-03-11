@@ -49,7 +49,7 @@ body {
     flex-direction: column;
     height: 100%;
     width: 100%;
-    overflow: visible; /* Permette alle particelle di volare oltre i limiti nell'area di margin */
+    overflow: visible;
 }
 
 /* --- BRUTALIST HARDWARE HUD --- */
@@ -65,7 +65,7 @@ body {
 .navbar-grid {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end; /* Allinea il logo e i bottoni in basso */
+    align-items: flex-end; 
     justify-content: space-between;
     gap: 20px;
     width: 100%;
@@ -79,12 +79,12 @@ body {
     justify-content: flex-end;
 }
 
-/* Scatole dei moduli hardware (nessun bordo arrotondato, nessun glow) */
+/* Scatole dei moduli hardware */
 .module-box {
     display: flex;
     border: 1px solid var(--term-dim);
     background: transparent;
-    height: 48px; /* Altezza fissa hardware */
+    height: 48px; 
 }
 
 /* Celle interne e bottoni */
@@ -140,11 +140,9 @@ body {
     justify-content: center;
     color: var(--term-dim);
     cursor: pointer;
-    border: 1px solid var(--term-dim);
-    background: transparent;
 }
 
-/* Inversione di colore brutalista all'hover (no transizioni morbide) */
+/* Inversione di colore brutalista all'hover */
 .grid-cell:hover, .cli-btn:hover, .power-btn:hover {
     background: var(--term-main);
     color: var(--term-bg);
@@ -163,7 +161,7 @@ body {
 .logo-wrapper { 
     filter: none; 
     position: relative; 
-    z-index: 9998; /* Sopra tutta l'interfaccia */
+    z-index: 9998; 
 }
 
 .ascii-art {
@@ -184,7 +182,7 @@ body {
     width: 5px;        
     text-align: center;
     will-change: transform;
-    transition: transform 0.08s ease-out; /* Garantisce il ritorno fluido alla sagoma originale */
+    transition: transform 0.08s ease-out; 
 }
 
 .logo-particle.scattered {
@@ -203,7 +201,7 @@ body {
     letter-spacing: 1px;
     margin-top: 4px;
     position: relative;
-    z-index: 9999; /* Livello assoluto più alto: il nome non viene mai coperto */
+    z-index: 9999; 
     pointer-events: none;
 }
 
@@ -230,7 +228,6 @@ body {
     width: 100%;
     scroll-behavior: smooth;
     scroll-padding-bottom: 10vh;
-    /* Progetto tipografico a blocco */
     text-align: justify;
     text-justify: inter-word;
     max-width: 850px;
@@ -245,7 +242,6 @@ body {
 
 .sys-log { color: var(--term-dim); font-size: 11px; margin-bottom: 2px; }
 
-/* Stile speciale per il boot text mantenuto */
 .sys-log.brand {
     text-align: center;
     white-space: pre; 
@@ -291,7 +287,7 @@ body {
 
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
-/* --- CRT SCANLINES (SOLO LINEE, NESSUNA VIGNETTATURA SFUMATA) --- */
+/* --- CRT SCANLINES --- */
 body::after {
     content: "";
     display: block;
@@ -304,7 +300,7 @@ body::after {
     opacity: 0.90;
 }
 
-/* --- PANNELLI FLUTTUANTI (HARDWARE MINIMAL) --- */
+/* --- PANNELLI FLUTTUANTI --- */
 #harvest-panel {
     display: none;
     position: absolute;
@@ -377,44 +373,56 @@ body::after {
 }
 #confirm-word-btn:hover { background: var(--term-main); }
 
+
 /* ========================================================= */
-/* --- FIX MOBILE: TERMINAL HUD STACK --- */
+/* --- FIX MOBILE DEFINITIVO: TERMINAL HUD GRID --- */
 /* ========================================================= */
 @media (max-width: 768px) {
     body {
-        padding: 10px; /* Recuperiamo spazio laterale */
+        padding: 10px; 
     }
 
     .navbar-grid {
         flex-direction: column;
-        align-items: stretch; /* Allarga tutto al 100% */
+        align-items: center; 
         gap: 15px;
     }
 
     .logo-wrapper {
-        align-self: flex-start; /* Mantiene il logo a sinistra */
+        display: flex;
+        flex-direction: column;
+        align-items: center;
     }
 
+    /* Forza la griglia a 3 righe e blocca i conflitti flexbox */
     .os-controls {
-        flex-direction: column; /* Impila le scatole hardware una sull'altra */
-        width: 100%;
+        display: grid !important;
+        grid-template-columns: 1fr 48px; /* TKN prende lo spazio libero, Play prende 48px */
+        grid-template-rows: 48px 48px 48px; /* Fissa l'altezza delle 3 righe */
         gap: 10px;
-    }
-
-    .module-box {
-        width: 100%; /* Ogni modulo prende tutta la larghezza */
-        justify-content: space-between; /* Spazia i bottoni interni in modo uniforme */
-    }
-
-    /* Forza i bottoni interni a riempire lo spazio orizzontale in modo equo */
-    .grid-cell, .cli-btn, .cli-btn-static {
-        flex-grow: 1; 
-        padding: 0 5px; /* Riduciamo il padding interno per non farli sbordare */
-    }
-
-    /* Adatta il bottone di accensione al layout a colonna */
-    .power-btn {
         width: 100%;
-        height: 48px;
     }
+
+    /* Assegnazione chirurgica ai blocchi della griglia */
+    .status-grid    { grid-column: 1 / 2; grid-row: 1; width: 100%; }
+    #sysPowerBtn    { grid-column: 2 / 3; grid-row: 1; width: 100%; justify-content: center !important; padding: 0; }
+    
+    .settings-panel { grid-column: 1 / 3; grid-row: 2; width: 100%; }
+    .controls-grid  { grid-column: 1 / 3; grid-row: 3; width: 100%; }
+
+    /* Tutti i box hardware tornano alla loro altezza standard */
+    .module-box {
+        height: 48px !important; 
+    }
+
+    /* Gli elementi interni si dividono equamente lo spazio */
+    .grid-cell, .cli-btn, .cli-btn-static {
+        flex: 1; 
+        padding: 0 2px;
+    }
+
+    /* Micro-tipografia per far entrare tutto negli schermi piccoli */
+    .grid-cell .label, .cli-btn-static .label { font-size: 8px; }
+    .grid-cell select { font-size: 11px; padding: 0; }
+    .cli-btn { font-size: 9px; letter-spacing: 0; }
 }
