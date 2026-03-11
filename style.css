@@ -49,7 +49,7 @@ body {
     flex-direction: column;
     height: 100%;
     width: 100%;
-    overflow: visible;
+    overflow: visible; 
 }
 
 /* --- BRUTALIST HARDWARE HUD --- */
@@ -157,7 +157,7 @@ body {
     border-color: var(--term-err);
 }
 
-/* --- AUDIO-REACTIVE LOGO (ESSENTIAL) --- */
+/* --- AUDIO-REACTIVE LOGO --- */
 .logo-wrapper { 
     filter: none; 
     position: relative; 
@@ -375,54 +375,62 @@ body::after {
 
 
 /* ========================================================= */
-/* --- FIX MOBILE DEFINITIVO: TERMINAL HUD GRID --- */
+/* --- FIX MOBILE DEFINITIVO: GRIGLIA MODULARE BASE 1U --- */
 /* ========================================================= */
 @media (max-width: 768px) {
-    body {
-        padding: 10px; 
-    }
+    body { padding: 10px; }
+    .navbar-grid { flex-direction: column; align-items: center; gap: 15px; }
+    .logo-wrapper { display: flex; flex-direction: column; align-items: center; }
 
-    .navbar-grid {
-        flex-direction: column;
-        align-items: center; 
-        gap: 15px;
-    }
-
-    .logo-wrapper {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-    }
-
-    /* Forza la griglia a 3 righe e blocca i conflitti flexbox */
+    /* Il trucco matematico per allineare i bordi nonostante i gap:
+       La colonna TKN prende il 25% spaccato. La colonna Play assorbe il gap nel suo 75%. */
     .os-controls {
         display: grid !important;
-        grid-template-columns: 1fr 48px; /* TKN prende lo spazio libero, Play prende 48px */
-        grid-template-rows: 48px 48px 48px; /* Fissa l'altezza delle 3 righe */
+        grid-template-columns: 25% calc(75% - 10px); 
+        grid-template-rows: 48px 48px 48px;
         gap: 10px;
         width: 100%;
     }
 
-    /* Assegnazione chirurgica ai blocchi della griglia */
-    .status-grid    { grid-column: 1 / 2; grid-row: 1; width: 100%; }
-    #sysPowerBtn    { grid-column: 2 / 3; grid-row: 1; width: 100%; justify-content: center !important; padding: 0; }
+    /* --- RIGA 1: TKN (1u) + PLAY (3u) --- */
+    .status-grid { 
+        grid-column: 1 / 2; grid-row: 1; 
+        width: 100%; margin: 0; 
+    }
+    #sysPowerBtn { 
+        grid-column: 2 / 3; grid-row: 1; 
+        width: 100%; justify-content: center !important; margin: 0; 
+    }
     
-    .settings-panel { grid-column: 1 / 3; grid-row: 2; width: 100%; }
-    .controls-grid  { grid-column: 1 / 3; grid-row: 3; width: 100%; }
-
-    /* Tutti i box hardware tornano alla loro altezza standard */
-    .module-box {
-        height: 48px !important; 
+    /* --- RIGA 2 e 3: Prendono tutta la larghezza (4u) --- */
+    .settings-panel { 
+        grid-column: 1 / 3; grid-row: 2; 
+        width: 100%; margin: 0; display: flex; 
+    }
+    .controls-grid  { 
+        grid-column: 1 / 3; grid-row: 3; 
+        width: 100%; margin: 0; display: flex; 
     }
 
-    /* Gli elementi interni si dividono equamente lo spazio */
+    /* Forziamo l'altezza hardware per tutti i moduli e rimuoviamo margini fantasma */
+    .module-box { height: 48px !important; margin: 0 !important; }
+
+    /* I tastini in Flexbox si dividono lo spazio esattamente al 25% ciascuno */
     .grid-cell, .cli-btn, .cli-btn-static {
         flex: 1; 
-        padding: 0 2px;
+        padding: 0; 
+        justify-content: center;
     }
 
-    /* Micro-tipografia per far entrare tutto negli schermi piccoli */
+    /* Uniformiamo TKN per farlo sembrare un blocco identico a MOD, LNG, ecc. */
+    .status-grid .cli-btn-static {
+        width: 100%; height: 100%;
+        border-right: none; /* Rimuove il bordo interno superfluo */
+    }
+
+    /* Ottimizzazione dei font per incastrare il testo nello spazio esatto */
     .grid-cell .label, .cli-btn-static .label { font-size: 8px; }
-    .grid-cell select { font-size: 11px; padding: 0; }
+    .grid-cell select { font-size: 11px; text-align-last: center; padding: 0; }
     .cli-btn { font-size: 9px; letter-spacing: 0; }
+    #sysPowerBtn { font-size: 24px; }
 }
