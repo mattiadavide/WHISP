@@ -16,11 +16,12 @@ const BOH_PATTERNS = [
 // High-priority entities that the base model frequently garbles into phonetic clusters.
 const GLOBAL_RECONCILIATION_POOL = {
     italian: [
-        { entity: "per onestà", phonetic: ["perunesta"] },
-        { entity: "Trump, la", phonetic: ["trampla", "tranpla"] },
-        { entity: "educatrici", phonetic: ["ducatri"] },
-        { entity: "temi", phonetic: ["tevi"] },
-        { entity: "Prendo", phonetic: ["prenno"] }
+        { entity: "Netanyahu", phonetic: ["netaniao", "netannia", "metaniao", "benjam"] },
+        { entity: "Srebrenica", phonetic: ["srebre", "sebreniza", "srebren"] },
+        { entity: "Stretto di Hormuz", phonetic: ["ormutz", "ormuzza", "ormuti", "ormozza"] },
+        { entity: "Piazza Affari", phonetic: ["piazza fari", "piazzaffari"] },
+        { entity: "per onestà", phonetic: ["perunesta", "peronesta", "esta"] },
+        { entity: "Trump", phonetic: ["trampla", "trunp", "trampa"] }
     ]
 };
 const BASE_MODEL_PREFIX_PATTERNS = [

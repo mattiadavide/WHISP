@@ -114,16 +114,16 @@ export function startRenderLoop(workerStore) {
 
             // 2. RAREFAZIONE FISICA: Più c'è parlato, più i pixel "evaporano"
             // Usiamo un mix di RMS (volume) e speechProb (certezza del parlato)
-            let targetIntensity = (currentRms * 25) + (speechProb * 0.5);
-            targetIntensity = Math.min(targetIntensity, 1.4);
+            let targetIntensity = (currentRms * 35) + (speechProb * 0.6);
+            targetIntensity = Math.min(targetIntensity, 1.5);
 
             if (targetIntensity > smoothedIntensity) {
-                smoothedIntensity = targetIntensity;
+                smoothedIntensity = targetIntensity; 
             } else {
-                smoothedIntensity += (targetIntensity - smoothedIntensity) * 0.15;
+                smoothedIntensity += (targetIntensity - smoothedIntensity) * 0.12;
             }
             
-            if (currentRms < 0.001 && speechProb < 0.1) smoothedIntensity *= 0.8;
+            if (currentRms < 0.001 && speechProb < 0.1) smoothedIntensity *= 0.5;
 
             logo.style.setProperty('--glitch-intensity', smoothedIntensity.toFixed(3));
         }

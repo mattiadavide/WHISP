@@ -220,7 +220,7 @@ body {
     padding: 20px 0 10vh 0; 
     flex-grow: 1;
     overflow-y: auto;
-    line-height: 1.7; 
+    line-height: 1.8; 
     color: var(--term-main); 
     outline: none; 
     white-space: pre-wrap; 
@@ -230,9 +230,15 @@ body {
     scroll-padding-bottom: 10vh;
     /* Progetto tipografico a blocco */
     text-align: justify;
-    hyphens: auto;
-    max-width: 900px;
+    text-justify: inter-word;
+    max-width: 850px;
     margin: 0 auto;
+}
+
+.word-token:hover {
+    outline: 1px solid var(--term-main);
+    background: transparent;
+    color: var(--term-main);
 }
 
 .sys-log { color: var(--term-dim); font-size: 11px; margin-bottom: 2px; }

@@ -91,14 +91,13 @@ self.onmessage = async (e) => {
                             const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                             state = out.stateN || out.staten || state;
                             const prob = out.output.data[0];
-                            const isBase = currentPrecision === 'base';
-                            const threshold = isBase ? (isSpeaking ? 0.60 : 0.95) : (isSpeaking ? 0.45 : 0.85);
-                            const maxSilenceFrames = isBase ? 5 : (currentPrecision === 'turbo' ? 22 : 12); 
+                            const threshold = isSpeaking ? 0.35 : 0.88; 
+                            const maxSilenceFrames = 45; // Context window di 1.4s
 
                             if (prob > threshold) { 
                                 if (!isSpeaking) {
                                     attackFrames++;
-                                    if (attackFrames >= 3) { // ~96ms Attack Timeout
+                                    if (attackFrames >= 8) { // Filtro per rumori transitori (minSpeechFrames)
                                         isSpeaking = true;
                                         audioChunks = [...preRoll];
                                         attackFrames = 0;
