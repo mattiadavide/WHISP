@@ -162,6 +162,13 @@ body {
     filter: none; 
     position: relative; 
     z-index: 9998; 
+    /* FIX TERREMOTO: Gabbia di contenimento fissa */
+    height: 60px; 
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: visible; /* Permette al glitch di uscire senza spostare il layout */
 }
 
 .ascii-art {
