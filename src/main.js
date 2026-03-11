@@ -1,7 +1,6 @@
 import { UI, initLanguages, setStatus, setPowerBtn, resetMeters, updateHarvestTable, interimSpan, cursorSpan, renderState, startRenderLoop } from './ui.js';
-import { loadStopWords, fetchZeitgeist, extractValuableTokens, experienceDict, referenceDict, boostToken } from './zeitgeist.js';
-import { ASCII_LOGO, SIGNATURE } from './logo_header.js';
-import { BOOT_LOGO } from './logo_boot.js';
+import { loadStopWords, fetchZeitgeist, extractValuableTokens, experienceDict, referenceDict, boostToken, jaroWinkler } from './zeitgeist.js';
+import { ASCII_LOGO, BOOT_LOGO, SIGNATURE } from './logo_header.js';
 import { AudioProcessor } from './audio.js';
 
 // Populate header logo & signature with Audio-Reactive Particles
@@ -10,33 +9,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const signatureEl = document.querySelector('.ascii-signature');
     
     if (logoEl) {
-        const lines = ASCII_LOGO.split('\n');
-        const H = lines.length;
-        const W = Math.max(...lines.map(l => l.length));
-        const cx = W / 2;
-        const cy = H / 2;
-
         let html = '';
-        for (let y = 0; y < H; y++) {
-            const line = lines[y];
-            for (let x = 0; x < line.length; x++) {
-                const char = line[x];
-                if (char.trim() !== '') {
-                    // Genera vettori di dispersione casuali (da -1 a 1) per l'effetto nebulosa
-                    const rx = (Math.random() * 2 - 1).toFixed(3);
-                    const ry = (Math.random() * 2 - 1).toFixed(3);
-                    // Genera un angolo di rotazione casuale
-                    const rRot = (Math.random() * 180 - 90).toFixed(1);
-                    html += `<span class="logo-particle" style="--rx: ${rx}; --ry: ${ry}; --rRot: ${rRot};">${char}</span>`;
-                } else {
-                    html += char;
-                }
+        for (let char of ASCII_LOGO) {
+            if (char === '\n') html += '\n';
+            else {
+                // Generazione coordinate di dispersione casuale (esplosione originale)
+                const rx = (Math.random() - 0.5) * 15; 
+                const ry = (Math.random() - 0.5) * 10;
+                const rRot = (Math.random() - 0.5) * 90;
+                html += `<span class="logo-particle scattered" style="--rx: ${rx}px; --ry: ${ry}px; --rRot: ${rRot}deg;">${char}</span>`;
             }
-            if (y < H - 1) html += '\n';
         }
         logoEl.innerHTML = html;
     }
-    
     if (signatureEl) signatureEl.innerText = SIGNATURE;
 });
 let workerStore = { vad: null, whisper: null, nlp: null };
@@ -190,10 +175,12 @@ function initWorkers() {
             e.data.tokens.forEach((t, i) => {
                 const s = document.createElement('span');
                 s.className = 'word-token' + (t.isLowConf ? ' low-conf' : '') + (t.healed ? ' validated' : '');
-                s.innerText = ' ' + t.text;
+                s.innerText = t.text; // NO SPAZIO INTERNO
+                s.style.display = 'inline-block';
                 s.style.animationDelay = `${i * STREAM_DELAY_MS}ms`;
                 s.dataset.tokenId = String(++_tokenIdCounter); 
                 frag.appendChild(s);
+                frag.appendChild(document.createTextNode(' ')); // SPAZIO ESTERNO PER JUSTIFY
                 transcriptBuffer.push(' ' + t.text);
             });
             
@@ -203,14 +190,21 @@ function initWorkers() {
         }
         if (e.data.type === 'REHEAL_DONE') {
             // [RETROACTIVE HEALING]: update DOM spans that were successfully corrected
-            for (const { id, corrected } of e.data.healed) {
+            for (const { id, corrected, consumeNext } of e.data.healed) {
                 const span = UI.output.querySelector(`[data-token-id="${id}"]`);
-                if (span && span.classList.contains('low-conf')) {
+                if (span) {
                     span.innerText = ' ' + corrected;
                     span.classList.remove('low-conf');
                     span.classList.add('validated', 'heal-flash');
-                    // Update transcriptBuffer too (find and replace by position is hard,
-                    // so we keep buffer as-is — COPY/EXPORT uses DOM text directly)
+                    
+                    if (consumeNext) {
+                        let next = span.nextElementSibling;
+                        for (let k = 0; k < consumeNext && next; k++) {
+                            const toRemove = next;
+                            next = next.nextElementSibling;
+                            if (toRemove.classList.contains('word-token')) toRemove.remove();
+                        }
+                    }
                 }
             }
         }
@@ -299,6 +293,7 @@ function initWorkers() {
             // without any manual domain selection.
             if (d.text && d.text.trim().length > 2) {
                 extractValuableTokens(d.text);
+                window.dispatchEvent(new CustomEvent('tkn_live_update', { detail: { count: referenceDict.size + experienceDict.size } }));
             }
 
             // [CLOSED-LOOP FEEDBACK]: Boost low-confidence tokens back into Zeitgeist.
@@ -328,11 +323,8 @@ function initWorkers() {
                     .map(e => e[0])
             });
         } else if (d.type === 'transcribing') {
-            // [BASE MODEL UX] — Show animated placeholder when inference is in progress
-            // and no real partial text is available yet. Only update if not already showing.
-            if (!interimSpan.querySelector('.transcribing-indicator')) {
+            if (lastInterimWords.length === 0 && !interimSpan.querySelector('.transcribing-indicator')) {
                 interimSpan.innerHTML = '';
-                lastInterimWords = [];
                 const ind = document.createElement('span');
                 ind.className = 'transcribing-indicator interim-text';
                 ind.innerText = ' ⠿ analisi in corso...';
@@ -342,29 +334,38 @@ function initWorkers() {
         } else if (d.type === 'partial') {
             if (d.avgConf !== undefined) renderState.asrProb = d.avgConf;
             if (d.queueLength !== undefined) { renderState.queue = d.queueLength; renderState.needsRender = true; }
+            
+            const ind = interimSpan.querySelector('.transcribing-indicator');
+            if (ind) ind.remove();
+
             const newWords = d.text.trim().split(/\s+/).filter(Boolean);
             const prevCount = lastInterimWords.length;
             const addedWords = newWords.slice(prevCount);
             lastInterimWords = newWords;
+            
             if (addedWords.length > 0) {
-                const existingSpans = interimSpan.querySelectorAll('.interim-word').length;
                 addedWords.forEach((word, i) => {
                     const ws = document.createElement('span');
                     ws.className = 'interim-word interim-text';
-                    ws.innerText = ' ' + word;
-                    ws.style.animationDelay = `${i * 40}ms`;
+                    ws.innerText = word; // NO SPAZIO
+                    ws.style.display = 'inline-block';
+                    ws.style.animationDelay = `${i * 30}ms`;
                     ws.style.animation = 'wordStreamIn 0.2s ease-out both';
                     interimSpan.appendChild(ws);
+                    interimSpan.appendChild(document.createTextNode(' ')); // SPAZIO ESTERNO
                 });
             } else if (newWords.length < prevCount) {
                 interimSpan.innerHTML = '';
                 newWords.forEach((word, i) => {
                     const ws = document.createElement('span');
                     ws.className = 'interim-word interim-text';
-                    ws.innerText = ' ' + word;
+                    ws.innerText = word; // NO SPAZIO
+                    ws.style.display = 'inline-block';
                     interimSpan.appendChild(ws);
+                    interimSpan.appendChild(document.createTextNode(' ')); // SPAZIO ESTERNO
                 });
             }
+            interimSpan.appendChild(cursorSpan);
             UI.output.scrollTop = UI.output.scrollHeight;
         }
     };
@@ -383,51 +384,67 @@ function initWorkers() {
 }
 async function runBootSequence() {
     UI.output.innerHTML = "";
+    
+    // Gather real hardware data
+    const cpuCores = navigator.hardwareConcurrency || "UNKNOWN";
+    const ramGB = navigator.deviceMemory ? `${navigator.deviceMemory}GB` : "UNKNOWN";
+    const gpuStatus = navigator.gpu ? "SUPPORTED" : "UNSUPPORTED";
+    
+    let storageInfo = "UNKNOWN";
+    try {
+        const estimate = await navigator.storage.estimate();
+        const quotaGB = (estimate.quota / (1024 ** 3)).toFixed(1);
+        storageInfo = `${quotaGB}GB AVAILABLE`;
+    } catch(e) {}
+
+    const platform = navigator.platform || "UNKNOWN";
+    const userAgent = navigator.userAgent;
+    const osInfo = userAgent.includes("Mac") ? "macOS" : userAgent.includes("Win") ? "Windows" : userAgent.includes("Linux") ? "Linux" : platform;
+
+    const logoLines = BOOT_LOGO.split('\n');
+    const maxLen = Math.max(...logoLines.map(l => l.length));
+
     const lines = [
         "AMIBIOS (C) 2026 American Megatrends, Inc.",
-        "WHISP KERNEL v1.0.2 - BUILD 0x3F2A",
+        `WHISP KERNEL v1.0.2 - BUILD 0x3F2A [${osInfo}]`,
         "",
-        "CPU: NEURAL_ENGINE @ 6.4 TFLOPS",
-        "MEMORY TEST: 65536KB OK",
+        `CPU: ${cpuCores} LOGICAL CORES DETECTED`,
+        `MEMORY: ${ramGB} PHYSICAL RAM OK`,
+        `WEBGPU: ${gpuStatus}`,
         "",
-        "SATA PORT 1: WHISP_STORAGE_UNIT [ONLINE]",
-        "SATA PORT 2: DICTIONARY_VAD_CORE [ONLINE]",
-        "SATA PORT 3: WHISPER_ONNX_ENGINE [ONLINE]",
+        `STORAGE: ${storageInfo} [SATA_PORT_1]`,
+        "ENGINE: DICTIONARY_VAD_CORE [ONLINE]",
+        "MODELS: WHISPER_ONNX_ENGINE [READY]",
         "",
         "",
-        ...BOOT_LOGO.split('\n'),
-        SIGNATURE
+        ...logoLines,
+        SIGNATURE.padEnd(maxLen, ' ')
     ];
 
     for (let i = 0; i < lines.length; i++) {
         const div = document.createElement('div');
-        // Calcola se la riga corrente fa parte del logo o della firma (che sono alla fine dell'array)
         const logoLength = BOOT_LOGO.split('\n').length;
         const isCentered = i >= (lines.length - 1 - logoLength);
         div.className = isCentered ? 'sys-log brand' : 'sys-log';
         
         if (i === 3) div.style.marginTop = "30px"; 
         if (i === 7) div.style.marginTop = "20px"; 
-        // Calculate logo start index dynamically based on BOOT_LOGO length
-        const bootLogoLinesCount = BOOT_LOGO.split('\n').length;
-        const logoStartIndexInLinesArray = lines.length - bootLogoLinesCount - 1; // -1 for SIGNATURE
         
-        if (i >= logoStartIndexInLinesArray && i < lines.length - 1) { // Logo lines
-            if (i === logoStartIndexInLinesArray) {
-                div.style.marginTop = "50px";
-            } else {
-                div.style.marginTop = "0";
-            }
+        const bootLogoLinesCount = BOOT_LOGO.split('\n').length;
+        const logoStartIndexInLinesArray = lines.length - bootLogoLinesCount - 1;
+        
+        if (i >= logoStartIndexInLinesArray && i < lines.length - 1) {
+            div.style.marginTop = i === logoStartIndexInLinesArray ? "50px" : "0";
         }
-        if (i === lines.length - 1) div.style.marginTop = "15px"; // Signature line
+        if (i === lines.length - 1) div.style.marginTop = "15px";
         
         UI.output.appendChild(div);
 
-        if (i === lines.length - 1) { // The last line is the Signature
+        if (i === lines.length - 1) { 
             const text = lines[i];
             for (let char of text) {
                 div.appendChild(document.createTextNode(char));
-                div.appendChild(cursorSpan); // Move the cursor
+                div.appendChild(cursorSpan);
                 UI.output.scrollTop = UI.output.scrollHeight;
                 await new Promise(r => setTimeout(r, 20));
             }
@@ -439,9 +456,25 @@ async function runBootSequence() {
         }
     }
     
-    // Attach interimSpan immediately after the signature and pass the cursor to it
     UI.output.appendChild(interimSpan);
-    interimSpan.appendChild(cursorSpan);
+
+    // PERSISTENZA: Carica permanentExperience dal localStorage
+    try {
+        const saved = localStorage.getItem('whisp_permanent_experience');
+        if (saved) {
+            const arr = JSON.parse(saved);
+            arr.forEach(w => experienceDict.add(w.toLowerCase()));
+            UI.zeitgeistLog.innerText += `\n> PERMANENT_EXPERIENCE_LOADED [${arr.length} TOKENS]`;
+            
+            // PRIMING: Inject experience into Whisper immediately to prime the model
+            if (workerStore.whisper?.worker) {
+                workerStore.whisper.worker.postMessage({ 
+                    type: 'update_params', 
+                    prompt: window.buildOptimizedPrompt() 
+                });
+            }
+        }
+    } catch (e) { console.warn("[BOOT] Failed to load experience:", e); }
 }
 UI.sysPowerBtn.onclick = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -459,6 +492,9 @@ UI.sysPowerBtn.onclick = async () => {
         try {
             await runBootSequence();
             hasBooted = true;
+
+            // Coalesce the logo swarm - DISABLED to keep shattering
+            // document.querySelectorAll('.logo-particle').forEach(p => p.classList.remove('scattered'));
 
             // [START INITIALIZATION AFTER BOOT LOGS START]
             const lang = UI.languageSelect?.value || 'italian';
@@ -482,6 +518,7 @@ UI.sysPowerBtn.onclick = async () => {
             // Note: Power button will be updated to ■ by READY_TO_PROCESS signal from whisper worker
 
             await audioProcessor.init(UI.audioSource.value, workerStore.vad.worker);
+            setPowerBtn("■", "var(--term-warn)");
         } catch (err) {
             setPowerBtn("▶", undefined, false);
             setStatus("MIC_ERROR", "var(--term-err)");
@@ -515,7 +552,7 @@ UI.dictFileInput.onchange = (e) => {
     reader.onload = (ev) => {
         extractValuableTokens(ev.target.result);
         UI.zeitgeistLog.innerText += `\n> CUSTOM_DICT_LOADED [TOKENS: ${referenceDict.size}]`;
-        window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size } }));
+        window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size + experienceDict.size } }));
         if (workerStore.whisper && workerStore.whisper.worker) {
             workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: window.buildOptimizedPrompt() });
         }
@@ -530,11 +567,42 @@ window.addEventListener('zeitgeist_sync_done', () => {
 UI.output.addEventListener('click', (e) => {
     if (e.target.classList.contains('word-token')) {
         activeToken = e.target;
-        UI.editInput.value = activeToken.innerText.trim();
+        const text = activeToken.innerText.trim();
+        UI.editInput.value = text;
+        
+        // SUGGERIMENTI INTELLIGENTI NELLA UI: Calcola i top 3 candidati Jaro-Winkler
+        const suggestions = Array.from(referenceDict.keys())
+            .map(ref => ({ word: ref, score: jaroWinkler(text.toLowerCase(), ref) }))
+            .filter(c => c.score > 0.80) // Standard threshold for high-quality candidates
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 3);
+
+        const tray = UI.popup.querySelector('.suggestion-tray') || document.createElement('div');
+        tray.className = 'suggestion-tray';
+        
+        if (suggestions.length > 0) {
+            tray.innerHTML = '<div class="suggest-hint" style="width:100%">SUGGESTIONS:</div>' + 
+                suggestions.map(s => `<button class="suggest-btn">${s.word}</button>`).join('');
+        } else {
+            tray.innerHTML = '<div class="suggest-hint">NO MATCH FOUND</div>';
+        }
+        
+        if (!UI.popup.contains(tray)) {
+            UI.popup.insertBefore(tray, UI.editInput);
+        }
+        
+        tray.onclick = (te) => {
+            if (te.target.classList.contains('suggest-btn')) {
+                UI.editInput.value = te.target.innerText;
+                UI.editInput.focus();
+            }
+        };
+
         UI.popup.style.display = 'block';
         UI.popup.style.left = `${e.pageX}px`;
         UI.popup.style.top = `${e.pageY + 10}px`;
         UI.editInput.focus();
+        UI.editInput.select();
     }
 });
 UI.confirmBtn.onclick = () => {
@@ -542,7 +610,18 @@ UI.confirmBtn.onclick = () => {
         const newVal = UI.editInput.value.trim();
         activeToken.innerText = " " + newVal;
         activeToken.className = 'word-token validated';
-        experienceDict.add(newVal.toLowerCase());
+        
+        // PERSISTENZA: Salva nel localStorage l'intero set aggiornato
+        const lower = newVal.toLowerCase();
+        experienceDict.add(lower);
+        window.dispatchEvent(new CustomEvent('tkn_live_update', { detail: { count: referenceDict.size + experienceDict.size } }));
+        localStorage.setItem('whisp_permanent_experience', JSON.stringify(Array.from(experienceDict)));
+        
+        // EMISSIONE FEEDBACK & BOOST: Notifica Whisper immediatamente
+        if (workerStore.whisper?.worker) {
+            workerStore.whisper.worker.postMessage({ type: 'BOOST_TOKEN', word: newVal });
+        }
+        
         updateHarvestTable(newVal, 'MANUAL_VALIDATION');
     }
     UI.popup.style.display = 'none';

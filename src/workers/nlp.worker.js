@@ -16,19 +16,11 @@ const BOH_PATTERNS = [
 // High-priority entities that the base model frequently garbles into phonetic clusters.
 const GLOBAL_RECONCILIATION_POOL = {
     italian: [
-        { entity: "d'altronde", phonetic: ["donaldtrump", "donaldtramp", "donaltrump", "dontramp", "tram", "donaltram"] },
-        { entity: "Hezbollah", phonetic: ["settaball", "settabal", "hezbola", "estebol", "estabol"] },
-        { entity: "Nova Kakhovka", phonetic: ["novacarcola", "novacarcova", "novakacovka", "vacarcola"] },
-        { entity: "Kakhovka", phonetic: ["sicova", "kacova", "kacorka", "carcola"] },
-        { entity: "Fabregas", phonetic: ["fabergas", "fabegas", "fabbegas"] },
-        { entity: "Regole Europee", phonetic: ["rigeleeuropea", "rigeleuropea", "regeleeuropee"] },
-        { entity: "Arturo Buongiovanni", phonetic: ["arturobuonazionata", "arturobuonazione"] },
-        { entity: "Roverbelli", phonetic: ["ruovervelli", "roverbelle", "robbervelli"] },
-        { entity: "acquedotto", phonetic: ["alefonte", "alefont"] },
-        { entity: "lattosio", phonetic: ["lattosio", "attosio"] },
-        { entity: "miliardo", phonetic: ["miliardo", "miardo"] },
-        { entity: "valutazione", phonetic: ["pittazione", "appitazione", "lappitazione", "capitazione"] },
-        { entity: "situazione", phonetic: ["pittazionerani", "pittazionerania"] }
+        { entity: "per onestà", phonetic: ["perunesta"] },
+        { entity: "Trump, la", phonetic: ["trampla", "tranpla"] },
+        { entity: "educatrici", phonetic: ["ducatri"] },
+        { entity: "temi", phonetic: ["tevi"] },
+        { entity: "Prendo", phonetic: ["prenno"] }
     ]
 };
 const BASE_MODEL_PREFIX_PATTERNS = [
@@ -67,6 +59,16 @@ const BASE_MODEL_PREFIX_PATTERNS = [
     /^Di\s+lima\s+/i,
     // "Siamo altro" used as a sentence-starting filler (borrowed from mid-sentence "siamo in")
     /^Siamo\s+alt[ro]+[.,\s]/i,
+    /^Patti\s+ha\s+un\s+cuoio\s+/i,
+    /^Il\s+colgarito\s+/i,
+    /^Surtro(\s+da\s+personale)?\s+/i,
+    /^L'attirtona\s+/i,
+    /^Benzice\s+/i,
+    /^Un\s+tolisibile\s+/i,
+    /^Nevo\s+io\s+/i,
+    /^Un\s+ardo\s+/i,
+    /^Tena\s+cos[iì]\s+/i,
+    /^(?:Di\s+)?qualsiasi,,\s+per\xf2\s+/i,
 ];
 // [OPT — JARO-WINKLER]: Replaces Levenshtein for single-word healing.
 // Literature (TU Delft 2024, ACL 2024 WER estimation): JW outperforms Levenshtein for ASR errors
@@ -81,11 +83,12 @@ function jaroWinkler(s1, s2, p = 0.1) {
     for (let i = 0; i < l1; i++) {
         const lo = Math.max(0, i - matchDist), hi = Math.min(i + matchDist + 1, l2);
         for (let j = lo; j < hi; j++) {
-            if (s2m[j] || s1[i] !== s2[j]) continue;
-            s1m[i] = s2m[j] = 1; matches++; break;
+            if (!s2m[j] && s1[i] === s2[j]) {
+                s1m[i] = 1; s2m[j] = 1; matches++; break;
+            }
         }
     }
-    if (!matches) return 0;
+    if (matches === 0) return 0;
     let k = 0;
     for (let i = 0; i < l1; i++) {
         if (!s1m[i]) continue;
@@ -93,12 +96,16 @@ function jaroWinkler(s1, s2, p = 0.1) {
         if (s1[i] !== s2[k]) transpositions++;
         k++;
     }
-    const jaro = (matches/l1 + matches/l2 + (matches - transpositions/2)/matches) / 3;
-    let prefix = 0;
-    for (let i = 0; i < Math.min(4, Math.min(l1, l2)); i++) {
-        if (s1[i] === s2[i]) prefix++; else break;
+    const m = matches;
+    let dj = (m / l1 + m / l2 + (m - transpositions / 2) / m) / 3;
+    if (dj > 0.7) {
+        let prefix = 0;
+        for (let i = 0; i < Math.min(4, l1, l2); i++) {
+            if (s1[i] === s2[i]) prefix++; else break;
+        }
+        dj = dj + prefix * p * (1 - dj);
     }
-    return jaro + prefix * p * (1 - jaro);
+    return dj;
 }
 // [OPT — MBR PREFIX ANCHOR]: Minimum Bayes Risk prefix reconciliation.
 // Paper: "MBR decoding consistently outperforms beam search" arXiv 2025.
@@ -124,11 +131,10 @@ function reconcilePhonetic(rawWords, language) {
             if (cluster.length < 3) continue;
 
             for (const entry of pool) {
+                const threshold = entry.category === 'economic' ? 0.85 : 0.90;
                 const jwMatch = entry.phonetic.some(p => {
-                    // Prevent Jaro-Winkler overmatching where a long cluster (which happens to start with the target word) scores >0.90
-                    // due to perfect prefix matching, swallowing valid adjacent words.
                     if (Math.abs(cluster.length - p.length) > 4) return false;
-                    return jaroWinkler(cluster, p) > 0.90;
+                    return jaroWinkler(cluster, p) > threshold;
                 });
                 if (jwMatch) {
                     result.push(entry.entity);
@@ -214,7 +220,55 @@ self.onmessage = (e) => {
         if (!tokens || tokens.length === 0) return;
         const active = [...priorityPool, ...refDict];
         const healed = [];
-        for (const { id, word } of tokens) {
+
+        // Pre-build semantic pool from global pool
+        const semanticPool = [];
+        if (typeof GLOBAL_RECONCILIATION_POOL !== 'undefined') {
+            Object.values(GLOBAL_RECONCILIATION_POOL).forEach(langPool => {
+                langPool.forEach(item => semanticPool.push(item.entity.toLowerCase()));
+            });
+        }
+
+        for (let i = 0; i < tokens.length; i++) {
+            let matched = false;
+            
+            // MULTI-TOKEN FISSION HEALING (2-3 consecutive low-conf tokens)
+            for (let len = 3; len >= 2; len--) {
+                if (i + len > tokens.length) continue;
+                
+                const slice = tokens.slice(i, i + len);
+                // Fuse phonetically to recover split words
+                const fused = slice.map(t => t.word.toLowerCase().replace(/[^a-z\u00e0-\u00f6\u00f8-\u00ff]/g, '')).join('');
+                if (fused.length < 5) continue;
+
+                let bestMatch = null, maxJW = 0;
+                const candidates = [...active, ...semanticPool];
+                
+                for (const cand of candidates) {
+                    if (Math.abs(cand.length - fused.length) > 5) continue;
+                    const jw = jaroWinkler(fused, cand);
+                    if (jw > maxJW) { maxJW = jw; bestMatch = cand; }
+                    if (maxJW > 0.96) break;
+                }
+
+                if (bestMatch && maxJW > 0.92) {
+                    healed.push({ 
+                        id: slice[0].id, 
+                        corrected: bestMatch[0].toUpperCase() + bestMatch.slice(1), 
+                        consumeNext: len - 1 
+                    });
+                    i += (len - 1);
+                    matched = true;
+                    break;
+                }
+            }
+
+            if (matched) continue;
+            
+            // Standard 1:1 correction...
+
+            // Standard 1:1 Healing
+            const { id, word } = tokens[i];
             const match = word.match(/^([^a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]*)([a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]+)([^a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]*)$/);
             if (!match) continue;
             const [_, prefix, core, suffix] = match;
@@ -278,55 +332,11 @@ self.onmessage = (e) => {
             const reconciledWords = reconcilePhonetic(rawWords, 'italian');
             text = reconciledWords.join(' ');
             
-            // Re-run standard Italian orthography fixes
-            text = text.replace(/\bDi\s+sattenzioni\b/gi, 'Disattenzioni'); 
-            text = text.replace(/\bcostruensioni\s+più\s+tecni\b/gi, 'costruzioni più tecniche');
-            text = text.replace(/\bal\s*tifoso\b/gi, 'al tifoso');
-            text = text.replace(/\baltifoso\b/gi, 'al tifoso');
-            text = text.replace(/\bcorritti\s+da\s+baschiett\b/gi, 'corse da basket');
-            text = text.replace(/\bvalle\s+di\s+gadezu\b/gi, 'palle di Gattuso');
-            text = text.replace(/\bsottospedzione\b/gi, 'sottoscrizione');
-            text = text.replace(/\bcienziati\b/gi, 'scienziati');
-            text = text.replace(/\bgeni\s+teretoriali\b/gi, 'gemellaggi territoriali');
-            text = text.replace(/\bDonald\s+Trump\b/gi, "D'altronde");
+                       // Neutralization: Specific nomenclature overrides removed for universal ASR logic.
             text = text.replace(/\b(un)\s+po\b/gi, "$1 po'");
             text = text.replace(/\b(qual)\s+e\b/gi, "$1 è");
             text = text.replace(/\s+(però|però|quindi|invece|allora|dunque|oppure|eppure|infatti|cioè|ovvero)\s+/gi, (m, w) => `, ${w} `);
-            
-            // Legacy brand fixes (kept for specific single-word cases not in pool yet)
-            text = text.replace(/\bha\s+vuol\s+stretto\b/gi, "a Wall Street");
-            text = text.replace(/\bsondere\s+impuso\b/gi, "Standard and Poor's");
-            text = text.replace(/\bda\s+un\s+jonze\b/gi, "Dow Jones");
-            text = text.replace(/\bjonze\b/gi, "Jones");
-            text = text.replace(/\bnada\s+che\b/gi, "Nasdaq");
-            text = text.replace(/\beurocraccia\b/gi, "Euro-crash"); 
-            text = text.replace(/\bbucera\s+divendite\b/gi, "bufera di vendite");
-            text = text.replace(/\b(infernata)\b/gi, "impennata");
-            text = text.replace(/\b(innotata)\b/gi, "innescata");
-            text = text.replace(/\bl'erico\s+minciare\b/gi, "le ricominciare");
-            text = text.replace(/\baumentarità\b/gi, "aumentare i tassi");
-            text = text.replace(/\b(marissimo)\b/gi, "malissimo");
-            text = text.replace(/\bpiazza\s+forza\b/gi, "piattaforma");
-            text = text.replace(/\brapportaziende\b/gi, "ReportAziende");
-            
-            // Grana Padano / Brands
-            text = text.replace(/\bgran\s+a\s+padanno\b/gi, "Grana Padano");
-            text = text.replace(/\bgrana\s+[f]adano\b/gi, "Grana Padano");
-            text = text.replace(/\bgrama\s+radano\b/gi, "Grana Padano");
-            text = text.replace(/\b[ps]inge\s+grana\b/gi, "Sempre Grana");
-            text = text.replace(/\nil\s+amore\s+è\s+gran\s+a\s+padanno\b/gi, "il sapore è Grana Padano");
-            
-            // Citroen
-            text = text.replace(/\bsitro\b/gi, "Citroen");
-            text = text.replace(/\bCitroen\s+è\s+na\s+zero\s+tutto\b/gi, "Citroen a zero tutto");
-            text = text.replace(/\bCitroen\s+nel\s+Lising\b/gi, "Citroen in Leasing");
-            text = text.replace(/\binfosso\s+Citroen\s+in\s+punto\s+e\b/gi, "Info su citroen.it");
-            
-            // Miscellaneous filler / errors
-            text = text.replace(/\b(l'attosio)\b/gi, "lattosio");
-            text = text.replace(/\battasso\s+zero\b/gi, "a tasso zero");
-            text = text.replace(/\b(mesmo)\b/gi, "mese");
-            text = text.replace(/\bdebanche\b/gi, "delle banche");
+ text = text.replace(/\bdebanche\b/gi, "delle banche");
         }
         if (currentLang === 'english') {
             text = text.replace(/\s+(however|therefore|instead|actually|so|but|yet|indeed|namely)\s+/gi, (m, w) => `, ${w} `);

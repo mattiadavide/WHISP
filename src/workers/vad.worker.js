@@ -2,12 +2,13 @@ import { AutoModel, Tensor, env } from 'https://cdn.jsdelivr.net/npm/@huggingfac
 env.allowLocalModels = false;
 env.backends.onnx.wasm.numThreads = Math.min(navigator.hardwareConcurrency || 4, 8);
 env.backends.onnx.wasm.simd = true;
-let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, isWhisperOnline = false;
+let vadModel = null, state = null, whisperPort = null, isSpeaking = false, silenceFrames = 0, attackFrames = 0, isWhisperOnline = false;
 let audioChunks = [];
 let currentPrecision = 'turbo';
 const preRoll = [];
 const PRE_ROLL_MAX = 50; 
 const MIN_SPEECH_CHUNKS = 15; 
+const maxContextChunks = 450; 
 const ZERO_STATE = new Float32Array(2 * 1 * 128);
 const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
 function flush(isPartial = false) {
@@ -90,15 +91,28 @@ self.onmessage = async (e) => {
                             const out = await vadModel({ input: new Tensor('float32', chunk, [1, 512]), sr: SR_TENSOR, state });
                             state = out.stateN || out.staten || state;
                             const prob = out.output.data[0];
-                            const maxSilenceFrames = (currentPrecision === 'turbo') ? 22 : 12; 
-                            const maxContextChunks = (currentPrecision === 'turbo') ? 625 : 300;
-                            if (prob > (isSpeaking ? 0.45 : 0.85)) { 
-                                if (!isSpeaking) { isSpeaking = true; audioChunks = [...preRoll]; }
-                                silenceFrames = 0;
-                            } else if (isSpeaking) {
-                                silenceFrames++;
-                                if (silenceFrames > maxSilenceFrames) { 
-                                    isSpeaking = false; flush(false); state = new Tensor('float32', ZERO_STATE.slice(), [2, 1, 128]); 
+                            const isBase = currentPrecision === 'base';
+                            const threshold = isBase ? (isSpeaking ? 0.60 : 0.95) : (isSpeaking ? 0.45 : 0.85);
+                            const maxSilenceFrames = isBase ? 5 : (currentPrecision === 'turbo' ? 22 : 12); 
+
+                            if (prob > threshold) { 
+                                if (!isSpeaking) {
+                                    attackFrames++;
+                                    if (attackFrames >= 3) { // ~96ms Attack Timeout
+                                        isSpeaking = true;
+                                        audioChunks = [...preRoll];
+                                        attackFrames = 0;
+                                    }
+                                } else {
+                                    silenceFrames = 0;
+                                }
+                            } else {
+                                attackFrames = 0;
+                                if (isSpeaking) {
+                                    silenceFrames++;
+                                    if (silenceFrames > maxSilenceFrames) { 
+                                        isSpeaking = false; flush(false); state = new Tensor('float32', ZERO_STATE.slice(), [2, 1, 128]); 
+                                    }
                                 }
                             }
                             if (isSpeaking && audioChunks.length > maxContextChunks) {

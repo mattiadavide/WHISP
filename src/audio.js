@@ -34,17 +34,27 @@ export class AudioProcessor {
                         for(let i=0; i<input.length; i++) {
                             this.buf[this.ptr++] = input[i];
                             if(this.ptr >= 512) {
-                                // [FIX 3 — AUDIO NORMALIZATION]: Remove DC offset + RMS-normalize to 0.2 target
-                                // Prevents VAD degradation on uncalibrated microphones (ASR Survey 2025)
+                                // Rimuovi DC offset
                                 let mean = 0;
                                 for(let j=0; j<512; j++) mean += this.buf[j];
                                 mean /= 512;
+                                
+                                // Calcola RMS
                                 let rms = 0;
                                 for(let j=0; j<512; j++) { const s = this.buf[j] - mean; rms += s*s; }
                                 rms = Math.sqrt(rms / 512);
-                                const gain = rms > 1e-6 ? (0.2 / rms) : 1.0;
+                                
+                                // [FIX CRITICO: NOISE GATE E GAIN LIMITER]
+                                // Se l'RMS è inferiore a 0.001 (silenzio di fondo), non amplificare (gain = 1.0).
+                                // Se è voce, amplifica fino al target 0.2, ma con un limite massimo di 8x per evitare distorsioni.
+                                const gain = rms > 0.001 ? Math.min(0.2 / rms, 8.0) : 1.0;
+                                
                                 const norm = new Float32Array(512);
-                                for(let j=0; j<512; j++) norm[j] = Math.max(-1, Math.min(1, (this.buf[j] - mean) * gain));
+                                for(let j=0; j<512; j++) {
+                                    // Soft-clipping per proteggere l'input
+                                    norm[j] = Math.max(-1, Math.min(1, (this.buf[j] - mean) * gain));
+                                }
+                                
                                 this.vPort.postMessage({type:'vad', data:norm.buffer, rawRms: rms}); 
                                 this.ptr = 0;
                             }

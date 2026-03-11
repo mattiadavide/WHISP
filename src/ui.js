@@ -8,9 +8,6 @@ export const UI = {
     dictFileInput: document.getElementById('dictFileInput'),
     sysPowerBtn: document.getElementById('sysPowerBtn'), 
     output: document.getElementById('output'),
-    probVal: document.getElementById('probVal'), 
-    vadVal: document.getElementById('vadVal'),
-    rmsVal: document.getElementById('rmsVal'),
     zgtVal: document.getElementById('zgtVal'),
     clearBtn: document.getElementById('clearBtn'), 
     copyBtn: document.getElementById('copyBtn'),
@@ -82,22 +79,53 @@ export function startRenderLoop(workerStore) {
         animateTkn();
     });
 
+    window.addEventListener('tkn_live_update', (e) => {
+        if (UI.zgtVal) {
+            UI.zgtVal.innerText = e.detail.count;
+            UI.zgtVal.style.color = 'var(--term-ok)';
+            setTimeout(() => UI.zgtVal.style.color = '', 300);
+        }
+    });
+
     const logo = document.querySelector('.ascii-art');
+    let particles = [];
+    const fonts = ['Impact', 'Georgia', 'Arial', 'Courier', 'Verdana', 'monospace'];
+    let smoothedIntensity = 0;
+    let lastGlitchTime = 0;
 
     function loop() {
-        if (renderState.needsRender) {
-            const blendedProb = (renderState.prob * 0.4) + (renderState.asrProb * 0.6);
-            if(UI.probVal) UI.probVal.innerText = blendedProb.toFixed(2);
-            if(UI.vadVal) UI.vadVal.innerText = renderState.prob.toFixed(2);
-            if(UI.rmsVal) UI.rmsVal.innerText = (renderState.rms * 10).toFixed(2);
-            
-            // Applica i valori alle variabili CSS del logo
-            if (logo) {
-                logo.style.setProperty('--vad-prob', renderState.prob || 0);
-                logo.style.setProperty('--vad-rms', renderState.rms || 0);
+        const now = Date.now();
+        const currentRms = renderState.rms || 0;
+        const speechProb = renderState.prob || 0;
+        
+        if (logo) {
+            if (particles.length === 0) particles = Array.from(logo.querySelectorAll('.logo-particle'));
+
+            // 1. GLITCH TIPOGRAFICO: Se c'è parlato, cambia font a un gruppo di particelle
+            if (speechProb > 0.4 && now - lastGlitchTime > 40) {
+                lastGlitchTime = now;
+                const affected = Math.floor(particles.length * (0.2 + speechProb * 0.3));
+                for(let i=0; i<affected; i++) {
+                    const p = particles[Math.floor(Math.random() * particles.length)];
+                    p.style.fontFamily = fonts[Math.floor(Math.random() * fonts.length)];
+                    setTimeout(() => p.style.fontFamily = '', 70);
+                }
             }
 
-            renderState.needsRender = false;
+            // 2. RAREFAZIONE FISICA: Più c'è parlato, più i pixel "evaporano"
+            // Usiamo un mix di RMS (volume) e speechProb (certezza del parlato)
+            let targetIntensity = (currentRms * 25) + (speechProb * 0.5);
+            targetIntensity = Math.min(targetIntensity, 1.4);
+
+            if (targetIntensity > smoothedIntensity) {
+                smoothedIntensity = targetIntensity;
+            } else {
+                smoothedIntensity += (targetIntensity - smoothedIntensity) * 0.15;
+            }
+            
+            if (currentRms < 0.001 && speechProb < 0.1) smoothedIntensity *= 0.8;
+
+            logo.style.setProperty('--glitch-intensity', smoothedIntensity.toFixed(3));
         }
         requestAnimationFrame(loop);
     }

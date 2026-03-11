@@ -28,13 +28,59 @@ export function filterCommonTokens() {
     }
 }
 
+// [PHONETIC SUGGESTIONS — JARO-WINKLER]
+export function jaroWinkler(s1, s2, p = 0.1) {
+    if (s1 === s2) return 1.0;
+    const l1 = s1.length, l2 = s2.length;
+    const matchDist = Math.max(Math.floor(Math.max(l1, l2) / 2) - 1, 0);
+    const s1m = new Uint8Array(l1), s2m = new Uint8Array(l2);
+    let matches = 0, transpositions = 0;
+    for (let i = 0; i < l1; i++) {
+        const lo = Math.max(0, i - matchDist), hi = Math.min(i + matchDist + 1, l2);
+        for (let j = lo; j < hi; j++) {
+            if (!s2m[j] && s1[i] === s2[j]) {
+                s1m[i] = 1; s2m[j] = 1; matches++; break;
+            }
+        }
+    }
+    if (matches === 0) return 0;
+    let k = 0;
+    for (let i = 0; i < l1; i++) {
+        if (!s1m[i]) continue;
+        while (!s2m[k]) k++;
+        if (s1[i] !== s2[k]) transpositions++;
+        k++;
+    }
+    const m = matches;
+    let dj = (m / l1 + m / l2 + (m - transpositions / 2) / m) / 3;
+    if (dj > 0.7) {
+        let prefix = 0;
+        for (let i = 0; i < Math.min(4, l1, l2); i++) {
+            if (s1[i] === s2[i]) prefix++; else break;
+        }
+        dj = dj + prefix * p * (1 - dj);
+    }
+    return dj;
+}
+
+function saveExperience() {
+    localStorage.setItem('whisp_permanent_experience', JSON.stringify(Array.from(experienceDict)));
+}
+
 // [CLOSED-LOOP FEEDBACK] — Boost a token that Whisper emitted with low confidence.
 // Respects commonPool: boosting a structurally-common word is wasteful.
 export function boostToken(word, weight = 12) {
     if (!word || word.length < 3) return;
     const lower = word.toLowerCase().replace(/[^a-zA-Z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u00ff]/g, '');
     if (!lower || dynamicStopWords.has(lower) || commonPool.has(lower)) return;
+    
+    const isNew = !experienceDict.has(lower);
     referenceDict.set(lower, (referenceDict.get(lower) || 0) + weight);
+    
+    if (weight >= 50) { // High weight = manual validation
+        experienceDict.add(lower);
+        saveExperience();
+    }
 }
 export async function loadStopWords(languageVal) {
     const langCodes = { "italian": "it", "english": "en", "spanish": "es", "french": "fr", "german": "de" };
@@ -78,6 +124,17 @@ export function extractValuableTokens(text) {
         const bm25Score = (freq * (_BM25_K1 + 1)) / (freq + _BM25_K1 * normFactor);
         referenceDict.set(term, (referenceDict.get(term) || 0) + bm25Score);
     });
+
+    // [MEMORY CAP] — Preserve browser RAM by capping the referenceDict at 5000 lemmas.
+    // If the limit is exceeded, prune the words with the lowest cumulative BM25 scores.
+    const MEMORY_CAP = 5000;
+    if (referenceDict.size > MEMORY_CAP) {
+        const sorted = Array.from(referenceDict.entries()).sort((a, b) => b[1] - a[1]);
+        referenceDict.clear();
+        for (let i = 0; i < MEMORY_CAP; i++) {
+            referenceDict.set(sorted[i][0], sorted[i][1]);
+        }
+    }
 }
 let hasGlobalZeitgeistLoaded = false;
 
@@ -86,7 +143,7 @@ export async function fetchZeitgeist(domain, languageVal = 'italian') {
     
     // [FIX 2 — PREVENT REDUNDANT SYNC]: Prevent "Start" button from re-downloading tokens
     if (domain === 'global' && hasGlobalZeitgeistLoaded) {
-        window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size } }));
+        window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size + experienceDict.size } }));
         return;
     }
     
@@ -164,7 +221,7 @@ export async function fetchZeitgeist(domain, languageVal = 'italian') {
                     filterCommonTokens();
                     UI.zeitgeistLog.innerText += `\n> ZEITGEIST_SYNC_OK [TOKENS: ${referenceDict.size} DISCRIMINATIVE / ${commonPool.size} COMMON]`;
                     window.dispatchEvent(new CustomEvent('zeitgeist_progress', { detail: { p: 100, status: 'DONE' } }));
-                    window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size } }));
+                    window.dispatchEvent(new CustomEvent('zeitgeist_sync_done', { detail: { count: referenceDict.size + experienceDict.size } }));
                 }
             };
             processChunk(); 

@@ -22,19 +22,13 @@
             </div>
             
             <div class="os-controls">
-                <div class="status-grid">
+                <div class="status-grid module-box">
                     <div class="status-item cli-btn-static" title="Zeitgeist Tokens">
-                        <span class="label">TKN</span> <span id="zgtVal" style="color: var(--term-ok); font-weight: bold;">0</span>
-                    </div>
-                    <div class="status-item cli-btn-static">
-                        <span class="label">VAD</span> <span id="vadVal">0.00</span>
-                    </div>
-                    <div class="status-item cli-btn-static">
-                        <span class="label">RMS</span> <span id="rmsVal">0.00</span>
+                        <span class="label">TKN</span> <span id="zgtVal">0</span>
                     </div>
                 </div>
 
-                <div class="settings-panel">
+                <div class="settings-panel module-box">
                     <div class="grid-cell">
                         <span class="label">MOD</span>
                         <select id="precisionSelect" class="cmd-input">
@@ -61,11 +55,9 @@
                             <option value="custom">TXT</option>
                         </select>
                     </div>
-                    <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
-                    <button id="sysPowerBtn" class="power-btn btn-cell">&#9658;</button>
-                </div>
+                </div> <button id="sysPowerBtn" class="power-btn module-box">&#9658;</button>
 
-                <div class="controls-grid">
+                <div class="controls-grid module-box">
                     <button id="toggleHarvestBtn" class="cli-btn alt-btn">HRVST</button>
                     <button id="exportBtn" class="cli-btn">EXPORT</button>
                     <button id="copyBtn" class="cli-btn">COPY</button>
@@ -73,6 +65,7 @@
                 </div>
             </div>
         </div>
+        <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
     </header>
 
     <main id="terminal-screen">

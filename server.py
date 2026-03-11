@@ -3,7 +3,7 @@ import socketserver
 import urllib.request
 import urllib.parse
 
-PORT = 8000
+PORT = 8001
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):

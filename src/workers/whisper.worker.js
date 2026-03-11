@@ -20,6 +20,21 @@ function getLowConfThreshold() {
     if (currentPrecision === 'base')  return 0.72;
     return 0.78; 
 }
+function getCompressionRatio(text) {
+    if (!text || text.length < 5) return 0;
+    const encoded = new TextEncoder().encode(text);
+    let last = -1, count = 0, compressedSize = 0;
+    for (let b of encoded) {
+        if (b === last) count++;
+        else {
+            compressedSize += (count > 0 ? 2 : 1);
+            last = b; count = 1;
+        }
+    }
+    compressedSize += (count > 0 ? 2 : 1);
+    return encoded.length / compressedSize;
+}
+
 async function process() {
     if (isBusy || queue.length === 0 || !transcriber) return;
     isBusy = true; 
@@ -58,6 +73,13 @@ async function process() {
             const avgConf = res.chunks
                 ? res.chunks.reduce((acc, c) => acc + (c.confidence ?? 1), 0) / res.chunks.length
                 : 1;
+            
+            // Hallucination Check (Compression Ratio)
+            const ratio = getCompressionRatio(res.text);
+            if (currentPrecision === 'base' && ratio > 2.4 && avgConf < 0.70) {
+                res.text = ""; 
+            }
+
             let cleanText = res.text.trim();
             if (currentPrecision !== 'turbo') {
                 cleanText = cleanText.replace(WHISPER_INTRO_HALLUCINATION_RE, '').trim();
