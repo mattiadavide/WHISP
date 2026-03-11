@@ -5,15 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="coi-serviceworker.js"></script>
     <title>WHISP // TERMINAL v1.0</title>
-    <link rel="stylesheet" href="style.css?v=10">
+    <link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
 <div id="app-container">
-    <div id="word-popup">
-        <input type="text" id="edit-word-input"><br>
-        <button id="confirm-word-btn">VALIDATE_WORD</button>
-    </div>
-    
     <header id="top-bar">
         <div class="navbar-grid">
             <div class="logo-wrapper">
@@ -23,7 +18,7 @@
             
             <div class="os-controls">
                 <div class="status-grid module-box">
-                    <div class="status-item cli-btn-static" title="Zeitgeist Tokens">
+                    <div class="status-item cli-btn-static">
                         <span class="label">TKN</span> <span id="zgtVal">0</span>
                     </div>
                 </div>
@@ -31,7 +26,7 @@
                 <div class="settings-panel module-box">
                     <div class="grid-cell">
                         <span class="label">MOD</span>
-                        <select id="precisionSelect" class="cmd-input">
+                        <select id="precisionSelect">
                             <option value="turbo" selected>TRB</option>
                             <option value="base">BAS</option>
                             <option value="tiny">TNY</option>
@@ -48,48 +43,22 @@
                             <option value="system">SYS</option>
                         </select>
                     </div>
-                    <div class="grid-cell">
-                        <span class="label">RAG</span>
-                        <select id="domainSelect">
-                            <option value="global">GLB</option>
-                            <option value="custom">TXT</option>
-                        </select>
-                    </div>
                 </div> 
                 
                 <button id="sysPowerBtn" class="power-btn module-box">&#9658;</button>
 
                 <div class="controls-grid module-box">
-                    <button id="toggleHarvestBtn" class="cli-btn alt-btn">HRVST</button>
                     <button id="exportBtn" class="cli-btn">EXPORT</button>
-                    <button id="copyBtn" class="cli-btn">COPY</button>
-                    <button id="clearBtn" class="cli-btn alt-btn" style="color: var(--term-warn);">FLUSH</button>
+                    <button id="clearBtn" class="cli-btn" style="color: var(--term-warn);">FLUSH</button>
                 </div>
             </div>
         </div>
-        <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
     </header>
 
     <main id="terminal-screen">
-        <div id="harvest-panel">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="color: var(--term-accent); font-weight: bold;">[ SESSION_KNOWLEDGE_HARVEST ]</span>
-                <button id="closeHarvestBtn" style="flex-grow:0; padding: 2px 10px; border-color: var(--term-accent);">CLOSE</button>
-            </div>
-            <table id="harvest-table">
-                <thead>
-                    <tr><th>LEMMA</th><th>EXTRACTION_TYPE</th><th>STATUS</th></tr>
-                </thead>
-                <tbody id="harvest-body"></tbody>
-            </table>
-        </div>
-
         <div id="output" contenteditable="true" spellcheck="false"></div>
     </main>
-
-    <div id="zeitgeistLog" style="display:none"></div>
 </div>
-
 <script type="module" src="src/main.js"></script>
 </body>
 </html>
