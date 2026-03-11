@@ -374,3 +374,40 @@ body::after {
     font-weight: bold; font-size: 10px; padding: 6px; border: none; cursor: pointer;
 }
 #confirm-word-btn:hover { background: var(--term-main); }
+
+/* --- RESPONSIVE FIX PER MOBILE (Schermi < 768px) --- */
+@media (max-width: 768px) {
+    /* 1. Recuperiamo spazio prezioso sullo schermo */
+    body {
+        padding: 15px; 
+    }
+
+    /* 2. Impiliamo il logo e i controlli in verticale e li centriamo */
+    .navbar-grid {
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 15px;
+    }
+
+    /* 3. Centriamo il gruppo dei moduli */
+    .os-controls {
+        justify-content: center;
+        width: 100%;
+        gap: 10px;
+    }
+
+    /* 4. Togliamo l'altezza fissa: se i bottoni vanno a capo, la scatola si adatta */
+    .module-box {
+        height: auto; 
+        flex-wrap: wrap; /* Permette alle celle interne di andare a capo se necessario */
+        justify-content: center;
+    }
+
+    /* 5. Riduciamo leggermente il padding interno dei bottoni per farceli stare */
+    .grid-cell, .cli-btn, .cli-btn-static {
+        padding: 10px;
+        /* Rimuoviamo il bordo destro se l'elemento va a capo per non avere linee spezzate */
+        border-right: 1px solid var(--term-dim); 
+    }
+}
