@@ -1,5 +1,5 @@
 :root { 
-::selection { background: #664400; color: var(--term-main); }
+    ::selection { background: #664400; color: var(--term-main); }
     --term-bg: #050505; 
     --term-main: #ffb000; 
     --term-dim: #b87c00;    
@@ -140,6 +140,8 @@ body {
     justify-content: center;
     color: var(--term-dim);
     cursor: pointer;
+    border: 1px solid var(--term-dim);
+    background: transparent;
 }
 
 /* Inversione di colore brutalista all'hover (no transizioni morbide) */
@@ -375,39 +377,44 @@ body::after {
 }
 #confirm-word-btn:hover { background: var(--term-main); }
 
-/* --- RESPONSIVE FIX PER MOBILE (Schermi < 768px) --- */
+/* ========================================================= */
+/* --- FIX MOBILE: TERMINAL HUD STACK --- */
+/* ========================================================= */
 @media (max-width: 768px) {
-    /* 1. Recuperiamo spazio prezioso sullo schermo */
     body {
-        padding: 15px; 
+        padding: 10px; /* Recuperiamo spazio laterale */
     }
 
-    /* 2. Impiliamo il logo e i controlli in verticale e li centriamo */
     .navbar-grid {
         flex-direction: column;
-        align-items: center;
-        justify-content: center;
+        align-items: stretch; /* Allarga tutto al 100% */
         gap: 15px;
     }
 
-    /* 3. Centriamo il gruppo dei moduli */
+    .logo-wrapper {
+        align-self: flex-start; /* Mantiene il logo a sinistra */
+    }
+
     .os-controls {
-        justify-content: center;
+        flex-direction: column; /* Impila le scatole hardware una sull'altra */
         width: 100%;
         gap: 10px;
     }
 
-    /* 4. Togliamo l'altezza fissa: se i bottoni vanno a capo, la scatola si adatta */
     .module-box {
-        height: auto; 
-        flex-wrap: wrap; /* Permette alle celle interne di andare a capo se necessario */
-        justify-content: center;
+        width: 100%; /* Ogni modulo prende tutta la larghezza */
+        justify-content: space-between; /* Spazia i bottoni interni in modo uniforme */
     }
 
-    /* 5. Riduciamo leggermente il padding interno dei bottoni per farceli stare */
+    /* Forza i bottoni interni a riempire lo spazio orizzontale in modo equo */
     .grid-cell, .cli-btn, .cli-btn-static {
-        padding: 10px;
-        /* Rimuoviamo il bordo destro se l'elemento va a capo per non avere linee spezzate */
-        border-right: 1px solid var(--term-dim); 
+        flex-grow: 1; 
+        padding: 0 5px; /* Riduciamo il padding interno per non farli sbordare */
+    }
+
+    /* Adatta il bottone di accensione al layout a colonna */
+    .power-btn {
+        width: 100%;
+        height: 48px;
     }
 }
