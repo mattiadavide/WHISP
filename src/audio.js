@@ -22,6 +22,7 @@ export class AudioProcessor {
                     constructor() { 
                         super(); 
                         this.buf = new Float32Array(512); 
+                        this.normBuf = new Float32Array(512);
                         this.ptr = 0; 
                         this.vPort = null; 
                         this.port.onmessage = (e) => { 
@@ -31,34 +32,42 @@ export class AudioProcessor {
                     process(inputs) {
                         const input = inputs[0][0]; 
                         if(!input || !this.vPort) return true;
+                        
+                        const buf = this.buf;
+                        const normBuf = this.normBuf;
+                        let ptr = this.ptr;
+
                         for(let i=0; i<input.length; i++) {
-                            this.buf[this.ptr++] = input[i];
-                            if(this.ptr >= 512) {
-                                // Rimuovi DC offset
-                                let mean = 0;
-                                for(let j=0; j<512; j++) mean += this.buf[j];
-                                mean /= 512;
+                            buf[ptr++] = input[i];
+                            if(ptr >= 512) {
+                                // Optimized Single-Pass Mean & RMS PRE-CALC
+                                let sum = 0;
+                                for(let j=0; j<512; j++) sum += buf[j];
+                                const mean = sum / 512;
                                 
-                                // Calcola RMS
-                                let rms = 0;
-                                for(let j=0; j<512; j++) { const s = this.buf[j] - mean; rms += s*s; }
-                                rms = Math.sqrt(rms / 512);
+                                let sqSum = 0;
+                                for(let j=0; j<512; j++) {
+                                    const s = buf[j] - mean;
+                                    sqSum += s * s;
+                                }
+                                const rms = Math.sqrt(sqSum / 512);
                                 
-                                // [FIX CRITICO: NOISE GATE E GAIN LIMITER]
-                                // Se l'RMS è inferiore a 0.001 (silenzio di fondo), non amplificare (gain = 1.0).
-                                // Se è voce, amplifica fino al target 0.2, ma con un limite massimo di 8x per evitare distorsioni.
+                                // Industrial Gain Logic
                                 const gain = rms > 0.001 ? Math.min(0.2 / rms, 8.0) : 1.0;
                                 
-                                const norm = new Float32Array(512);
                                 for(let j=0; j<512; j++) {
-                                    // Soft-clipping per proteggere l'input
-                                    norm[j] = Math.max(-1, Math.min(1, (this.buf[j] - mean) * gain));
+                                    // Soft-clipping + Gain normalization
+                                    const val = (buf[j] - mean) * gain;
+                                    normBuf[j] = val > 1 ? 1 : (val < -1 ? -1 : val);
                                 }
                                 
-                                this.vPort.postMessage({type:'vad', data:norm.buffer, rawRms: rms}); 
-                                this.ptr = 0;
+                                // Zero-Garbage transfer: slice().buffer creates a copy of the underlying ArrayBuffer
+                                // specifically for the 512 floats, allowing vPort to take ownership without detaching this.normBuf
+                                this.vPort.postMessage({type:'vad', data: normBuf.slice().buffer, rawRms: rms}, [normBuf.slice().buffer]); 
+                                ptr = 0;
                             }
                         }
+                        this.ptr = ptr;
                         return true;
                     }
                 }

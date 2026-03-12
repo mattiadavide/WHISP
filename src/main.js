@@ -1,27 +1,12 @@
-import { UI, initLanguages, setStatus, setPowerBtn, resetMeters, updateHarvestTable, interimSpan, cursorSpan, renderState, startRenderLoop } from './ui.js';
+import { UI, initLanguages, setStatus, setPowerBtn, resetMeters, updateHarvestTable, interimSpan, cursorSpan, renderState, startRenderLoop, setLayoutScenario } from './ui.js';
 import { loadStopWords, fetchZeitgeist, extractValuableTokens, experienceDict, referenceDict, boostToken, jaroWinkler } from './zeitgeist.js';
-import { ASCII_LOGO, BOOT_LOGO, SIGNATURE } from './logo_header.js';
+import { FRAME_WHISP, SIGNATURE } from './logo_header.js';
 import { AudioProcessor } from './audio.js';
 
 // Populate header logo & signature with Audio-Reactive Particles
 document.addEventListener('DOMContentLoaded', () => {
-    const logoEl = document.querySelector('.ascii-art');
+    // Logo grid is now initialized in startRenderLoop (ui.js)
     const signatureEl = document.querySelector('.ascii-signature');
-    
-    if (logoEl) {
-        let html = '';
-        for (let char of ASCII_LOGO) {
-            if (char === '\n') html += '\n';
-            else {
-                // Generazione coordinate di dispersione casuale (esplosione originale)
-                const rx = (Math.random() - 0.5) * 15; 
-                const ry = (Math.random() - 0.5) * 10;
-                const rRot = (Math.random() - 0.5) * 90;
-                html += `<span class="logo-particle scattered" style="--rx: ${rx}px; --ry: ${ry}px; --rRot: ${rRot}deg;">${char}</span>`;
-            }
-        }
-        logoEl.innerHTML = html;
-    }
     if (signatureEl) signatureEl.innerText = SIGNATURE;
 });
 let workerStore = { vad: null, whisper: null, nlp: null };
@@ -35,44 +20,49 @@ let lastSegmentTime = 0;
 let lastInterimWords = [];
 let _tokenIdCounter = 0; // unique ID for each rendered word-token span
 
-// [CLOSED-LOOP PROMPT RE-SYNC]
-// Debounced scheduler: after new low-conf tokens are boosted into referenceDict,
-// we wait a short idle window before pushing the updated top-N prompt to Whisper.
-// This avoids spamming postMessage on every single segment.
-let _promptSyncTimer = null;
-function schedulePromptReSync(debounceMs = 8000) {
-    if (_promptSyncTimer) return; // already pending
-    _promptSyncTimer = setTimeout(() => {
-        _promptSyncTimer = null;
-        if (workerStore.whisper?.worker) {
-            const newPrompt = window.buildOptimizedPrompt();
-            workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: newPrompt });
-        }
-        // [RETROACTIVE HEALING]: alongside the prompt re-sync, collect all
-        // low-conf tokens still in the DOM and ask NLP to re-heal them
-        // with the now-richer referenceDict.
-        if (workerStore.nlp?.worker) {
-            const lowConfSpans = Array.from(UI.output.querySelectorAll('.word-token.low-conf'));
-            if (lowConfSpans.length > 0) {
-                const tokens = lowConfSpans.map(s => ({
-                    id: s.dataset.tokenId,
-                    word: s.innerText.trim()
-                })).filter(t => t.id && t.word.length > 2);
-                if (tokens.length > 0) {
-                    workerStore.nlp.worker.postMessage({
-                        type: 'REHEAL_TOKENS',
-                        tokens,
-                        priorityPool: Array.from(experienceDict),
-                        referenceDict: Array.from(referenceDict.entries())
-                            .sort((a, b) => b[1] - a[1])
-                            .slice(0, 200)
-                            .map(e => e[0])
-                    });
-                }
+// [UTILITY]: High-level Debounce
+function debounce(fn, ms) {
+    let timeout;
+    return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fn(...args), ms);
+    };
+}
+
+// [ARCHITECTURAL DISOUPLING]: Pure Sync Logic
+function syncEngineState() {
+    if (workerStore.whisper?.worker) {
+        const newPrompt = window.buildOptimizedPrompt();
+        workerStore.whisper.worker.postMessage({ type: 'update_params', prompt: newPrompt });
+    }
+    
+    // [RETROACTIVE HEALING]: alongside the prompt re-sync, collect all
+    // low-conf tokens still in the DOM and ask NLP to re-heal them
+    if (workerStore.nlp?.worker) {
+        const lowConfSpans = Array.from(UI.output.querySelectorAll('.word-token.low-conf'));
+        if (lowConfSpans.length > 0) {
+            const tokens = lowConfSpans.map(s => ({
+                id: s.dataset.tokenId,
+                word: s.innerText.trim()
+            })).filter(t => t.id && t.word.length > 2);
+            
+            if (tokens.length > 0) {
+                workerStore.nlp.worker.postMessage({
+                    type: 'REHEAL_TOKENS',
+                    tokens,
+                    priorityPool: Array.from(experienceDict),
+                    referenceDict: Array.from(referenceDict.entries())
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 200)
+                        .map(e => e[0])
+                });
             }
         }
-    }, debounceMs);
+    }
 }
+
+// [GLOBAL SCHEDULER]: 8s idle window to avoid worker spam
+export const schedulePromptReSync = debounce(syncEngineState, 8000);
 function getWorkerUrl(scriptName) {
     const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     const p = window.location.pathname;
@@ -213,8 +203,6 @@ function initWorkers() {
     function handleProgressEvent(d) {
         if (d.type === 'progress') {
             const fileName = d.file || d.name || 'unknown';
-            if (!fileName) return;
-
             let safeId = 'dl-' + fileName.replace(/[^a-zA-Z0-9-]/g, '-');
             let progDiv = document.getElementById(safeId);
 
@@ -235,9 +223,19 @@ function initWorkers() {
                 progDiv.innerText = `  CORE_[${fileName.toUpperCase()}]: INITIATING...`;
             } else {
                 const p = d.p || 0;
-                const pText = `  CORE_[${fileName.substring(0, 20).toUpperCase()}]: ` + Math.round(p) + '%';
-                const b = Math.floor(p / 5);
-                progDiv.innerText = pText + ' [' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
+                let progressLine = "";
+                if (!p || p === 0) {
+                    const loadedMB = (d.loaded / (1024 * 1024)).toFixed(1);
+                    progressLine = `  CORE_[${fileName.substring(0, 20).toUpperCase()}]: [${loadedMB} MB]`;
+                } else {
+                    const pText = `  CORE_[${fileName.substring(0, 20).toUpperCase()}]: ` + Math.round(p) + '%';
+                    const b = Math.floor(p / 5);
+                    progressLine = pText + ' [' + '#'.repeat(b) + '-'.repeat(20 - b) + ']';
+                }
+                progDiv.innerText = progressLine;
+                progDiv.style.whiteSpace = "nowrap";
+                progDiv.style.overflow = "hidden";
+                progDiv.style.textOverflow = "ellipsis";
             }
             // Move cursor to the current progress line if it exists
             const cursor = document.querySelector('.terminal-cursor');
@@ -265,6 +263,12 @@ function initWorkers() {
                 UI.output.appendChild(finalNode);
             }
             isCoreLoaded = true;
+
+            const container = document.getElementById('app-container');
+            if (container) {
+                container.classList.remove('BOOT');
+                container.classList.add('READY');
+            }
 
             if (audioProcessor.isRecording) {
                 setPowerBtn("■", "var(--term-warn)", false);
@@ -401,7 +405,7 @@ async function runBootSequence() {
     const userAgent = navigator.userAgent;
     const osInfo = userAgent.includes("Mac") ? "macOS" : userAgent.includes("Win") ? "Windows" : userAgent.includes("Linux") ? "Linux" : platform;
 
-    const logoLines = BOOT_LOGO.split('\n');
+    const logoLines = FRAME_WHISP.split('\n');
     const maxLen = Math.max(...logoLines.map(l => l.length));
 
     const lines = [
@@ -423,20 +427,23 @@ async function runBootSequence() {
 
     for (let i = 0; i < lines.length; i++) {
         const div = document.createElement('div');
-        const logoLength = BOOT_LOGO.split('\n').length;
+        const logoLength = FRAME_WHISP.split('\n').length;
         const isCentered = i >= (lines.length - 1 - logoLength);
         div.className = isCentered ? 'sys-log brand' : 'sys-log';
         
         if (i === 3) div.style.marginTop = "30px"; 
         if (i === 7) div.style.marginTop = "20px"; 
         
-        const bootLogoLinesCount = BOOT_LOGO.split('\n').length;
+        const bootLogoLinesCount = FRAME_WHISP.split('\n').length;
         const logoStartIndexInLinesArray = lines.length - bootLogoLinesCount - 1;
         
         if (i >= logoStartIndexInLinesArray && i < lines.length - 1) {
-            div.style.marginTop = i === logoStartIndexInLinesArray ? "50px" : "0";
+            div.style.marginTop = i === logoStartIndexInLinesArray ? "calc(var(--stud) * 4)" : "0";
         }
         if (i === lines.length - 1) div.style.marginTop = "15px";
+        
+        div.style.whiteSpace = "nowrap";
+        div.style.overflow = "hidden";
         
         UI.output.appendChild(div);
 
@@ -455,6 +462,11 @@ async function runBootSequence() {
             await new Promise(r => setTimeout(r, 30));
         }
     }
+    
+    // Terminal Spacer to prevent bottom collision
+    const spacer = document.createElement('div');
+    spacer.style.height = "80px";
+    UI.output.appendChild(spacer);
     
     UI.output.appendChild(interimSpan);
 
@@ -477,6 +489,8 @@ async function runBootSequence() {
     } catch (e) { console.warn("[BOOT] Failed to load experience:", e); }
 }
 UI.sysPowerBtn.onclick = async () => {
+    const container = document.getElementById('app-container');
+
     if (!navigator.mediaDevices?.getUserMedia) {
         setStatus('MEDIA_API_UNSUPPORTED', 'var(--term-err)');
         return;
@@ -486,28 +500,40 @@ UI.sysPowerBtn.onclick = async () => {
         console.error('[APEX] Page must be cross-origin isolated (COOP/COEP headers missing).');
         return;
     }
+
+    // Atomic Worker Injection
+    initWorkers();
+
+    if (container) {
+        container.classList.remove('READY', 'REC');
+    }
+
     if (!hasBooted && !isBootingUp) {
         isBootingUp = true;
+        if (container) container.classList.add('BOOT');
+        setLayoutScenario('BOOT');
         setPowerBtn("...", undefined, true);
+        
         try {
             await runBootSequence();
             hasBooted = true;
-
-            // Coalesce the logo swarm - DISABLED to keep shattering
-            // document.querySelectorAll('.logo-particle').forEach(p => p.classList.remove('scattered'));
 
             // [START INITIALIZATION AFTER BOOT LOGS START]
             const lang = UI.languageSelect?.value || 'italian';
             const domain = UI.domainSelect?.value;
             const precision = UI.precisionSelect?.value || 'turbo';
 
-            initWorkers();
-            workerStore.whisper.worker.postMessage({ type: 'update_params', language: lang, precision: precision });
-            workerStore.nlp.worker.postMessage({ type: 'update_params', language: lang });
-            workerStore.vad.worker.postMessage({ type: 'update_params', precision: precision });
-
-            // Trigger load for VAD engine (VAD will dynamically trigger Whisper once it's completely ready)
-            workerStore.vad.worker.postMessage({ type: 'load' });
+            if (workerStore.whisper?.worker) {
+                workerStore.whisper.worker.postMessage({ type: 'update_params', language: lang, precision: precision });
+            }
+            if (workerStore.nlp?.worker) {
+                workerStore.nlp.worker.postMessage({ type: 'update_params', language: lang });
+            }
+            if (workerStore.vad?.worker) {
+                workerStore.vad.worker.postMessage({ type: 'update_params', precision: precision });
+                // Trigger load for VAD engine (VAD will dynamically trigger Whisper once it's completely ready)
+                workerStore.vad.worker.postMessage({ type: 'load' });
+            }
 
             // Background dictionary sync
             loadStopWords(lang).then(() => {
@@ -517,8 +543,11 @@ UI.sysPowerBtn.onclick = async () => {
             isBootingUp = false;
             // Note: Power button will be updated to ■ by READY_TO_PROCESS signal from whisper worker
 
-            await audioProcessor.init(UI.audioSource.value, workerStore.vad.worker);
-            setPowerBtn("■", "var(--term-warn)");
+            if (workerStore.vad?.worker) {
+                await audioProcessor.init(UI.audioSource.value, workerStore.vad.worker);
+                setPowerBtn("■", "var(--term-warn)");
+                setLayoutScenario('REC');
+            }
         } catch (err) {
             setPowerBtn("▶", undefined, false);
             setStatus("MIC_ERROR", "var(--term-err)");
@@ -527,13 +556,23 @@ UI.sysPowerBtn.onclick = async () => {
         }
     } else if (audioProcessor.isRecording) {
         audioProcessor.stop();
-        workerStore.vad.worker.postMessage({ type: 'force_flush' });
+        if (workerStore.vad?.worker) {
+            workerStore.vad.worker.postMessage({ type: 'force_flush' });
+        }
         setPowerBtn("▶", "var(--term-main)");
         setStatus("PAUSED", "var(--term-dim)");
         resetMeters();
+        const container = document.getElementById('app-container');
+        if (container) {
+            container.classList.remove('REC');
+            container.classList.add('READY');
+        }
     } else {
-        await audioProcessor.init(UI.audioSource.value, workerStore.vad.worker);
-        setPowerBtn("■", "var(--term-warn)");
+        if (workerStore.vad?.worker) {
+            await audioProcessor.init(UI.audioSource.value, workerStore.vad.worker);
+            setPowerBtn("■", "var(--term-warn)");
+            setLayoutScenario('REC');
+        }
     }
 };
 UI.languageSelect.onchange = (e) => {

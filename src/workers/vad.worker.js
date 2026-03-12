@@ -14,15 +14,16 @@ const SR_TENSOR = new Tensor('int64', new BigInt64Array([16000n]), [1]);
 function flush(isPartial = false) {
     if (!isWhisperOnline || audioChunks.length === 0) return;
     if (!isPartial && audioChunks.length < MIN_SPEECH_CHUNKS) {
-        audioChunks = []; silenceFrames = 0;
+        audioChunks.length = 0; silenceFrames = 0;
         return;
     }
-    const totalLength = audioChunks.reduce((acc, c) => acc + c.length, 0);
+    const totalLength = audioChunks.length * 512;
     const flat = new Float32Array(totalLength);
-    let offset = 0;
-    for (const chunk of audioChunks) { flat.set(chunk, offset); offset += chunk.length; }
+    for (let i = 0; i < audioChunks.length; i++) { 
+        flat.set(audioChunks[i], i * 512); 
+    }
     whisperPort.postMessage({ type: 'transcribe', audioBuffer: flat.buffer, isPartial }, [flat.buffer]);
-    if(!isPartial) { audioChunks = []; silenceFrames = 0; }
+    if(!isPartial) { audioChunks.length = 0; silenceFrames = 0; }
 }
 let vadQueue = [];
 let isProcessingVAD = false;
@@ -53,9 +54,9 @@ self.onmessage = async (e) => {
                     type: 'progress',
                     status: prog.status,
                     file: fileName,
-                    loaded: prog.loaded,
-                    total: prog.total,
-                    p: prog.progress
+                    loaded: prog.loaded || 0,
+                    total: prog.total || 0,
+                    p: prog.progress || 0
                 });
             }
         });

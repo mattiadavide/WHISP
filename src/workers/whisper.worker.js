@@ -175,9 +175,6 @@ self.onmessage = async (e) => {
                 }
                 if (!fileName) fileName = 'chunk';
                 
-                // Do not track meaningless unnamed chunks that spam the callback
-                if (!fileName || fileName === 'chunk') return;
-                
                 const now = Date.now();
                 // Throttle updates to ~20FPS to prevent main thread GUI freezing, 
                 // except for critical status changes
@@ -190,9 +187,9 @@ self.onmessage = async (e) => {
                     type: 'progress', 
                     status: prog.status, 
                     file: fileName, 
-                    loaded: prog.loaded, 
-                    total: prog.total, 
-                    p: prog.progress 
+                    loaded: prog.loaded || 0, 
+                    total: prog.total || 0, 
+                    p: prog.progress || 0 
                 }); 
             }
         });

@@ -18,16 +18,26 @@
         <div class="navbar-grid">
             <div class="logo-wrapper">
                 <div class="ascii-art"></div>
-                <div class="ascii-signature"></div>
             </div>
             
-            <div class="os-controls">
+            <div class="telemetry-group">
                 <div class="status-grid module-box">
                     <div class="status-item cli-btn-static" title="Zeitgeist Tokens">
                         <span class="label">TKN</span> <span id="zgtVal">0</span>
                     </div>
                 </div>
 
+                <div class="signal-grid module-box">
+                    <div class="grid-cell-static" title="Signal RMS">
+                        <span class="label">RMS</span> <span id="sigRms">0.00</span>
+                    </div>
+                    <div class="grid-cell-static" title="VAD Probability">
+                        <span class="label">VAD</span> <span id="sigVad">0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls-group">
                 <div class="settings-panel module-box">
                     <div class="grid-cell">
                         <span class="label">MOD</span>
@@ -56,8 +66,6 @@
                         </select>
                     </div>
                 </div> 
-                
-                <button id="sysPowerBtn" class="power-btn module-box">&#9658;</button>
 
                 <div class="controls-grid module-box">
                     <button id="toggleHarvestBtn" class="cli-btn alt-btn">HRVST</button>
@@ -65,6 +73,8 @@
                     <button id="copyBtn" class="cli-btn">COPY</button>
                     <button id="clearBtn" class="cli-btn alt-btn" style="color: var(--term-warn);">FLUSH</button>
                 </div>
+
+                <button id="sysPowerBtn" class="power-btn module-box">&#9658;</button>
             </div>
         </div>
         <input type="file" id="dictFileInput" accept=".txt" style="display: none;">
@@ -84,6 +94,7 @@
             </table>
         </div>
 
+        <div class="ascii-signature"></div>
         <div id="output" contenteditable="true" spellcheck="false"></div>
     </main>
 

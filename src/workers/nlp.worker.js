@@ -24,53 +24,46 @@ const GLOBAL_RECONCILIATION_POOL = {
         { entity: "Trump", phonetic: ["trampla", "trunp", "trampa"] }
     ]
 };
-const BASE_MODEL_PREFIX_PATTERNS = [
-    /^Lo\s+(?=[A-Z])/,          
-    /^Lo\s+s[vwbcdfghjklmnpqrtz]/i, // "Lo svi", "Lo sve", "Lo sca" — Lo + consonant cluster is noise
-    /^(?:[Ee]zza|[Ii]no|[Ii]na|[Mm]ente|[Zz]ione|[Vv]etta|[Vv]ettin\w*)\s+/,
-    /^I?[Ss]chend[aeo]\s+/i,
-    /^Lib[ae]\s+non\s+[eè]\s+/i,
-    /^Indi[cz]i?\s+/i,
-    /^Di\s+grim[oa]?(?:ge?)?\s+/i,  
-    /^Di\s+s[pfgb]\w+\s+/i,           // "Di sfogli", "Di spoli" — Di + s + consonant-cluster garbage
-    /^Tean[zts]o\w*\s+/i,              // "Teanzo" — tiny model specific garbage token
-    /^(?:Le|Il|La)\s+(?:cate|tecno|ste|teca|stit)\w*\s+/i,
-    /^Tral['\x27]al[vb]o?\s+/i,   
-    /^(?:Le|Il|La)\s+[a-z]{3,4}[aeiou]\s+\w+\s+/i,
-    /^Più\s+po[^r][a-z'°]\w*\s+/i,  // excludes "Più porta..." which is valid Italian
-    // "Cambiamo di terr...", "Cambiamo di terrenza" — hallucinated sport segment transition
-    /^Cambiamo\s+di\s+terr\w*\s+/i,
-    // "Sul mapolizz...", "Ma polizia mi...", "Da Nulmapoli" — garbled Napoli prefix from football context
-    /^(?:Sul\s+m[aeo]poli|[Mm]a\s+poli[sz]|Da\s+Nulm|[Mm]apoli[sz]\w*)\s+/i,
-    // "L'Alancia", "L'ancetto d'anido" — hallucinated L' + garbled word
-    /^L'[Aa]l[a-z]*cia\s+/i,
-    /^L'[Aa]n[a-z]+(?:d'[a-z]+)?\s+/i,
-    // "Di Nui-Ork" → garbled "New York" (remove mangled geographical prefix)
-    /^Di\s+Nui[-\s][Oo]rk\s+/i,
-    // "risabe a" / "reraoma" — typical base model garbled filler fragments
-    /^(?:[Rr]isabe|[Rr]erasom|[Rr]eraoam)\s+/i,
-    // "Un stall", "Un stagio", "Un stalato" — "Un" + non-Italian word starting with st+vowel
-    // CONSERVATIVE: only st+vowel combos (stall, stagio, stalato are not Italian words)
-    // "Un mistero" / "Un'immagine" are valid and NOT caught by this
-    /^Un\s+st[aeiou]\w*\s+/i,
-    // "Anciamo al tuo", "Ci angiamo alto", "Diciamo al tuo" — garbled discourse transitions
-    // These borrow from audio fragments of "andiamo all'audio" / "Diciamo che" misheard
-    /^(?:Anciamo|[Cc]i\s+angiamo|[Cc]iangiamo)\s+\w+/i,
-    // "Di lima parte più poe" — fragment of garbled previous text leaking as segment opener
-    /^Di\s+lima\s+/i,
-    // "Siamo altro" used as a sentence-starting filler (borrowed from mid-sentence "siamo in")
-    /^Siamo\s+alt[ro]+[.,\s]/i,
-    /^Patti\s+ha\s+un\s+cuoio\s+/i,
-    /^Il\s+colgarito\s+/i,
-    /^Surtro(\s+da\s+personale)?\s+/i,
-    /^L'attirtona\s+/i,
-    /^Benzice\s+/i,
-    /^Un\s+tolisibile\s+/i,
-    /^Nevo\s+io\s+/i,
-    /^Un\s+ardo\s+/i,
-    /^Tena\s+cos[iì]\s+/i,
-    /^(?:Di\s+)?qualsiasi,,\s+per\xf2\s+/i,
-];
+const BASE_MODEL_PREFIX_REGEX = new RegExp(
+    "^(" + 
+    [
+        "Lo\\s+(?=[A-Z])",
+        "Lo\\s+s[vwbcdfghjklmnpqrtz]",
+        "(?:[Ee]zza|[Ii]no|[Ii]na|[Mm]ente|[Zz]ione|[Vv]etta|[Vv]ettin\\w*)\\s+",
+        "I?[Ss]chend[aeo]\\s+",
+        "Lib[ae]\\s+non\\s+[eè]\\s+",
+        "Indi[cz]i?\\s+",
+        "Di\\s+grim[oa]?(?:ge?)?\\s+",
+        "Di\\s+s[pfgb]\\w+\\s+",
+        "Tean[zts]o\\w*\\s+",
+        "(?:Le|Il|La)\\s+(?:cate|tecno|ste|teca|stit)\\w*\\s+",
+        "Tral['\\x27]al[vb]o?\\s+",
+        "(?:Le|Il|La)\\s+[a-z]{3,4}[aeiou]\\s+\\w+\\s+",
+        "Più\\s+po[^r][a-z'°]\\w*\\s+",
+        "Cambiamo\\s+di\\s+terr\\w*\\s+",
+        "(?:Sul\\s+m[aeo]poli|[Mm]a\\s+poli[sz]|Da\\s+Nulm|[Mm]apoli[sz]\\w*)\\s+",
+        "L'[Aa]l[a-z]*cia\\s+",
+        "L'[Aa]n[a-z]+(?:d'[a-z]+)?\\s+",
+        "Di\\s+Nui[-\\s][Oo]rk\\s+",
+        "(?:[Rr]isabe|[Rr]erasom|[Rr]eraoam)\\s+",
+        "Un\\s+st[aeiou]\\w*\\s+",
+        "(?:Anciamo|[Cc]i\\s+angiamo|[Cc]iangiamo)\\s+\\w+",
+        "Di\\s+lima\\s+",
+        "Siamo\\s+alt[ro]+[.,\\s]",
+        "Patti\\s+ha\\s+un\\s+cuoio\\s+",
+        "Il\\s+colgarito\\s+",
+        "Surtro(\\s+da\\s+personale)?\\s+",
+        "L'attirtona\\s+",
+        "Benzice\\s+",
+        "Un\\s+tolisibile\\s+",
+        "Nevo\\s+io\\s+",
+        "Un\\s+ardo\\s+",
+        "Tena\\s+cos[iì]\\s+",
+        "(?:Di\\s+)?qualsiasi,,\\s+per\\xf2\\s+"
+    ].join("|") + 
+    ")",
+    "i"
+);
 // [OPT — JARO-WINKLER]: Replaces Levenshtein for single-word healing.
 // Literature (TU Delft 2024, ACL 2024 WER estimation): JW outperforms Levenshtein for ASR errors
 // because ASR errors concentrate at word endings, and JW weights the correct *prefix* more heavily.
@@ -306,10 +299,7 @@ self.onmessage = (e) => {
             filteredText = filteredText.replace(pattern, '');
         }
         filteredText = filteredText.trim();
-        for (const pattern of BASE_MODEL_PREFIX_PATTERNS) {
-            filteredText = filteredText.replace(pattern, '');
-        }
-        filteredText = filteredText.trim();
+        filteredText = filteredText.replace(BASE_MODEL_PREFIX_REGEX, '').trim();
         if (!filteredText || filteredText.length < 2) {
             self.postMessage({ type: 'NLP_DONE', tokens: [] }); 
             return;

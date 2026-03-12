@@ -1,3 +1,5 @@
+import { FRAME_BOOT, FRAME_READY, FRAME_WHISP, FRAME_SHH, FRAME_TALK, FRAME_MUSIC, FRAME_CHATTING } from './logo_header.js';
+
 export const UI = {
     cliStatusText: document.getElementById('cli-status-text'), 
     zeitgeistLog: document.getElementById('zeitgeistLog'), 
@@ -18,7 +20,9 @@ export const UI = {
     harvestPanel: document.getElementById('harvest-panel'), 
     closeHarvestBtn: document.getElementById('closeHarvestBtn'),
     exportBtn: document.getElementById('exportBtn'), 
-    harvestBody: document.getElementById('harvest-body')
+    harvestBody: document.getElementById('harvest-body'),
+    sigRms: document.getElementById('sigRms'),
+    sigVad: document.getElementById('sigVad')
 };
 export const interimSpan = document.createElement('span'); 
 interimSpan.className = 'interim-text';
@@ -49,6 +53,10 @@ export function setPowerBtn(text, color, disabled = undefined) {
     UI.sysPowerBtn.innerText = text;
     if (color) UI.sysPowerBtn.style.color = color;
     if (disabled !== undefined) UI.sysPowerBtn.disabled = disabled;
+    
+    // Industrial Precision Toggle
+    if (text === "■") UI.sysPowerBtn.classList.add('active');
+    else if (text === "▶") UI.sysPowerBtn.classList.remove('active');
 }
 export function resetMeters() {
     if(UI.kittCenter) {
@@ -63,6 +71,82 @@ export const renderState = {
     isSpeaking: false,
     needsRender: false
 };
+
+
+export function setLayoutScenario(state) {
+    const container = document.getElementById('app-container');
+    if (!container) return;
+    container.classList.remove('BOOT', 'READY', 'REC');
+    if (state) container.classList.add(state);
+}
+
+const shadingChars = ['█', '▓', '▒', '░', '+', '*'];
+const gridRows = 6;
+const gridCols = 76;
+let particles = [];
+
+export function initParticlePool() {
+    const logo = document.querySelector('.ascii-art');
+    if (!logo) return;
+    logo.innerHTML = '';
+    particles = [];
+    // 456 particles (76x6 grid size)
+    for (let i = 0; i < 456; i++) {
+        const p = document.createElement('span');
+        p.className = 'logo-particle';
+        
+        // Initial pool position at center of logo area (228px = 456px / 2)
+        p.style.left = `228px`;
+        p.style.top = `18px`;
+        p.style.opacity = "0";
+        
+        // Kinetic Disorder: Random transition delay for swarm effect
+        p.style.transitionDelay = (Math.random() * 0.2).toFixed(2) + 's';
+        
+        // Narrower range for maximum intelligibility (Ferrous oscillation)
+        const rx = (Math.random() - 0.5) * 8;
+        const ry = (Math.random() - 0.5) * 4;
+        p.style.setProperty('--rx', `${rx}px`);
+        p.style.setProperty('--ry', `${ry}px`);
+
+        logo.appendChild(p);
+        particles.push(p);
+    }
+}
+
+export function morphToFrame(frame) {
+    if (particles.length === 0) return;
+    const lines = frame.replace(/^\n/, '').split('\n');
+    const targets = [];
+    
+    for (let r = 0; r < gridRows; r++) {
+        const line = lines[r] || "";
+        for (let c = 0; c < gridCols; c++) {
+            const char = line[c] || " ";
+            if (char !== " " && char !== "") {
+                targets.push({ x: c * 6, y: r * 6, char: char });
+            }
+        }
+    }
+
+    const availableParticles = [...particles].sort(() => Math.random() - 0.5);
+
+    availableParticles.forEach((p, idx) => {
+        const target = targets[idx];
+        if (target) {
+            p.style.left = `${target.x}px`;
+            p.style.top = `${target.y}px`;
+            p.innerText = target.char;
+            p.dataset.origChar = target.char; // Memoria del frame originale
+            p.style.opacity = "1";
+            p.dataset.active = "true";
+        } else {
+            p.dataset.active = "false";
+            p.style.opacity = "0";
+        }
+    });
+}
+
 export function startRenderLoop(workerStore) {
     window.addEventListener('zeitgeist_sync_done', (e) => {
         if (!UI.zgtVal) return;
@@ -87,46 +171,88 @@ export function startRenderLoop(workerStore) {
         }
     });
 
-    const logo = document.querySelector('.ascii-art');
-    let particles = [];
-    const fonts = ['Impact', 'Georgia', 'Arial', 'Courier', 'Verdana', 'monospace'];
-    let smoothedIntensity = 0;
-    let lastGlitchTime = 0;
+    initParticlePool();
+    let currentFrameType = '';
+    let voiceHoldUntil = 0;
+    let prevRms = 0;
+    let glitchFrames = 0;
 
     function loop() {
+        const container = document.getElementById('app-container');
+        if (!container) return requestAnimationFrame(loop);
+
+        const glitchSet = ['@', '#', '$', '%', '&', '*', '█', '▓', '▒'];
+        const colorSet = ['var(--term-main)', 'var(--term-warn)', 'var(--term-accent)', 'var(--term-dim)'];
+        
+        let targetFrame = FRAME_SHH;
+        let type = 'SHH'; 
+        let jitterMult = 6;
+
         const now = Date.now();
         const currentRms = renderState.rms || 0;
-        const speechProb = renderState.prob || 0;
-        
-        if (logo) {
-            if (particles.length === 0) particles = Array.from(logo.querySelectorAll('.logo-particle'));
 
-            // 1. GLITCH TIPOGRAFICO: Se c'è parlato, cambia font a un gruppo di particelle
-            if (speechProb > 0.4 && now - lastGlitchTime > 40) {
-                lastGlitchTime = now;
-                const affected = Math.floor(particles.length * (0.2 + speechProb * 0.3));
-                for(let i=0; i<affected; i++) {
-                    const p = particles[Math.floor(Math.random() * particles.length)];
-                    p.style.fontFamily = fonts[Math.floor(Math.random() * fonts.length)];
-                    setTimeout(() => p.style.fontFamily = '', 70);
+        if (currentRms - prevRms > 0.025) {
+            glitchFrames = 4;
+        }
+        prevRms = currentRms;
+
+        if (container.classList.contains('BOOT')) {
+            targetFrame = FRAME_BOOT;
+            type = 'BOOT';
+        } else if (container.classList.contains('REC')) {
+            const isSpeaking = renderState.prob > 0.40;
+            if (isSpeaking) {
+                voiceHoldUntil = now + 1200; 
+                targetFrame = FRAME_WHISP;
+                type = 'WHISP';
+                jitterMult = 0; 
+            } else {
+                if (now > voiceHoldUntil) {
+                    targetFrame = FRAME_SHH;
+                    type = 'SHH';
+                } else {
+                    targetFrame = FRAME_WHISP;
+                    type = 'WHISP';
+                    jitterMult = 0;
                 }
             }
-
-            // 2. RAREFAZIONE FISICA: Più c'è parlato, più i pixel "evaporano"
-            // Usiamo un mix di RMS (volume) e speechProb (certezza del parlato)
-            let targetIntensity = (currentRms * 35) + (speechProb * 0.6);
-            targetIntensity = Math.min(targetIntensity, 1.5);
-
-            if (targetIntensity > smoothedIntensity) {
-                smoothedIntensity = targetIntensity; 
-            } else {
-                smoothedIntensity += (targetIntensity - smoothedIntensity) * 0.12;
-            }
-            
-            if (currentRms < 0.001 && speechProb < 0.1) smoothedIntensity *= 0.5;
-
-            logo.style.setProperty('--glitch-intensity', smoothedIntensity.toFixed(3));
         }
+
+        if (type !== currentFrameType) {
+            currentFrameType = type;
+            morphToFrame(targetFrame);
+        }
+
+        const intensity = Math.min(currentRms * jitterMult, 1.2);
+        container.style.setProperty('--glitch-intensity', intensity.toFixed(3));
+
+        const currentGlitch = glitchFrames > 0;
+        if (glitchFrames > 0) glitchFrames--;
+
+        particles.forEach(p => {
+            if (p.dataset.active === "true") {
+                if (currentGlitch && Math.random() < 0.35) {
+                    p.innerText = glitchSet[Math.floor(Math.random() * glitchSet.length)];
+                } else if (p.innerText !== p.dataset.origChar && Math.random() < 0.15) {
+                    p.innerText = p.dataset.origChar;
+                }
+
+                if (currentRms > 0.01 && Math.random() < (currentRms * 6)) {
+                    p.style.color = colorSet[Math.floor(Math.random() * colorSet.length)];
+                    p.style.opacity = Math.min(0.4 + (currentRms * 8) + Math.random() * 0.3, 1).toFixed(2);
+                } else {
+                    p.style.color = 'var(--term-main)';
+                    p.style.opacity = Math.max(0.3, 1 - (Math.random() * 0.3)).toFixed(2);
+                }
+            }
+        });
+
+        if (UI.sigRms) UI.sigRms.innerText = currentRms.toFixed(3);
+        if (UI.sigVad) UI.sigVad.innerText = (renderState.prob || 0).toFixed(3);
+
+        const borderIntensity = Math.min(currentRms * 20, 10);
+        document.documentElement.style.setProperty('--border-glow', `${borderIntensity}px`);
+
         requestAnimationFrame(loop);
     }
     requestAnimationFrame(loop);

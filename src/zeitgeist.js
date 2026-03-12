@@ -125,14 +125,22 @@ export function extractValuableTokens(text) {
         referenceDict.set(term, (referenceDict.get(term) || 0) + bm25Score);
     });
 
-    // [MEMORY CAP] — Preserve browser RAM by capping the referenceDict at 5000 lemmas.
-    // If the limit is exceeded, prune the words with the lowest cumulative BM25 scores.
+    // [MEMORY CAP] — Preserve browser RAM capping referenceDict AND docFrequency.
     const MEMORY_CAP = 5000;
     if (referenceDict.size > MEMORY_CAP) {
         const sorted = Array.from(referenceDict.entries()).sort((a, b) => b[1] - a[1]);
         referenceDict.clear();
         for (let i = 0; i < MEMORY_CAP; i++) {
             referenceDict.set(sorted[i][0], sorted[i][1]);
+        }
+        
+        // AUTO-PRUNING DOC FREQUENCY: Pulisce la memoria dalle parole morte
+        if (docFrequency.size > MEMORY_CAP * 2) {
+            for (const key of docFrequency.keys()) {
+                if (!referenceDict.has(key) && !commonPool.has(key)) {
+                    docFrequency.delete(key);
+                }
+            }
         }
     }
 }
