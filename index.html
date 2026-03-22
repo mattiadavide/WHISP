@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WHISP 1.0 - KERNEL</title>
+  <script type="module" crossorigin src="/assets/index-BnUdHXSL.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-F8Ecofh3.css">
+</head>
+<body>
+    <canvas id="swarm-matrix"></canvas>
+    
+    <div id="hud-toggle-overlay" class="atomic-anchor"></div>
+    
+    <aside id="telemetry-hud">
+        <div class="hud-item">[ SYS_OP  ] <span id="sys-state">BOOT</span></div>
+        <div class="hud-item">[ ENTROPY ] <span id="sys-rms">0.000</span></div>
+        <div class="hud-item">[ VAD_GAT ] <span id="sys-prob">0.00</span></div>
+        <div class="hud-item">[ TKN/SEC ] <span id="sys-tks">0.0</span></div>
+        <div class="hud-item">[ ATOM_NO ] <span id="sys-prt">0</span></div>
+        <div class="hud-item">[ ZEIT_TKN] <span id="sys-zeit">0</span></div>
+        <div class="hud-item">[ NETWORK ] <span id="sys-net">IDLE</span></div>
+        <div class="hud-item action-btn" id="btn-copy">[ COPY_TRANSCRIPT ]</div>
+        <div class="hud-item action-btn" id="btn-save">[ SAVE_TRANSCRIPT ]</div>
+        <div class="hud-item input-container">
+            <input type="text" id="sys-knowledge-url" placeholder="> KNOWLEDGE_URL">
+        </div>
+        <div class="hud-item action-btn" id="btn-upload">
+            <input type="file" id="sys-knowledge-file" style="display:none" accept=".txt,.json,.md">
+            [ LOAD_FILE ]
+        </div>
+        <div id="zeitgeist-log" class="ontology-stream"></div>
+    </aside>
+    
+</body>
+</html>
